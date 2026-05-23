@@ -1,0 +1,164 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique user ID from Firebase Auth" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string", "format": "uri" },
+        "role": { "type": "string", "enum": ["student", "instructor", "admin"] },
+        "balance": { "type": "number", "default": 0 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Deposit": {
+      "title": "Deposit",
+      "description": "Fund add requests",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "amount": { "type": "number" },
+        "screenshotUrl": { "type": "string", "format": "uri" },
+        "status": { "type": "string", "enum": ["pending", "approved", "cancelled"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "amount", "screenshotUrl", "status"]
+    },
+    "Course": {
+      "title": "Service",
+      "description": "Social media service details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "pricePerThousand": { "type": "number" },
+        "minLimit": { "type": "number" },
+        "serviceType": { "type": "string", "enum": ["likes", "followers", "views", "other"] },
+        "providerId": { "type": "string", "description": "ID of the provider from providers collection" },
+        "providerServiceId": { "type": "string" },
+        "image": { "type": "string", "format": "uri" },
+        "qrUrl": { "type": "string", "format": "uri" },
+        "status": { "type": "string", "enum": ["draft", "published"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "pricePerThousand", "minLimit", "serviceType", "status"]
+    },
+    "Provider": {
+      "title": "Provider",
+      "description": "External SMM Panel provider details",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "apiUrl": { "type": "string", "format": "uri" },
+        "apiKey": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "apiUrl", "apiKey"]
+    },
+    "Enrollment": {
+      "title": "Enrollment",
+      "description": "Records of completed orders (for user history)",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "courseId": { "type": "string" },
+        "enrolledAt": { "type": "string", "format": "date-time" },
+        "quantity": { "type": "number" },
+        "targetLink": { "type": "string" }
+      },
+      "required": ["userId", "courseId", "enrolledAt"]
+    },
+    "Lesson": {
+      "title": "Lesson",
+      "description": "Not used in SMM Panel but kept for schema compatibility",
+      "type": "object",
+      "properties": {
+        "courseId": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "videoUrl": { "type": "string", "format": "uri" },
+        "order": { "type": "number" }
+      },
+      "required": ["courseId", "title", "order"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Order requests for SMM services",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "courseId": { "type": "string" },
+        "courseTitle": { "type": "string" },
+        "quantity": { "type": "number" },
+        "targetLink": { "type": "string" },
+        "totalPrice": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "approved", "cancelled"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "courseId", "quantity", "targetLink", "totalPrice", "status"]
+    },
+    "AppSetting": {
+      "title": "AppSetting",
+      "description": "Global app settings like payment QR code",
+      "type": "object",
+      "properties": {
+        "paymentQrUrl": { "type": "string", "format": "uri" }
+      }
+    },
+    "Stats": {
+      "title": "Stats",
+      "description": "Aggregated platform statistics",
+      "type": "object",
+      "properties": {
+        "totalUsers": { "type": "number" },
+        "totalOrders": { "type": "number" },
+        "totalDeposits": { "type": "number" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile documents"
+    },
+    "/courses/{courseId}": {
+      "schema": "Course",
+      "description": "Course catalog documents"
+    },
+    "/enrollments/{enrollmentId}": {
+      "schema": "Enrollment",
+      "description": "Course enrollment records"
+    },
+    "/courses/{courseId}/lessons/{lessonId}": {
+      "schema": "Lesson",
+      "description": "Lessons for a specific course"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Order request documents"
+    },
+    "/deposits/{depositId}": {
+      "schema": "Deposit",
+      "description": "Fund deposit requests"
+    },
+    "/providers/{providerId}": {
+      "schema": "Provider",
+      "description": "External SMM Panel providers"
+    },
+    "/settings/{settingId}": {
+      "schema": "AppSetting",
+      "description": "Global configuration documents"
+    },
+    "/stats/{statId}": {
+      "schema": "Stats",
+      "description": "Aggregation statistics (e.g., /stats/counters)"
+    }
+  }
+}
