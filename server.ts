@@ -176,6 +176,48 @@ async function startServer() {
     }
     return false;
   };
+
+  const adjustUserBalanceSafe = async (userId: string, change: number) => {
+    console.log(`[BALANCE-SAFE] Adjusting balance for ${userId} by ${change}`);
+    
+    // 1. Try SDK Transaction first
+    try {
+      let success = false;
+      await db.runTransaction(async (transaction: any) => {
+        const userRef = db.collection("users").doc(userId);
+        const userSnap = await transaction.get(userRef);
+        if (userSnap.exists) {
+          const current = Number(userSnap.data().balance || 0);
+          transaction.update(userRef, { balance: FieldValue.increment(change) });
+          success = true;
+        }
+      });
+      if (success) {
+        console.log(`[BALANCE-SAFE] SDK transaction adjusted balance successfully by ${change}`);
+        return true;
+      }
+    } catch (sdkErr: any) {
+      console.warn(`[BALANCE-SAFE] SDK transaction adjustment failed: ${sdkErr.message}. Falling back to REST.`);
+    }
+
+    // 2. Fallback: Read balance and overwrite via REST
+    try {
+      const uSnap = await getDocSafe("users", userId);
+      if (uSnap && uSnap.exists) {
+        const uData = uSnap.data() || {};
+        const currentBalance = Number(uData.balance || 0);
+        const newBalance = Number((currentBalance + change).toFixed(2));
+        const res = await updateDocSafe("users", userId, { balance: newBalance });
+        if (res) {
+          console.log(`[BALANCE-SAFE] REST successfully adjusted balance by ${change} (New balance: ${newBalance})`);
+          return true;
+        }
+      }
+    } catch (restErr: any) {
+      console.error(`[BALANCE-SAFE] Terminal fallback failed: ${restErr.message}`);
+    }
+    return false;
+  };
   
   // ULTIMATE REST FALLBACK HELPER
   // This uses the API Key which can sometimes bypass Service Account permission gaps
@@ -434,10 +476,9 @@ async function startServer() {
       if (!pUrl.startsWith("http")) pUrl = "https://" + pUrl;
 
       if (!c.providerServiceId || String(c.providerServiceId) === "0") {
-        throw new Error(`Provider Service ID for course "${c.title}" is missing or invalid (0).`);
+        throw new Error(`Provider Service ID for course "${c.title}" is missing or invalid.`);
       }
-
-      // --- LINK CLEANING & HEURISTICS ---
+      
       let finalLink = String(targetLink).trim();
       
       // 1. If it starts with @, it's likely an Instagram/Twitter handle, convert to profile link
@@ -449,6 +490,21 @@ async function startServer() {
           finalLink = `https://x.com/${username}/`;
         } else if (c.category?.toLowerCase().includes("tiktok")) {
           finalLink = `https://www.tiktok.com/@${username}`;
+        }
+      } else if (!finalLink.includes("://") && !finalLink.includes(".")) {
+        // Raw username input without domain or @ prefix
+        const username = finalLink.trim();
+        const cat = (c.category || "").toLowerCase();
+        if (cat.includes("instagram")) {
+          finalLink = `https://www.instagram.com/${username}/`;
+        } else if (cat.includes("twitter") || cat.includes("x.com") || cat.includes("x / twitter") || cat.includes(" x ")) {
+          finalLink = `https://x.com/${username}/`;
+        } else if (cat.includes("tiktok")) {
+          finalLink = `https://www.tiktok.com/@${username}`;
+        } else if (cat.includes("telegram") || cat.includes("tg")) {
+          finalLink = `https://t.me/${username}`;
+        } else if (cat.includes("youtube") || cat.includes("yt")) {
+          finalLink = `https://www.youtube.com/@${username}`;
         }
       }
       
@@ -465,7 +521,7 @@ async function startServer() {
            const trackers = ["igshid", "utm_source", "utm_medium", "utm_campaign", "fbclid", "s", "t"];
            trackers.forEach(t => urlObj.searchParams.delete(t));
            finalLink = urlObj.toString();
-        }
+         }
       } catch (err) {
         // Fallback to original if URL is weird
       }
@@ -480,6 +536,10 @@ async function startServer() {
       params.append("link", finalLink);
       params.append("quantity", String(quantity).trim());
 
+      // Dual Transmission: set parameters in query string as well as URL-encoded body
+      const querySeparator = pUrl.includes("?") ? "&" : "?";
+      const finalUrl = pUrl + querySeparator + params.toString();
+
       let response;
       let attempts = 0;
       const maxAttempts = 2; // Retry once if it fails due to network
@@ -487,8 +547,8 @@ async function startServer() {
       while (attempts < maxAttempts) {
         try {
           attempts++;
-          console.log(`[ORDER] Calling Provider API (Attempt ${attempts}): ${pUrl}`);
-          response = await axios.post(pUrl, params.toString(), {
+          console.log(`[ORDER] Calling Provider API (Attempt ${attempts}): ${finalUrl}`);
+          response = await axios.post(finalUrl, params.toString(), {
             headers: {
               "Content-Type": "application/x-www-form-urlencoded",
               "Accept": "application/json, text/plain, */*",
@@ -542,12 +602,38 @@ async function startServer() {
               });
             } catch (refundErr: any) {
               console.error(`[REFUND] Transaction failed, trying direct update fallback: ${refundErr.message}`);
-              // Last resort fallback for status change so user at least sees it failed
-              await updateDocSafe("orders", orderId, { 
-                status: "Failed", 
-                error: `Failed (Refund pending manual check): ${stringErr}`,
-                updatedAt: new Date()
-              });
+              // Fallback to safe rest-based balance adjustment and status update
+              try {
+                const oSnap = await getDocSafe("orders", orderId);
+                if (oSnap && oSnap.exists) {
+                  const oData = oSnap.data();
+                  const price = Number(oData.totalPrice || 0);
+                  const refSuccess = await adjustUserBalanceSafe(oData.userId, price);
+                  if (refSuccess) {
+                    await updateDocSafe("orders", orderId, { 
+                      status: "Failed", 
+                      error: `Refunded: API Connection Error (${stringErr})`,
+                      updatedAt: new Date()
+                    });
+                    console.log(`[REFUND] Fallback wallet refund successful for User ${oData.userId}: +₹${price}`);
+                  } else {
+                    await updateDocSafe("orders", orderId, { 
+                      status: "Failed", 
+                      error: `Failed (Refund pending manual check): ${stringErr}`,
+                      updatedAt: new Date()
+                    });
+                  }
+                } else {
+                  console.error(`[REFUND] Order ${orderId} not found in fallback.`);
+                }
+              } catch (fallbackErr: any) {
+                console.error(`[REFUND] Terminal fallback failed: ${fallbackErr.message}`);
+                await updateDocSafe("orders", orderId, { 
+                  status: "Failed", 
+                  error: `Failed (Refund error): ${stringErr}`,
+                  updatedAt: new Date()
+                });
+              }
             }
             
             return res.status(400).json({ success: false, error: stringErr });
@@ -698,11 +784,37 @@ async function startServer() {
           });
         } catch (refundErr: any) {
           console.error(`[REFUND] Rejection refund failed, using fallback: ${refundErr.message}`);
-          await updateDocSafe("orders", orderId, { 
-            status: "Failed", 
-            error: `Failed (Refund error): ${String(errorMsg).substring(0, 200)}`,
-            updatedAt: new Date()
-          });
+          try {
+            const oSnap = await getDocSafe("orders", orderId);
+            if (oSnap && oSnap.exists) {
+              const oData = oSnap.data();
+              const price = Number(oData.totalPrice || 0);
+              const refSuccess = await adjustUserBalanceSafe(oData.userId, price);
+              if (refSuccess) {
+                await updateDocSafe("orders", orderId, { 
+                  status: "Failed", 
+                  error: `Refunded: Provider Rejected Order (${String(errorMsg).substring(0, 200)})`,
+                  updatedAt: new Date()
+                });
+                console.log(`[REFUND] Fallback rejection refund successful for User ${oData.userId}: +₹${price}`);
+              } else {
+                await updateDocSafe("orders", orderId, { 
+                  status: "Failed", 
+                  error: `Failed (Refund pending manual check): ${String(errorMsg).substring(0, 200)}`,
+                  updatedAt: new Date()
+                });
+              }
+            } else {
+              console.error(`[REFUND] Order ${orderId} not found in rejection fallback.`);
+            }
+          } catch (fallbackErr: any) {
+            console.error(`[REFUND] Terminal rejection fallback failed: ${fallbackErr.message}`);
+            await updateDocSafe("orders", orderId, { 
+              status: "Failed", 
+              error: `Failed (Refund error): ${String(errorMsg).substring(0, 200)}`,
+              updatedAt: new Date()
+            });
+          }
         }
         
         return res.status(400).json({ success: false, error: String(errorMsg) });
@@ -856,7 +968,8 @@ async function startServer() {
   });
 
   // Vite
-  if (process.env.NODE_ENV !== "production") {
+  const isProductionMode = process.env.NODE_ENV === "production" || fs.existsSync(path.join(process.cwd(), 'dist'));
+  if (!isProductionMode) {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
     app.use(vite.middlewares);
   } else {
