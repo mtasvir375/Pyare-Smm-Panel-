@@ -119,6 +119,7 @@ export default function Admin() {
   const [merchantName, setMerchantName] = useState("");
   const [providerApiUrl, setProviderApiUrl] = useState("");
   const [providerApiKey, setProviderApiKey] = useState("");
+  const [backendApiUrl, setBackendApiUrl] = useState("");
   const [whatsappLink, setWhatsappLink] = useState("");
   const [whatsappChatNumber, setWhatsappChatNumber] = useState("");
   const [guideVideoUrl, setGuideVideoUrl] = useState("");
@@ -215,6 +216,15 @@ export default function Admin() {
         const qCourses = query(collection(db, "courses"), limit(20)); 
         const snapshot = await getDocs(qCourses);
         setCourses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        
+        // Also fetch providers so adding/editing courses has provider options loaded immediately
+        try {
+          const qProviders = query(collection(db, "providers")); 
+          const pSnapshot = await getDocs(qProviders);
+          setProviders(pSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        } catch (pErr) {
+          console.error("Error pre-fetching providers on courses tab:", pErr);
+        }
       } else if (tab === "orders" && isAdmin) {
         const qOrders = query(collection(db, "orders"), orderBy("createdAt", "desc"), limit(10));
         const snapshot = await getDocs(qOrders);
@@ -226,7 +236,7 @@ export default function Admin() {
       } else if (tab === "users" && isAdmin) {
         await handleSearchUser(force);
       } else if (tab === "providers" && isAdmin) {
-        const qProviders = query(collection(db, "providers"), orderBy("createdAt", "desc"), limit(5)); 
+        const qProviders = query(collection(db, "providers")); 
         const snapshot = await getDocs(qProviders);
         setProviders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       } else if (tab === "settings" && isAdmin) {
@@ -244,6 +254,17 @@ export default function Admin() {
           setRazorpayEnabled(settingsData.razorpayEnabled || false);
           setRazorpayKeyId(settingsData.razorpayKeyId || "");
           setRazorpayKeySecret(settingsData.razorpayKeySecret || "");
+          
+          // Load or auto-populate backend API URL with self-healing for transient dev URLs
+          const savedBackendUrl = settingsData.backendApiUrl || "";
+          const activeBackendUrl = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
+          const isCustomDomain = savedBackendUrl.includes("pyaresmmpanel.online") || 
+                                 (!savedBackendUrl.includes("run.app") && savedBackendUrl.includes("."));
+          if (!savedBackendUrl || savedBackendUrl.includes("ais-dev-") || (!savedBackendUrl.includes("run.app") && !isCustomDomain)) {
+            setBackendApiUrl(activeBackendUrl);
+          } else {
+            setBackendApiUrl(savedBackendUrl);
+          }
         }
       }
       setFetchedTabs(prev => new Set(prev).add(tab));
@@ -336,6 +357,7 @@ export default function Admin() {
 
       const cleanUrl = providerApiUrl.trim();
       const cleanKey = providerApiKey.trim();
+      const cleanBackend = backendApiUrl.trim();
 
       await setDoc(doc(db, "settings", "payment"), {
         paymentQrUrl: base64,
@@ -343,6 +365,7 @@ export default function Admin() {
         merchantName: merchantName.trim(),
         providerApiUrl: cleanUrl,
         providerApiKey: cleanKey,
+        backendApiUrl: cleanBackend,
         whatsappLink: whatsappLink.trim(),
         whatsappChatNumber: whatsappChatNumber.trim(),
         guideVideoUrl: guideVideoUrl.trim(),
@@ -353,6 +376,7 @@ export default function Admin() {
       setQrUrl(base64);
       setProviderApiUrl(cleanUrl);
       setProviderApiKey(cleanKey);
+      setBackendApiUrl(cleanBackend);
       setQrFile(null);
       import("@/lib/cache").then(mod => mod.clearCache());
       toast.success("Global Settings updated!");
@@ -446,38 +470,184 @@ export default function Admin() {
     }
   };
 
+  const formatErrorMessage = (err: any): string => {
+    if (!err) return "Unknown error";
+    if (typeof err === "string") return err;
+    if (typeof err === "object") {
+      if (err.message && typeof err.message === "string") return err.message;
+      if (err.error && typeof err.error === "string") return err.error;
+      if (err.msg && typeof err.msg === "string") return err.msg;
+      
+      if (err.error && typeof err.error === "object") return formatErrorMessage(err.error);
+      if (err.message && typeof err.message === "object") return formatErrorMessage(err.message);
+      
+      const keys = ["message", "error", "msg", "errors", "detail", "err"];
+      for (const k of keys) {
+        if (err[k]) {
+          if (typeof err[k] === "string") return err[k];
+          if (typeof err[k] === "object") return formatErrorMessage(err[k]);
+        }
+      }
+      
+      if (Array.isArray(err) && err.length > 0) {
+        return formatErrorMessage(err[0]);
+      }
+      
+      try {
+        return JSON.stringify(err);
+      } catch {
+        return "[Object]";
+      }
+    }
+    return String(err);
+  };
+
   const handleRetryProvider = async (order: any) => {
     try {
       toast.info("Retrying provider API...");
-      const response = await axios.post("/api/proxy-provider", {
-        orderId: order.id,
-        courseId: order.courseId,
-        targetLink: order.targetLink,
-        quantity: order.quantity
-      });
+      
+      let pId = "";
+      let orderProcessed = false;
+      let responseBody: any = null;
 
-      if (response.data.success && response.data.providerOrderId) {
+      try {
+        const response = await axios.post("/api/proxy-provider", {
+          orderId: order.id,
+          courseId: order.courseId,
+          targetLink: order.targetLink,
+          quantity: order.quantity
+        });
+
+        responseBody = response.data;
+        const isHtmlResponse = typeof responseBody === "string" && (
+          responseBody.trim().startsWith("<") || 
+          responseBody.includes("<!DOCTYPE") || 
+          responseBody.includes("<html")
+        );
+
+        if (isHtmlResponse || !responseBody || responseBody.success === false) {
+          throw new Error("PROX_REJECT");
+        } else {
+          pId = responseBody.providerOrderId;
+          orderProcessed = true;
+        }
+      } catch (proxyError) {
+        console.log("[ADMIN-RETRY] Proxy request blocked. Attempting direct CORS-friendly admin retry...");
+        
+        // 1. Fetch Course details
+        const courseSnap = await getDoc(doc(db, "courses", order.courseId));
+        if (!courseSnap.exists()) {
+          throw new Error(`Service configuration with ID "${order.courseId}" does not exist in the database.`);
+        }
+        const c = courseSnap.data();
+
+        // 2. Fetch Settings
+        const settingsSnap = await getDoc(doc(db, "settings", "payment"));
+        const s = settingsSnap.exists() ? (settingsSnap.data() || {}) : {};
+
+        // 3. Resolve API credentials
+        let pUrl = (s.providerApiUrl || "").trim() || "https://smmbin.com/api/v2";
+        let pKey = (s.providerApiKey || "").trim();
+
+        if (c.providerId && c.providerId !== "global") {
+          const provSnap = await getDoc(doc(db, "providers", c.providerId));
+          if (provSnap.exists()) {
+            const pData = provSnap.data() || {};
+            pUrl = (pData.apiUrl || "").trim();
+            pKey = (pData.apiKey || "").trim();
+          }
+        }
+
+        if (!pKey) {
+          throw new Error("SMM Provider key not found or not configured.");
+        }
+
+        const params = new URLSearchParams();
+        params.append("key", pKey);
+        params.append("action", "add");
+        params.append("service", String(c.providerServiceId).trim());
+        params.append("link", String(order.targetLink).trim());
+        params.append("quantity", String(order.quantity).trim());
+
+        let directRes;
+        try {
+          console.log("[ADMIN-RETRY-FALLBACK] Connecting directly to provider API...");
+          directRes = await axios.post(pUrl, params, {
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            timeout: 10000
+          });
+        } catch (corsErr) {
+          console.warn("[ADMIN-RETRY-FALLBACK] Direct link failed (CORS). Trying CORS-Proxy wrapper...");
+          const proxiedUrl = `https://corsproxy.io/?${encodeURIComponent(pUrl)}`;
+          try {
+            directRes = await axios.post(proxiedUrl, params, {
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              timeout: 10000
+            });
+          } catch (proxyErr) {
+            console.warn("[ADMIN-RETRY-FALLBACK] CORS proxy failed. Falling back to background queue...");
+          }
+        }
+
+        const resData = directRes?.data;
+        let providerOrderId = resData?.order || resData?.order_id || resData?.orderid || resData?.orderId || resData?.id || resData?.ID;
+        const isStatusSuccess = resData?.status === "success" || 
+                                resData?.status === "Success" || 
+                                resData?.success === true || 
+                                resData?.success === "true" ||
+                                resData?.msg?.toLowerCase().includes("success") ||
+                                resData?.message?.toLowerCase().includes("success");
+
+        if (!providerOrderId && typeof resData === 'number') {
+          providerOrderId = String(resData);
+        }
+
+        if (providerOrderId || isStatusSuccess) {
+          pId = providerOrderId ? String(providerOrderId) : "SENT_NO_ID";
+          orderProcessed = true;
+          
+          await updateDoc(doc(db, "orders", order.id), {
+            providerOrderId: pId,
+            status: "Completed",
+            error: null,
+            providerRawResponse: JSON.stringify(resData).substring(0, 800),
+            updatedAt: serverTimestamp()
+          });
+        } else {
+          // Put the order into wait-queue for background listener to re-process securely
+          console.log("[ADMIN-RETRY] Local direct retry failed. Queueing order for Cloud Run background worker...");
+          await updateDoc(doc(db, "orders", order.id), {
+            needsProviderTransmission: true,
+            providerTransmissionStatus: "pending",
+            providerOrderId: null,
+            error: null,
+            updatedAt: serverTimestamp()
+          });
+          
+          // Show successful fallback retry queue toast
+          toast.success("Order queued successfully in the background queue!");
+          return;
+        }
+      }
+
+      if (orderProcessed) {
         await updateDoc(doc(db, "orders", order.id), {
-          providerOrderId: String(response.data.providerOrderId),
+          providerOrderId: pId,
           status: "Completed",
           error: null,
           updatedAt: serverTimestamp()
         });
-        toast.success("Order successfully sent to provider!");
-      } else {
-        const errorMsg = response.data.error || "Unknown response format";
-        await updateDoc(doc(db, "orders", order.id), {
-          error: errorMsg,
-          updatedAt: serverTimestamp()
-        });
-        toast.error("Provider API failed: " + errorMsg);
+        toast.dismiss();
+        toast.success(`Order successfully sent to provider! ID: ${pId}`);
       }
     } catch (error: any) {
       let errorMessage = "Failed to retry provider API";
       let rawRes = null;
       if (error.response?.data) {
-        errorMessage = error.response.data.error || error.response.data.message || error.message;
+        errorMessage = formatErrorMessage(error.response.data);
         rawRes = JSON.stringify(error.response.data);
+      } else {
+        errorMessage = error.message;
       }
       
       try {
@@ -958,6 +1128,7 @@ export default function Admin() {
                     onChange={(e) => setNewCourseProviderId(e.target.value)}
                   >
                     <option value="" className="bg-gray-900">Select a provider</option>
+                    <option value="global" className="bg-gray-900">Global Settings</option>
                     {providers.map(p => (
                       <option key={p.id} value={p.id} className="bg-gray-900">{p.name}</option>
                     ))}
@@ -1148,7 +1319,7 @@ export default function Admin() {
                             <p className="text-[10px] text-red-600 font-bold uppercase flex items-center gap-1">
                               <AlertCircle className="w-3 h-3" /> Provider Error
                             </p>
-                            <p className="text-xs text-red-700 mt-0.5">{order.error}</p>
+                            <p className="text-xs text-red-700 mt-0.5">{formatErrorMessage(order.error)}</p>
                             {order.providerRawResponse && (
                               <details className="mt-1">
                                 <summary className="text-[9px] text-gray-400 cursor-pointer hover:text-gray-600 uppercase font-bold">Show Raw Message</summary>
@@ -1374,7 +1545,7 @@ export default function Admin() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                  <div className="grid gap-4 md:grid-cols-2">
+                  <div className="grid gap-4 md:grid-cols-3">
                     <div className="space-y-2">
                       <label className="text-xs font-bold uppercase tracking-wider text-gray-400">UPI ID</label>
                       <Input 
@@ -1393,7 +1564,19 @@ export default function Admin() {
                         className="rounded-xl h-12"
                       />
                     </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold uppercase tracking-wider text-primary font-bold">Backend Server URL</label>
+                      <Input 
+                        placeholder="e.g. https://ais-pre-...run.app" 
+                        value={backendApiUrl}
+                        onChange={(e) => setBackendApiUrl(e.target.value)}
+                        className="rounded-xl h-12 border-primary/50 focus:border-primary"
+                      />
+                    </div>
                   </div>
+                  <p className="text-[10px] text-gray-500 mt-[-12px]">
+                    Note: If running on a custom domain pointing to static hosting, enter your Cloud Run app URL here. This allows routing frontend actions safely to the database and payment server. It is autodetected as <strong>{window.location.origin}</strong> on active server environments.
+                  </p>
 
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">

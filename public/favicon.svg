@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="50%" stop-color="#6366f1" />
+      <stop offset="100%" stop-color="#a855f7" />
+    </linearGradient>
+    
+    <!-- Growth Rocket Gradient -->
+    <linearGradient id="glowGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.9" />
+      <stop offset="100%" stop-color="#e0e7ff" />
+    </linearGradient>
+
+    <!-- Outer Ring Gradient -->
+    <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.4" />
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.1" />
+    </linearGradient>
+    
+    <!-- Shadow Filter -->
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="6" flood-color="#000000" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+
+  <!-- Circular Outer Card Frame -->
+  <circle cx="256" cy="256" r="236" fill="url(#bgGrad)" />
+
+  <!-- Glossy Highlight Outer Ring -->
+  <circle cx="256" cy="256" r="226" fill="none" stroke="url(#ringGrad)" stroke-width="6" />
+
+  <!-- Inner Content Group with Shadow for depth -->
+  <g filter="url(#shadow)">
+    <!-- Sleek Social Media Growth Upward Arrow merged with a Stylized "P" -->
+    <path d="M190 380 V 150 C190 110, 240 100, 275 125 C310 150, 310 200, 275 220 H 190 M190 220 H 260 H280 C320 220, 360 250, 340 310 C320 370, 250 380, 190 380 Z" fill="none" />
+    
+    <!-- A gorgeous custom icon representing "P" (for Pyare) with Social Media Boost Lightning/Growth curves -->
+    <!-- Let's draw a stylish 3D curved "P" that ends with an upward arrow for premium feel -->
+    <path d="M165 370 
+             C 165 375, 170 380, 175 380 
+             H 210 
+             C 215 380, 220 375, 220 370 
+             V 260 
+             H 265 
+             C 325 260, 355 215, 355 175 
+             C 355 130, 320 95, 265 95 
+             H 175 
+             C 169 95, 165 99, 165 105 
+             Z" 
+          fill="url(#glowGrad)" />
+
+    <!-- Sub-element: Contrast Dynamic Star/Sparkle symbolizing instant booster services (cheapest and fastest) -->
+    <path d="M220 178 L230 183 L225 193 L235 188 L245 195 L240 185 L250 180 L239 176 L235 166 L231 176 Z" fill="#facc15" />
+
+    <!-- Dynamic Overlay Inner P-Loop cut-out for authentic visual flow -->
+    <path d="M220 135 
+             H 260 
+             C 285 135, 305 145, 305 175 
+             C 305 205, 285 220, 260 220 
+             H 220 
+             Z" 
+          fill="#4f46e5" opacity="0.95" />
+
+    <!-- Elegant Thunderbolt/Growth curve on the stem for SMM theme -->
+    <path d="M255 285 L320 350 H275 L335 410 L300 345 H340 Z" fill="#facc15" />
+  </g>
+</svg>

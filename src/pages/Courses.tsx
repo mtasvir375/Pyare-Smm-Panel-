@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { collection, query, where, addDoc, serverTimestamp, getDoc, doc, updateDoc, writeBatch, increment, runTransaction } from "firebase/firestore";
+import { collection, query, where, addDoc, serverTimestamp, getDoc, doc, updateDoc, writeBatch, increment, runTransaction, onSnapshot } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "@/lib/firebase";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/context/AuthContext";
@@ -112,18 +112,45 @@ export default function Courses() {
 
   const totalPrice = selectedCourse ? (Number(quantity) * selectedCourse.pricePerThousand) / 1000 : 0;
 
+  const formatErrorMessage = (err: any): string => {
+    if (!err) return "Unknown error";
+    if (typeof err === "string") return err;
+    if (typeof err === "object") {
+      if (err.message && typeof err.message === "string") return err.message;
+      if (err.error && typeof err.error === "string") return err.error;
+      if (err.msg && typeof err.msg === "string") return err.msg;
+      
+      if (err.error && typeof err.error === "object") return formatErrorMessage(err.error);
+      if (err.message && typeof err.message === "object") return formatErrorMessage(err.message);
+      
+      const keys = ["message", "error", "msg", "errors", "detail", "err"];
+      for (const k of keys) {
+        if (err[k]) {
+          if (typeof err[k] === "string") return err[k];
+          if (typeof err[k] === "object") return formatErrorMessage(err[k]);
+        }
+      }
+      
+      if (Array.isArray(err) && err.length > 0) {
+        return formatErrorMessage(err[0]);
+      }
+      
+      try {
+        return JSON.stringify(err);
+      } catch {
+        return "[Object]";
+      }
+    }
+    return String(err);
+  };
+
   const handleSubmitOrder = async () => {
     if (!selectedCourse || !user) {
       toast.error("Please select a service and login");
       return;
     }
-    if (!targetLink || targetLink.trim().length < 5) {
-      toast.error("Please provide a valid target link");
-      return;
-    }
-    // Simple validation: should contain at least one dot and some characters
-    if (!targetLink.includes(".") || targetLink.length < 4) {
-      toast.error("Invalid link format. Please include the full URL.");
+    if (!targetLink || targetLink.trim().length < 2) {
+      toast.error("Please provide a valid target link, profile, or username");
       return;
     }
     if (!selectedCourse.providerServiceId || selectedCourse.providerServiceId === "0") {
@@ -169,15 +196,15 @@ export default function Courses() {
       }
 
       const batch = writeBatch(db);
-      
-      // 1. Deduct balance and update last ordered timestamp
+
+      // 1. We NO LONGER deduct balance here. 
+      // The backend will deduct balance ONLY AFTER the provider panel accepts the order.
       const userRef = doc(db, "users", user.uid);
       batch.update(userRef, {
-        balance: increment(-totalPrice),
         lastOrderedAt: serverTimestamp()
       });
 
-      // 2. Create order - Start with 'Completed' status
+      // 2. Create order - Start with 'Pending' status
       const orderRef = doc(collection(db, "orders"));
       const orderData = {
         userId: user.uid,
@@ -188,8 +215,10 @@ export default function Courses() {
         quantity: Number(quantity),
         targetLink: targetLink.trim(),
         totalPrice: totalPrice,
-        status: "Completed",
-        createdAt: serverTimestamp()
+        status: "Pending", // Changed from 'Completed' to 'Pending'
+        createdAt: serverTimestamp(),
+        needsProviderTransmission: false, // Don't trigger background worker yet, we do it via sync API
+        providerTransmissionStatus: "pending"
       };
       batch.set(orderRef, orderData);
 
@@ -207,11 +236,15 @@ export default function Courses() {
         ...orderData,
         createdAt: new Date() // Approximate for UI
       });
-      setIsOrderSuccessOpen(true);
-      toast.success("Order placed successfully!");
+      // We do NOT show success dialog yet. We wait for transmission success.
+      // setIsOrderSuccessOpen(true); 
 
       // 3. Call backend to proxy provider API
-      const sendingToastId = toast.loading("Sending order to provider panel...");
+      const sendingToastId = toast.loading("Confirming order with provider panel...");
+      let orderProcessed = false;
+      let pId = "";
+      let responseBody: any = null;
+
       try {
         const response = await axios.post("/api/proxy-provider", {
           orderId: orderRef.id,
@@ -220,33 +253,44 @@ export default function Courses() {
           quantity: Number(quantity)
         });
 
-        toast.dismiss(sendingToastId);
-        if (response.data.success) {
-          const pId = response.data.providerOrderId;
-          toast.success(pId ? `Success! Order ID: ${pId}` : "Order processed successfully", { duration: 5000 });
-          setLastOrder((prev: any) => prev ? { ...prev, status: "Completed", providerOrderId: pId || "SENT" } : null);
-        } else {
-          const serverError = response.data.error || response.data.message || "Provider Panel rejected the request";
-          toast.error("Order Failed: " + serverError + " (Amount Refunded)", { duration: 8000 });
-          setLastOrder((prev: any) => prev ? { ...prev, status: "Failed", error: serverError } : null);
-        }
-      } catch (providerError: any) {
-        toast.dismiss(sendingToastId);
-        let errorMessage = "Transmission failed";
+        responseBody = response.data;
         
-        if (providerError.response?.data?.error) {
-           errorMessage = providerError.response.data.error;
-        } else if (providerError.response?.data?.message) {
-           errorMessage = providerError.response.data.message;
-        } else if (providerError.response?.data?.providerRaw) {
-           const raw = providerError.response.data.providerRaw;
-           errorMessage = "Provider: " + (typeof raw === 'string' ? raw : JSON.stringify(raw));
+        if (responseBody && responseBody.success === true) {
+          pId = responseBody.providerOrderId;
+          orderProcessed = true;
+          
+          // Show success feedback only after successful transmission (balance deducted by server)
+          setIsOrderSuccessOpen(true);
+          toast.success("Order placed successfully!");
         } else {
-           errorMessage = providerError.message || "Unknown error";
+          throw new Error(responseBody?.error || "Provider rejected order");
         }
+      } catch (proxyError: any) {
+        console.error("[ORDER-PROCESS] Error:", proxyError);
         
-        toast.error(`Order Failed: ${errorMessage} (Amount Refunded)`, { duration: 8000 });
-        setLastOrder((prev: any) => prev ? { ...prev, status: "Failed", error: errorMessage } : null);
+        // Final fallback: check Firestore for any background update
+        const orderDocSnap = await getDoc(doc(db, "orders", orderRef.id));
+        const orderDocData = orderDocSnap.exists() ? orderDocSnap.data() : {};
+        
+        if (orderDocData.status === "Completed") {
+          orderProcessed = true;
+          pId = orderDocData.providerOrderId;
+          setIsOrderSuccessOpen(true);
+          toast.success("Order confirmed!");
+        } else {
+          const failErrorMsg = formatErrorMessage(orderDocData.error || proxyError.message) || "Order transmission failed";
+          toast.dismiss(sendingToastId);
+          toast.error(`Order Failed: ${failErrorMsg}`, { duration: 8000 });
+          setLastOrder((prev: any) => prev ? { ...prev, status: "Failed", error: failErrorMsg } : null);
+          setSubmitting(false);
+          return;
+        }
+      }
+
+      if (orderProcessed) {
+        toast.dismiss(sendingToastId);
+        toast.success(pId ? `Success! Order ID: ${pId}` : "Order processed successfully", { duration: 5000 });
+        setLastOrder((prev: any) => prev ? { ...prev, status: "Completed", providerOrderId: pId || "SENT" } : null);
       }
 
       setTargetLink("");

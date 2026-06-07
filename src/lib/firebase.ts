@@ -8,22 +8,34 @@ import {
   createUserWithEmailAndPassword,
   sendPasswordResetEmail
 } from "firebase/auth";
-import { getFirestore, doc, getDocFromServer, enableIndexedDbPersistence } from "firebase/firestore";
+import { 
+  initializeFirestore, 
+  persistentLocalCache, 
+  persistentMultipleTabManager,
+  doc, 
+  getDocFromServer 
+} from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// Dynamically resolve Firebase configuration to utilize client's custom domain as authDomain
+// when accessed via 'pyaresmmpanel.online'. This ensures the Google Sign-In consent screen 
+// displays the custom branded domain instead of the default project id firebaseapp.com fallback.
+const resolvedFirebaseConfig = { ...firebaseConfig };
+if (typeof window !== "undefined" && window.location.origin.includes("pyaresmmpanel.online")) {
+  resolvedFirebaseConfig.authDomain = "pyaresmmpanel.online";
+  console.log(`[Firebase Configuration] Branded Custom domain detected. Using dynamic authDomain: ${resolvedFirebaseConfig.authDomain}`);
+}
 
-// Enable offline persistence to save read quota
-enableIndexedDbPersistence(db).catch((err) => {
-  if (err.code == 'failed-precondition') {
-    console.warn('Multiple tabs open, persistence can only be enabled in one tab at a a time.');
-  } else if (err.code == 'unimplemented') {
-    console.warn('The current browser does not support all of the features required to enable persistence');
-  }
-});
+// Initialize Firebase
+const app = initializeApp(resolvedFirebaseConfig);
+export const auth = getAuth(app);
+
+// Enable offline persistence with multi-tab synchronization to save read quota and support multiple active tabs
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager()
+  })
+}, firebaseConfig.firestoreDatabaseId);
 
 export const googleProvider = new GoogleAuthProvider();
 

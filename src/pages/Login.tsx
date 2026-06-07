@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion } from "motion/react";
-import { Lock, Chrome, Loader2 } from "lucide-react";
+import { Lock, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { loginWithGoogle } from "@/lib/firebase";
@@ -22,7 +22,7 @@ export default function Login() {
       if (error?.code === "auth/unauthorized-domain" || String(error).includes("unauthorized-domain")) {
         toast.error("यह custom domain (pyaresmmpanel.online) Firebase Console में Authorized नहीं है।", {
           description: "कृपया Firebase Console -> Authentication -> Settings -> Authorized Domains में 'pyaresmmpanel.online' को जोड़ें।",
-          duration: 10000
+          duration: 12000
         });
       } else if (error?.code === "auth/popup-blocked" || error?.code === "auth/cancelled-popup-request") {
         toast.error("Google Pop-up Block हो गया।", {

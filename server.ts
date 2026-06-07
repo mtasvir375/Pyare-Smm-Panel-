@@ -19,12 +19,47 @@ async function startServer() {
   
   app.use(express.json({ limit: "50mb" }));
   
+  // Enable absolute CORS for custom domains calling this Cloud Run backend
+  app.use((req, res, next) => {
+    const origin = req.headers.origin || "*";
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, Access-Control-Request-Method, Access-Control-Request-Headers");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    if (req.method === "OPTIONS") {
+      res.setHeader("Access-Control-Max-Age", "86400"); // 24 hours cache for preflight
+      return res.sendStatus(200);
+    }
+    next();
+  });
+  
   // Load Firebase Config
   const configPath = path.join(process.cwd(), "firebase-applet-config.json");
   const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
   const { projectId } = firebaseConfig;
   const databaseId = (firebaseConfig.firestoreDatabaseId || "").trim() || "(default)";
   const FIREBASE_API_KEY = firebaseConfig.apiKey;
+
+  const logToDb = async (event: string, meta: any = {}) => {
+    try {
+      const tidyDb = (!databaseId || databaseId === "(default)") ? "(default)" : databaseId;
+      const customId = `syslog_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const restUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${tidyDb}/documents/orders/${customId}?key=${FIREBASE_API_KEY}`;
+      await axios.patch(restUrl, {
+        fields: {
+          timestamp: { timestampValue: new Date().toISOString() },
+          isSyslog: { booleanValue: true },
+          event: { stringValue: event },
+          env: { stringValue: process.env.NODE_ENV || "unknown" },
+          meta: { stringValue: JSON.stringify(meta).substring(0, 1500) }
+        }
+      }, { timeout: 8000 });
+    } catch (err: any) {
+      console.error("Failed to write syslog to Firestore:", err.message);
+    }
+  };
+
+  logToDb("SERVER_START", { message: "Express server started/restarted successfully" });
 
   console.log(`[INIT] Starting with Project: ${projectId}, DB: ${databaseId}`);
   
@@ -54,6 +89,67 @@ async function startServer() {
 
   db = getDbInstance(databaseId);
   console.log(`[INIT] Firestore instance bound to DB: ${databaseId}`);
+
+  // Auto-verify and populate backend API URL in Firestore settings so client domains route correctly
+  const ensureBackendUrlIsSet = async () => {
+    const ACTIVE_BACKEND_URL = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
+    try {
+      console.log(`[INIT] Auto-ensuring backend URL in Firestore: ${ACTIVE_BACKEND_URL}`);
+      const paymentRef = db.collection("settings").doc("payment");
+      const snap = await paymentRef.get();
+      if (snap.exists) {
+        const data = snap.data() || {};
+        // If a custom domain like pyaresmmpanel.online or other unique backend is already stored, do NOT overwrite it.
+        if (data.backendApiUrl && 
+            (data.backendApiUrl.includes("pyaresmmpanel.online") || 
+             (!data.backendApiUrl.includes("run.app") && data.backendApiUrl.includes(".")))) {
+          console.log(`[INIT] Keeping custom backendApiUrl: ${data.backendApiUrl}`);
+          return;
+        }
+        if (data.backendApiUrl !== ACTIVE_BACKEND_URL) {
+          await paymentRef.update({ backendApiUrl: ACTIVE_BACKEND_URL });
+          console.log(`[INIT] ✅ Successfully updated backendApiUrl to: ${ACTIVE_BACKEND_URL}`);
+        } else {
+          console.log(`[INIT] ✅ backendApiUrl is already up to date: ${ACTIVE_BACKEND_URL}`);
+        }
+      } else {
+        await paymentRef.set({ backendApiUrl: ACTIVE_BACKEND_URL });
+        console.log(`[INIT] ✅ Created settings/payment with backendApiUrl: ${ACTIVE_BACKEND_URL}`);
+      }
+    } catch (err: any) {
+      console.warn(`[INIT] ⚠️ Auto-updating backendApiUrl via SDK failed: ${err.message}`);
+      // Fallback via REST write if databaseId / permissions are weird
+      try {
+        const tidyDb = (!databaseId || databaseId === "(default)") ? "(default)" : databaseId;
+        const restUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${tidyDb}/documents/settings/payment?key=${FIREBASE_API_KEY}&updateMask.fieldPaths=backendApiUrl`;
+        
+        // Double check existing settings if possible before patching
+        let shouldPatch = true;
+        try {
+          const checkRes = await axios.get(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/${tidyDb}/documents/settings/payment?key=${FIREBASE_API_KEY}`, { timeout: 3000 });
+          const existingUrl = checkRes.data?.fields?.backendApiUrl?.stringValue || "";
+          if (existingUrl.includes("pyaresmmpanel.online") || (!existingUrl.includes("run.app") && existingUrl.includes("."))) {
+            shouldPatch = false;
+            console.log(`[INIT] Keeping custom backendApiUrl via REST: ${existingUrl}`);
+          }
+        } catch (e) {}
+
+        if (shouldPatch) {
+          await axios.patch(restUrl, {
+            fields: {
+              backendApiUrl: { stringValue: ACTIVE_BACKEND_URL }
+            }
+          }, { timeout: 10000 });
+          console.log(`[INIT] ✅ Successfully patched backendApiUrl via Firestore REST API.`);
+        }
+      } catch (restErr: any) {
+        console.error(`[INIT] ❌ REST patch fallback also failed: ${restErr.response?.data || restErr.message}`);
+      }
+    }
+  };
+  
+  ensureBackendUrlIsSet();
+  startBackgroundOrderListener(db);
   
   // IN-MEMORY CACHE FOR SERVER-SIDE
   const serverCache: any = {
@@ -61,7 +157,7 @@ async function startServer() {
     courses: new Map(), // Map<courseId, {data, time}>
     providers: new Map() // Map<providerId, {data, time}>
   };
-  const SERVER_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+  const SERVER_CACHE_TTL = 5 * 1000; // 5 seconds (Fast fallback/highly responsive)
 
   // FIREBASE HELPERS
   const unwrapRestFields = (fields: any) => {
@@ -175,6 +271,117 @@ async function startServer() {
       }
     }
     return false;
+  };
+
+  const setDocSafe = async (col: string, id: string, data: any) => {
+    console.log(`[ORDER-FS] Attempting SET: ${col}/${id} on ${databaseId}`);
+    try {
+      await db.collection(col).doc(id).set(data);
+      console.log(`[ORDER-FS] ✅ Success: ${col}/${id} set via SDK.`);
+      return true;
+    } catch (err: any) {
+      console.warn(`[ORDER-FS] ⚠️ SDK Set Failed: ${err.message}`);
+      
+      if (databaseId && databaseId !== "(default)") {
+        try {
+          const defaultDb = getDbInstance("(default)");
+          await defaultDb.collection(col).doc(id).set(data);
+          return true;
+        } catch (e) {
+          console.error(`[ORDER-FS] SDK Fallback Set failed.`);
+        }
+      }
+
+      try {
+        const tidyDb = (!databaseId || databaseId === "(default)") ? "(default)" : databaseId;
+        const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${tidyDb}/documents/${col}/${id}?key=${FIREBASE_API_KEY}`;
+        
+        const fields: any = {};
+        for (const key in data) {
+          const val = data[key];
+          if (typeof val === "string") fields[key] = { stringValue: val };
+          else if (typeof val === "number") fields[key] = { doubleValue: val };
+          else if (val instanceof Date) fields[key] = { timestampValue: val.toISOString() };
+          else if (typeof val === "boolean") fields[key] = { booleanValue: val };
+          else if (val === null) fields[key] = { nullValue: null };
+        }
+
+        const headers: any = { "Content-Type": "application/json" };
+        try {
+          const tokenRes = await axios.get("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token", {
+            headers: { "Metadata-Flavor": "Google" },
+            timeout: 1000
+          });
+          if (tokenRes.data?.access_token) {
+            headers["Authorization"] = `Bearer ${tokenRes.data.access_token}`;
+          }
+        } catch (e) {}
+
+        await axios.patch(url, { fields }, { headers, timeout: 10000 });
+        return true;
+      } catch (restErr: any) {
+        console.error(`[ORDER-FS] ‼️ Terminal: REST Set also failed: ${restErr.message}`);
+      }
+    }
+    return false;
+  };
+
+  const addDocSafe = async (col: string, data: any) => {
+    console.log(`[ORDER-FS] Attempting ADD: ${col} on ${databaseId}`);
+    try {
+      const docRef = await db.collection(col).add(data);
+      console.log(`[ORDER-FS] ✅ Success: ${col}/${docRef.id} added via SDK.`);
+      return docRef.id;
+    } catch (err: any) {
+      console.warn(`[ORDER-FS] ⚠️ SDK Add Failed: ${err.message}`);
+      
+      if (databaseId && databaseId !== "(default)") {
+        try {
+          const defaultDb = getDbInstance("(default)");
+          const docRef = await defaultDb.collection(col).add(data);
+          return docRef.id;
+        } catch (e) {
+          console.error(`[ORDER-FS] SDK Fallback Add failed.`);
+        }
+      }
+
+      try {
+        const tidyDb = (!databaseId || databaseId === "(default)") ? "(default)" : databaseId;
+        const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${tidyDb}/documents/${col}?key=${FIREBASE_API_KEY}`;
+        
+        const fields: any = {};
+        for (const key in data) {
+          const val = data[key];
+          if (typeof val === "string") fields[key] = { stringValue: val };
+          else if (typeof val === "number") fields[key] = { doubleValue: val };
+          else if (val instanceof Date) fields[key] = { timestampValue: val.toISOString() };
+          else if (typeof val === "boolean") fields[key] = { booleanValue: val };
+          else if (val === null) fields[key] = { nullValue: null };
+        }
+
+        const headers: any = { "Content-Type": "application/json" };
+        try {
+          const tokenRes = await axios.get("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token", {
+            headers: { "Metadata-Flavor": "Google" },
+            timeout: 1000
+          });
+          if (tokenRes.data?.access_token) {
+            headers["Authorization"] = `Bearer ${tokenRes.data.access_token}`;
+          }
+        } catch (e) {}
+
+        const res = await axios.post(url, { fields }, { headers, timeout: 10000 });
+        const nameParts = (res.data?.name || "").split("/");
+        const generatedId = nameParts[nameParts.length - 1];
+        if (generatedId) {
+          console.log(`[ORDER-FS] REST Add success with ID: ${generatedId}`);
+          return generatedId;
+        }
+      } catch (restErr: any) {
+        console.error(`[ORDER-FS] ‼️ Terminal: REST Add also failed: ${restErr.message}`);
+      }
+    }
+    return null;
   };
 
   const adjustUserBalanceSafe = async (userId: string, change: number) => {
@@ -308,10 +515,8 @@ async function startServer() {
       const secret = sS.data()?.razorpayKeySecret;
       const hmac = crypto.createHmac("sha256", secret).update(req.body.razorpay_order_id + "|" + req.body.razorpay_payment_id).digest("hex");
       if (hmac === req.body.razorpay_signature) {
-        await db.runTransaction(async (t: any) => {
-          t.update(db.collection("users").doc(req.body.userId), { balance: FieldValue.increment(Number(req.body.amount)) });
-          t.set(db.collection("deposits").doc(), { ...req.body, status: "approved", createdAt: FieldValue.serverTimestamp() });
-        });
+        await adjustUserBalanceSafe(req.body.userId, Number(req.body.amount));
+        await addDocSafe("deposits", { ...req.body, status: "approved", createdAt: new Date() });
         res.json({ success: true });
       } else res.status(400).json({ error: "Invalid sig" });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -326,209 +531,157 @@ async function startServer() {
     if (cleanUtr.length !== 12) return res.status(400).json({ error: "Invalid UTR format. Must be 12 digits." });
     
     try {
-      // Primary Attempt: Transaction
-      await db.runTransaction(async (t: any) => {
-        const lockRef = db.collection("utr_locks").doc(cleanUtr);
-        const lock = await t.get(lockRef);
-        if (lock.exists) throw new Error("DUPLICATE_UTR");
-        
-        t.set(lockRef, { createdAt: FieldValue.serverTimestamp(), userId, amount: Number(amount) });
-        t.set(db.collection("deposits").doc(), {
-          userId, 
-          userEmail: userEmail || "not-provided", 
-          amount: Number(amount), 
-          utr: cleanUtr, 
-          screenshotUrl: screenshotUrl || "", 
-          status: "pending", 
-          createdAt: FieldValue.serverTimestamp(),
-          source: "secure-transaction"
-        });
-      });
-      res.json({ success: true });
-    } catch (e: any) {
-      console.error(`[DEPOSIT] Transaction error: ${e.message}`);
-      
-      if (e.message === "DUPLICATE_UTR") {
+      const lockSnap = await getDocSafe("utr_locks", cleanUtr);
+      if (lockSnap.exists) {
         return res.status(400).json({ error: "This UTR number has already been used." });
       }
+      
+      await setDocSafe("utr_locks", cleanUtr, {
+        createdAt: new Date(),
+        userId,
+        amount: Number(amount)
+      });
 
-      // If it's a permission error, it might be the named database. Try a direct write.
-      try {
-        console.log("[DEPOSIT] Trying direct write fallback...");
-        await db.collection("deposits").add({
-          userId,
-          userEmail: userEmail || "not-provided",
-          amount: Number(amount),
-          utr: cleanUtr,
-          screenshotUrl: screenshotUrl || "",
-          status: "pending",
-          createdAt: FieldValue.serverTimestamp(),
-          source: "direct-sdk-fallback"
-        });
-        return res.json({ success: true, message: "Request received" });
-      } catch (e2: any) {
-        console.error(`[DEPOSIT] Direct write failed: ${e2.message}`);
-        
-        // Final attempt: try the default database explicitly
-        try {
-          console.log("[DEPOSIT] Trying default database fallback...");
-          const defaultDb = getFirestore(getApps()[0]);
-          await defaultDb.collection("deposits").add({
-            userId,
-            userEmail: userEmail || "not-provided",
-            amount: Number(amount),
-            utr: cleanUtr,
-            screenshotUrl,
-            status: "pending",
-            createdAt: FieldValue.serverTimestamp(),
-            source: "default-db-fallback"
-          });
-          return res.json({ success: true, message: "Request received (D)" });
-        } catch (e3: any) {
-          console.error(`[DEPOSIT] Default DB fallback failed: ${e3.message}`);
-          
-          // LAST RESORT: REST API with API KEY (Bypasses SDK issues)
-          try {
-            console.log("[DEPOSIT] Attempting ULTIMATE REST FALLBACK...");
-            await saveDepositViaRest({
-              userId,
-              userEmail: userEmail || "not-provided",
-              amount: Number(amount),
-              utr: cleanUtr,
-              screenshotUrl: screenshotUrl || "",
-              status: "pending",
-              source: "rest-ultimate-fallback"
-            });
-            console.log("[DEPOSIT] ULTIMATE REST FALLBACK SUCCESS.");
-            return res.json({ success: true, message: "Request received (R)" });
-          } catch (e4: any) {
-            console.error(`[DEPOSIT] ALL ATTEMPTS FAILED. REST Error: ${e4.response?.data?.error?.message || e4.message}`);
-            res.status(500).json({ 
-              error: "Permission denied or database error.", 
-              details: e4.response?.data?.error?.message || e4.message,
-              tip: "Please check Firebase Database ID and Permissions in AI Studio Settings."
-            });
-          }
-        }
+      const depId = await addDocSafe("deposits", {
+        userId, 
+        userEmail: userEmail || "not-provided", 
+        amount: Number(amount), 
+        utr: cleanUtr, 
+        screenshotUrl: screenshotUrl || "", 
+        status: "pending", 
+        createdAt: new Date(),
+        source: "rest-safe-manual"
+      });
+
+      if (depId) {
+        res.json({ success: true });
+      } else {
+        throw new Error("Failed to write manual deposit to database.");
       }
+    } catch (e: any) {
+      console.error(`[DEPOSIT] Error submitting manual deposit: ${e.message}`);
+      res.status(500).json({ error: e.message || "Failed to submit request." });
     }
   });
 
-  // Improved Proxy for Provider with better logging and headers
-  app.post("/api/proxy-provider", async (req, res) => {
-    const { courseId, targetLink, quantity, orderId } = req.body;
-    
-    console.log(`[ORDER] Request Body:`, JSON.stringify(req.body));
-    console.log(`[ORDER] Processing order ${orderId} for course ${courseId}`);
+  // IN-MEMORY SET TO PREVENT MULTIPLE TRANSMISSIONS
+  const processingOrders = new Set<string>();
+
+  // Helper to transmit single order to SMM provider directly
+  async function transmitOrderToProviderDirect(orderId: string, orderData: any) {
+    // Look up lock first
+    if (processingOrders.has(orderId)) {
+      console.log(`[LOCK] Order ${orderId} is currently being processed by another worker path. Skipping.`);
+      return { success: true, alreadyProcessing: true };
+    }
+
+    processingOrders.add(orderId);
+    console.log(`[TRANSMIT] Locking & processing orderId: ${orderId}`);
 
     try {
-      if (!courseId || !orderId) {
-        throw new Error("Missing required fields: courseId and orderId are mandatory.");
+      // Recheck Firestore to verify it wasn't already completed by a parallel route
+      const snapObj = await getDocSafe("orders", orderId);
+      if (snapObj.exists) {
+        const snapData = snapObj.data() || {};
+        if (snapData.providerOrderId) {
+          console.log(`[TRANSMIT] Order ${orderId} already has providerOrderId registered: ${snapData.providerOrderId}`);
+          return { success: true, providerOrderId: snapData.providerOrderId };
+        }
+        if (snapData.providerTransmissionStatus === "completed") {
+          console.log(`[TRANSMIT] Order ${orderId} transmission was already completed.`);
+          return { success: true, providerOrderId: snapData.providerOrderId || "SENT" };
+        }
       }
 
-      // 1. Fetch Course
-      let cS;
-      try {
-        cS = await getDocSafe("courses", courseId);
-      } catch (e: any) {
-        console.error(`[ORDER] Failed to fetch course doc: ${e.message}`);
-        throw new Error(`Technical Error (Courses): ${e.message}`);
+      // 0. Pre-check Balance
+      const currentOrderSnap = await getDocSafe("orders", orderId);
+      if (!currentOrderSnap.exists) throw new Error("Order not found");
+      const currentOrderData = currentOrderSnap.data();
+      const orderAmount = currentOrderData.totalPrice || 0;
+      
+      const userSnap = await getDocSafe("users", currentOrderData.userId);
+      if (!userSnap.exists) throw new Error("User profile not found");
+      const userBalance = Number(userSnap.data().balance || 0);
+
+      if (userBalance < orderAmount) {
+        throw new Error(`Insufficient balance (Current: ₹${userBalance}, Required: ₹${orderAmount}). Order rejected.`);
       }
 
-      if (!cS || !cS.exists) throw new Error(`Service Configuration Not Found: The service with ID "${courseId}" does not exist in our database.`);
+      const { courseId, targetLink, quantity } = orderData;
+      if (!courseId) {
+        throw new Error("Missing required field: courseId");
+      }
+
+      // 1. Fetch Course details
+      let cS = await getDocSafe("courses", courseId);
+      if (!cS || !cS.exists) {
+        throw new Error(`Service configuration with ID "${courseId}" does not exist in the database.`);
+      }
       const c = cS.data();
-      
+
       // 2. Fetch Settings
-      let s;
-      try {
-        const sS = await getDocSafe("settings", "payment");
-        s = sS.data() || {};
-      } catch (e) {
-        console.error(`[ORDER] Failed to fetch settings, using defaults.`);
-        s = {};
-      }
-      
-      // 3. Resolve Provider
+      let sS = await getDocSafe("settings", "payment");
+      const s = sS.exists ? (sS.data() || {}) : {};
+
+      // 3. Resolve API credentials
       let pUrl = (s.providerApiUrl || "").trim();
       let pKey = (s.providerApiKey || "").trim();
-      
+
       if (c.providerId && c.providerId !== "global") {
-        console.log(`[ORDER] Course uses specific provider: ${c.providerId}`);
-        try {
-          const pS = await getDocSafe("providers", c.providerId);
-          if (pS && pS.exists) { 
-            const pData = pS.data() || {};
-            pUrl = (pData.apiUrl || "").trim(); 
-            pKey = (pData.apiKey || "").trim(); 
-          } else {
-            console.warn(`[ORDER] Provider "${c.providerId}" not found, falling back to global settings.`);
-          }
-        } catch (e) {
-          console.warn(`[ORDER] Error fetching provider details, falling back.`);
+        console.log(`[TRANSMIT] Course ${courseId} is using a custom provider: ${c.providerId}`);
+        const pS = await getDocSafe("providers", c.providerId);
+        if (pS && pS.exists) {
+          const pData = pS.data() || {};
+          pUrl = (pData.apiUrl || "").trim();
+          pKey = (pData.apiKey || "").trim();
+        } else {
+          console.warn(`[TRANSMIT] Custom provider ${c.providerId} not found. Falling back to global settings.`);
         }
       }
 
       if (!pUrl || !pKey) {
-        throw new Error("Provider API URL or Key is missing. Please check your admin configuration.");
+        throw new Error("Provider API URL or API Key is missing inside settings. Transmission canceled.");
       }
 
-      // Ensure URL is absolute
-      if (!pUrl.startsWith("http")) pUrl = "https://" + pUrl;
+      if (!pUrl.startsWith("http")) {
+        pUrl = "https://" + pUrl;
+      }
 
       if (!c.providerServiceId || String(c.providerServiceId) === "0") {
-        throw new Error(`Provider Service ID for course "${c.title}" is missing or invalid.`);
+        throw new Error(`Service ID for course "${c.title}" is missing or mapped poorly.`);
       }
-      
+
+      // 4. Link & Username Normalization
       let finalLink = String(targetLink).trim();
-      
-      // 1. If it starts with @, it's likely an Instagram/Twitter handle, convert to profile link
       if (finalLink.startsWith("@")) {
         const username = finalLink.substring(1);
-        if (c.category?.toLowerCase().includes("instagram")) {
-          finalLink = `https://www.instagram.com/${username}/`;
-        } else if (c.category?.toLowerCase().includes("twitter") || c.category?.toLowerCase().includes("x")) {
-          finalLink = `https://x.com/${username}/`;
-        } else if (c.category?.toLowerCase().includes("tiktok")) {
-          finalLink = `https://www.tiktok.com/@${username}`;
-        }
+        if (c.category?.toLowerCase().includes("instagram")) finalLink = `https://www.instagram.com/${username}/`;
+        else if (c.category?.toLowerCase().includes("twitter") || c.category?.toLowerCase().includes("x")) finalLink = `https://x.com/${username}/`;
+        else if (c.category?.toLowerCase().includes("tiktok")) finalLink = `https://www.tiktok.com/@${username}`;
       } else if (!finalLink.includes("://") && !finalLink.includes(".")) {
-        // Raw username input without domain or @ prefix
         const username = finalLink.trim();
         const cat = (c.category || "").toLowerCase();
-        if (cat.includes("instagram")) {
-          finalLink = `https://www.instagram.com/${username}/`;
-        } else if (cat.includes("twitter") || cat.includes("x.com") || cat.includes("x / twitter") || cat.includes(" x ")) {
-          finalLink = `https://x.com/${username}/`;
-        } else if (cat.includes("tiktok")) {
-          finalLink = `https://www.tiktok.com/@${username}`;
-        } else if (cat.includes("telegram") || cat.includes("tg")) {
-          finalLink = `https://t.me/${username}`;
-        } else if (cat.includes("youtube") || cat.includes("yt")) {
-          finalLink = `https://www.youtube.com/@${username}`;
-        }
+        if (cat.includes("instagram")) finalLink = `https://www.instagram.com/${username}/`;
+        else if (cat.includes("twitter") || cat.includes("x.com") || cat.includes("x / twitter") || cat.includes(" x ")) finalLink = `https://x.com/${username}/`;
+        else if (cat.includes("tiktok")) finalLink = `https://www.tiktok.com/@${username}`;
+        else if (cat.includes("telegram") || cat.includes("tg")) finalLink = `https://t.me/${username}`;
+        else if (cat.includes("youtube") || cat.includes("yt")) finalLink = `https://www.youtube.com/@${username}`;
       }
-      
-      // 2. Add https:// if missing and looks like a domain
+
       if (finalLink.length > 3 && !finalLink.includes("://") && finalLink.includes(".")) {
         finalLink = "https://" + finalLink;
       }
-      
-      // 3. Strip tracking parameters (but keep basic link structure)
+
       try {
         if (finalLink.includes("?")) {
-           const urlObj = new URL(finalLink);
-           // List of common trackers to remove
-           const trackers = ["igshid", "utm_source", "utm_medium", "utm_campaign", "fbclid", "s", "t"];
-           trackers.forEach(t => urlObj.searchParams.delete(t));
-           finalLink = urlObj.toString();
-         }
-      } catch (err) {
-        // Fallback to original if URL is weird
-      }
+          const urlObj = new URL(finalLink);
+          const trackers = ["igshid", "utm_source", "utm_medium", "utm_campaign", "fbclid", "s", "t"];
+          trackers.forEach(t => urlObj.searchParams.delete(t));
+          finalLink = urlObj.toString();
+        }
+      } catch (err) {}
 
-      console.log(`[ORDER] Routing to Provider: ${pUrl} | Service: ${c.providerServiceId}`);
-      console.log(`[ORDER] Payload: service=${c.providerServiceId}, link=${finalLink}, quantity=${quantity}`);
-      
+      console.log(`[TRANSMIT] Sending API request to: ${pUrl}`);
       const params = new URLSearchParams();
       params.append("key", pKey);
       params.append("action", "add");
@@ -536,213 +689,170 @@ async function startServer() {
       params.append("link", finalLink);
       params.append("quantity", String(quantity).trim());
 
-      // Dual Transmission: set parameters in query string as well as URL-encoded body
-      const querySeparator = pUrl.includes("?") ? "&" : "?";
-      const finalUrl = pUrl + querySeparator + params.toString();
-
       let response;
       let attempts = 0;
-      const maxAttempts = 2; // Retry once if it fails due to network
-      
+      const maxAttempts = 5;
+
       while (attempts < maxAttempts) {
         try {
           attempts++;
-          console.log(`[ORDER] Calling Provider API (Attempt ${attempts}): ${finalUrl}`);
-          response = await axios.post(finalUrl, params.toString(), {
+          let targetUrl = pUrl;
+
+          // Self-Healing fallback paths
+          if (!targetUrl.includes("/api/")) {
+            const cleanedBase = targetUrl.endsWith("/") ? targetUrl.slice(0, -1) : targetUrl;
+            if (attempts === 2) targetUrl = `${cleanedBase}/api/v2`;
+            else if (attempts === 3) targetUrl = `${cleanedBase}/api/v2/`;
+            else if (attempts === 4) targetUrl = `${cleanedBase}/api/v1`;
+          }
+
+          let isDualMode = false;
+          if (attempts >= 4) {
+            isDualMode = true;
+            const seq = targetUrl.includes("?") ? "&" : "?";
+            targetUrl = targetUrl + seq + params.toString();
+          }
+
+          let reqBody: any = params;
+          let contentHeader = "application/x-www-form-urlencoded";
+
+          if (attempts === 3) {
+            reqBody = {
+              key: pKey,
+              action: "add",
+              service: String(c.providerServiceId).trim(),
+              link: finalLink,
+              quantity: String(quantity).trim()
+            };
+            contentHeader = "application/json";
+          }
+
+          response = await axios.post(targetUrl, reqBody, {
             headers: {
-              "Content-Type": "application/x-www-form-urlencoded",
+              "Content-Type": contentHeader,
               "Accept": "application/json, text/plain, */*",
               "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             },
-            timeout: 55000 
+            timeout: 55000
           });
-          break; // Success!
+          break; // Succeeded!
         } catch (axiosError: any) {
+          const errMsg = axiosError.response ? JSON.stringify(axiosError.response.data) : axiosError.message;
+          console.warn(`[TRANSMIT] Attempt ${attempts} failed for ${orderId}: ${errMsg}`);
+          await logToDb("PROVIDER_ATTEMPT_FAIL", { attempt: attempts, error: errMsg, msg: axiosError.message, orderId });
+
           if (attempts >= maxAttempts) {
-            console.error(`[ORDER] Provider Connection Failed after ${attempts} attempts: ${axiosError.message}`);
-            
-            let providerErr = "Connection failed";
+            // Final failure marking order fail
+            let providerErr: any = "Connection failed";
             if (axiosError.response) {
-              console.error(`[ORDER] Provider Error Status: ${axiosError.response.status}`);
-              console.error(`[ORDER] Provider Error Body:`, JSON.stringify(axiosError.response.data));
               providerErr = axiosError.response.data?.error || axiosError.response.data?.message || axiosError.response.data?.msg || `HTTP ${axiosError.response.status}`;
             } else if (axiosError.request) {
-              providerErr = "No response from provider (Timeout or Network Error)";
+              providerErr = "No response from provider (Timeout/Network)";
             } else {
               providerErr = axiosError.message;
             }
 
-            const stringErr = typeof providerErr === 'string' ? providerErr : JSON.stringify(providerErr);
-            
-            // AUTOMATIC REFUND ON CONNECTION FAILURE
-            try {
-              console.log(`[REFUND] Starting connection failure refund for ${orderId}`);
-              await db.runTransaction(async (transaction: any) => {
-                const orderRef = db.collection("orders").doc(orderId);
-                const orderSnap = await transaction.get(orderRef);
-                
-                if (orderSnap.exists) {
-                  const orderData = orderSnap.data();
-                  if (orderData.status !== "Failed" && orderData.status !== "Refunded") {
-                    const userRef = db.collection("users").doc(orderData.userId);
-                    const userSnap = await transaction.get(userRef);
-                    
-                    if (userSnap.exists) {
-                       const price = Number(orderData.totalPrice || 0);
-                       transaction.update(userRef, { balance: FieldValue.increment(price) });
-                       transaction.update(orderRef, { 
-                         status: "Failed", 
-                         error: `Refunded: API Connection Error (${stringErr})`,
-                         updatedAt: FieldValue.serverTimestamp()
-                       });
-                       console.log(`[REFUND] Wallet updated for User ${orderData.userId}: +₹${price}`);
-                    }
-                  }
-                }
-              });
-            } catch (refundErr: any) {
-              console.error(`[REFUND] Transaction failed, trying direct update fallback: ${refundErr.message}`);
-              // Fallback to safe rest-based balance adjustment and status update
-              try {
-                const oSnap = await getDocSafe("orders", orderId);
-                if (oSnap && oSnap.exists) {
-                  const oData = oSnap.data();
-                  const price = Number(oData.totalPrice || 0);
-                  const refSuccess = await adjustUserBalanceSafe(oData.userId, price);
-                  if (refSuccess) {
-                    await updateDocSafe("orders", orderId, { 
-                      status: "Failed", 
-                      error: `Refunded: API Connection Error (${stringErr})`,
-                      updatedAt: new Date()
-                    });
-                    console.log(`[REFUND] Fallback wallet refund successful for User ${oData.userId}: +₹${price}`);
-                  } else {
-                    await updateDocSafe("orders", orderId, { 
-                      status: "Failed", 
-                      error: `Failed (Refund pending manual check): ${stringErr}`,
-                      updatedAt: new Date()
-                    });
-                  }
-                } else {
-                  console.error(`[REFUND] Order ${orderId} not found in fallback.`);
-                }
-              } catch (fallbackErr: any) {
-                console.error(`[REFUND] Terminal fallback failed: ${fallbackErr.message}`);
-                await updateDocSafe("orders", orderId, { 
-                  status: "Failed", 
-                  error: `Failed (Refund error): ${stringErr}`,
-                  updatedAt: new Date()
-                });
-              }
-            }
-            
-            return res.status(400).json({ success: false, error: stringErr });
+            const stringErr = (typeof providerErr === "string") ? providerErr : JSON.stringify(providerErr);
+            console.error(`[TRANSMIT] Ultimate connection failure to provider: ${stringErr}`);
+
+            await updateDocSafe("orders", orderId, {
+              status: "Failed",
+              needsProviderTransmission: false,
+              providerTransmissionStatus: "failed",
+              error: `API Connection Error (${stringErr.substring(0, 400)})`,
+              updatedAt: new Date()
+            });
+
+            return { success: false, error: stringErr };
           } else {
-            console.warn(`[ORDER] Attempt ${attempts} failed, retrying in 2 seconds...`);
-            await new Promise(r => setTimeout(r, 2000));
+            const backoff = attempts < 3 ? 500 : (attempts - 1) * 2000;
+            await new Promise(r => setTimeout(r, backoff));
           }
         }
       }
-      
-      console.log(`[ORDER] Provider Response Status: ${response.status}`);
-      
-      // Parse response carefully
-      let resData = response.data;
-      
-      // Handle cases where response might be a string that needs parsing
+
+      let resData = response?.data;
       if (typeof resData === "string") {
         try {
           const trimmed = resData.trim();
           if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
             resData = JSON.parse(trimmed);
-          } else {
-            // Plain string response - check if it's just a number (some panels return only ID)
-            if (trimmed.match(/^\d+$/)) {
-              resData = { order: trimmed };
-            }
+          } else if (trimmed.match(/^\d+$/)) {
+            resData = { order: trimmed };
           }
-        } catch(e) {
-          console.log(`[ORDER] Non-JSON string response from provider.`);
-        }
-      }
-      
-      // Some providers return an array
-      if (Array.isArray(resData) && resData.length > 0) {
-          resData = resData[0];
+        } catch (e) {}
       }
 
-      console.log(`[ORDER] Provider Data:`, JSON.stringify(resData));
-      
-      // Comprehensive Success & Order ID Detection
+      if (Array.isArray(resData) && resData.length > 0) {
+        resData = resData[0];
+      }
+
       let providerOrderId = resData?.order || resData?.order_id || resData?.orderid || resData?.orderId || resData?.id || resData?.ID;
-      
-      // If no ID but status is success, we might have an issue but the order is "received"
       const isStatusSuccess = resData?.status === "success" || 
                               resData?.status === "Success" || 
                               resData?.success === true || 
                               resData?.success === "true" ||
                               resData?.msg?.toLowerCase().includes("success") ||
                               resData?.message?.toLowerCase().includes("success");
-      
-      // Fallback: If status is success but no order ID, check if the whole response is a number
-      if (!providerOrderId && typeof resData === 'number') {
+
+      if (!providerOrderId && typeof resData === "number") {
         providerOrderId = String(resData);
       }
-      
+
       if (providerOrderId || isStatusSuccess) {
         const oId = providerOrderId ? String(providerOrderId) : "SENT_NO_ID";
+        console.log(`[TRANSMIT] Successfully ordered from SMM panel. Provider Order ID: ${oId}`);
+        await logToDb("PROXY_PROVIDER_SUCCESS", { providerOrderId: oId, isStatusSuccess, resData, orderId });
+
+        // DEDUCT BALANCE NOW - Order was successful with provider
         try {
-          await db.runTransaction(async (transaction: any) => {
-            const orderRef = db.collection("orders").doc(orderId);
-            const orderSnap = await transaction.get(orderRef);
+          const orderSnap = await getDocSafe("orders", orderId);
+          if (orderSnap.exists) {
+            const currentData = orderSnap.data();
+            // We deduct if it hasn't been deducted yet (Pending/Processing status)
+            // or if it was previously failed and we are retrying.
+            const needsDeduction = ["Pending", "Processing", "Failed", "Refunded", "Awaiting-Validation"].includes(currentData.status);
             
-            if (orderSnap.exists) {
-              const orderData = orderSnap.data();
-              
-              // CRITICAL: If the order was previously FAILED/REFUNDED, we must re-deduct balance on success
-              if (orderData.status === "Failed" || orderData.status === "Refunded") {
-                const userRef = db.collection("users").doc(orderData.userId);
-                const userSnap = await transaction.get(userRef);
-                
-                if (userSnap.exists) {
-                  const currentBalance = userSnap.data().balance || 0;
-                  const price = orderData.totalPrice || 0;
-                  
-                  // Even if user has 0 balance now, we deduct (panel logic allows retry to proceed if admin triggered)
-                  transaction.update(userRef, { balance: currentBalance - price });
-                  console.log(`[RE-DEDUCT] Order ${orderId} successful retry. Deducted ₹${price} from User ${orderData.userId}`);
-                }
+            if (needsDeduction) {
+              const price = currentData.totalPrice || 0;
+              const deductionSuccess = await adjustUserBalanceSafe(currentData.userId, -price);
+              if (deductionSuccess) {
+                console.log(`[DEDUCTION] Deducted ₹${price} from User ${currentData.userId} after successful provider response.`);
+              } else {
+                console.error(`[DEDUCTION-FAIL] Could not deduct balance for user ${currentData.userId} despite provider success!`);
               }
-              
-              transaction.update(orderRef, { 
-                status: "Completed", 
-                providerOrderId: oId, 
-                error: null,
-                updatedAt: FieldValue.serverTimestamp(),
-                providerRawResponse: JSON.stringify(resData).substring(0, 800)
-              });
             }
+          }
+
+          await updateDocSafe("orders", orderId, {
+            status: "Completed",
+            providerOrderId: oId,
+            needsProviderTransmission: false,
+            providerTransmissionStatus: "completed",
+            error: null,
+            updatedAt: new Date(),
+            providerRawResponse: JSON.stringify(resData).substring(0, 800)
           });
         } catch (updateErr: any) {
-          console.warn(`[ORDER] Final update failed but order was sent: ${updateErr.message}`);
-          // Fallback if transaction fails but we know it was sent
-          await updateDocSafe("orders", orderId, { 
-            status: "Completed", 
-            providerOrderId: oId, 
-            updatedAt: new Date() 
+          console.warn(`[TRANSMIT] Could not update Firestore snapshot but was definitely ordered: ${updateErr.message}`);
+          await updateDocSafe("orders", orderId, {
+            status: "Completed",
+            providerOrderId: oId,
+            needsProviderTransmission: false,
+            providerTransmissionStatus: "completed",
+            updatedAt: new Date()
           });
         }
-        return res.json({ success: true, providerOrderId: oId });
+        return { success: true, providerOrderId: oId };
       } else {
-        // Collect all possible error keys from common SMM panels
+        // Collect rejection errors
         const rawError = resData?.error || resData?.message || resData?.msg || resData?.errors || resData?.ERR || resData?.status;
         let errorMsg = "Provider rejected the request.";
-        
+
         if (rawError) {
           if (typeof rawError === "string") errorMsg = rawError;
           else if (Array.isArray(rawError)) errorMsg = rawError.join(", ");
           else if (typeof rawError === "object") {
-            // Some panels return { errors: { link: ["invalid"] } }
             const firstInnerKey = Object.keys(rawError)[0];
             if (firstInnerKey && Array.isArray(rawError[firstInnerKey])) {
               errorMsg = `${firstInnerKey}: ${rawError[firstInnerKey][0]}`;
@@ -754,74 +864,119 @@ async function startServer() {
           errorMsg = resData;
         }
 
-        console.error(`[ORDER] Provider Rejection: ${errorMsg} | Raw Response: ${JSON.stringify(resData)}`);
-        
-        // AUTOMATIC REFUND ON PROVIDER REJECTION
-        try {
-          console.log(`[REFUND] Starting rejection refund for ${orderId}`);
-          await db.runTransaction(async (transaction: any) => {
-            const orderRef = db.collection("orders").doc(orderId);
-            const orderSnap = await transaction.get(orderRef);
-            
-            if (orderSnap.exists) {
-              const orderData = orderSnap.data();
-              if (orderData.status !== "Failed" && orderData.status !== "Refunded") {
-                const userRef = db.collection("users").doc(orderData.userId);
-                const userSnap = await transaction.get(userRef);
-                
-                if (userSnap.exists) {
-                  const price = Number(orderData.totalPrice || 0);
-                  transaction.update(userRef, { balance: FieldValue.increment(price) });
-                  transaction.update(orderRef, { 
-                    status: "Failed", 
-                    error: `Refunded: Provider Rejected Order (${String(errorMsg).substring(0, 200)})`,
-                    updatedAt: FieldValue.serverTimestamp()
-                  });
-                  console.log(`[REFUND] Wallet updated for User ${orderData.userId}: +₹${price}`);
-                }
-              }
-            }
-          });
-        } catch (refundErr: any) {
-          console.error(`[REFUND] Rejection refund failed, using fallback: ${refundErr.message}`);
-          try {
-            const oSnap = await getDocSafe("orders", orderId);
-            if (oSnap && oSnap.exists) {
-              const oData = oSnap.data();
-              const price = Number(oData.totalPrice || 0);
-              const refSuccess = await adjustUserBalanceSafe(oData.userId, price);
-              if (refSuccess) {
-                await updateDocSafe("orders", orderId, { 
-                  status: "Failed", 
-                  error: `Refunded: Provider Rejected Order (${String(errorMsg).substring(0, 200)})`,
-                  updatedAt: new Date()
-                });
-                console.log(`[REFUND] Fallback rejection refund successful for User ${oData.userId}: +₹${price}`);
-              } else {
-                await updateDocSafe("orders", orderId, { 
-                  status: "Failed", 
-                  error: `Failed (Refund pending manual check): ${String(errorMsg).substring(0, 200)}`,
-                  updatedAt: new Date()
-                });
-              }
-            } else {
-              console.error(`[REFUND] Order ${orderId} not found in rejection fallback.`);
-            }
-          } catch (fallbackErr: any) {
-            console.error(`[REFUND] Terminal rejection fallback failed: ${fallbackErr.message}`);
-            await updateDocSafe("orders", orderId, { 
-              status: "Failed", 
-              error: `Failed (Refund error): ${String(errorMsg).substring(0, 200)}`,
-              updatedAt: new Date()
-            });
-          }
-        }
-        
-        return res.status(400).json({ success: false, error: String(errorMsg) });
+        console.error(`[TRANSMIT] Provider rejected request: ${errorMsg}`);
+        await logToDb("PROXY_PROVIDER_REJECTED", { error: errorMsg, resData, orderId });
+
+        const finalErrorStr = typeof errorMsg === "string" ? errorMsg : JSON.stringify(errorMsg);
+
+        await updateDocSafe("orders", orderId, {
+          status: "Failed",
+          needsProviderTransmission: false,
+          providerTransmissionStatus: "failed",
+          error: `Provider Rejected Order (${finalErrorStr.substring(0, 400)})`,
+          updatedAt: new Date()
+        });
+
+        return { success: false, error: finalErrorStr };
       }
-    } catch (e: any) { 
-      console.error(`[ORDER] Final Catch: ${e.message}`);
-      return res.status(500).json({ success: false, error: e.message || "Unknown internal server error" }); 
+    } catch (e: any) {
+      console.error(`[TRANSMIT] Severe Exception: ${e.message}`);
+      await logToDb("PROXY_PROVIDER_ERROR", { error: e.message, orderId });
+      return { success: false, error: e.message || "Unknown internal processing error" };
+    } finally {
+      processingOrders.delete(orderId);
+      console.log(`[TRANSMIT] Unlocked orderId: ${orderId}`);
+    }
+  };
+
+  // Background Live Snapshot Listener
+  function startBackgroundOrderListener(dbInstance: any) {
+    console.log("[BACKGROUND-PROCESSOR] Starting real-time Firestore background order observer...");
+    
+    if (!dbInstance) {
+      console.warn("[BACKGROUND-PROCESSOR] Firestore reference is undefined. Background observer disabled.");
+      return;
+    }
+
+    try {
+      dbInstance.collection("orders")
+        .where("needsProviderTransmission", "==", true)
+        .onSnapshot(async (snapshot: any) => {
+          if (!snapshot) return;
+          
+          for (const docChange of snapshot.docChanges()) {
+            if (docChange.type === "added" || docChange.type === "modified") {
+              const orderDoc = docChange.doc;
+              const orderId = orderDoc.id;
+              const orderData = orderDoc.data();
+
+              // Safeguard locks
+              if (processingOrders.has(orderId)) {
+                continue;
+              }
+
+              if (orderData.needsProviderTransmission !== true) {
+                continue;
+              }
+
+              if (orderData.providerTransmissionStatus === "processing" || 
+                  orderData.providerTransmissionStatus === "completed" || 
+                  orderData.providerTransmissionStatus === "failed") {
+                continue;
+              }
+
+              if (orderData.providerOrderId) {
+                // Safeguard: Already sent or manually processed
+                await updateDocSafe("orders", orderId, {
+                  needsProviderTransmission: false,
+                  providerTransmissionStatus: "completed"
+                });
+                continue;
+              }
+
+              console.log(`[BACKGROUND-PROCESSOR] 🔔 Real-time trigger detected for Order ${orderId}. Initializing automatic dispatch loop...`);
+              
+              // In background workers, run it asynchronously (without blocking loop iteration)
+              (async () => {
+                try {
+                  // Mark in Firestore as "processing" to lock globally across nodes
+                  await updateDocSafe("orders", orderId, {
+                    providerTransmissionStatus: "processing",
+                    updatedAt: new Date()
+                  });
+
+                  await transmitOrderToProviderDirect(orderId, orderData);
+                } catch (err: any) {
+                  console.error(`[BACKGROUND-PROCESSOR] Task loop error on ${orderId}:`, err.message);
+                }
+              })();
+            }
+          }
+        }, (error: any) => {
+          console.error("[BACKGROUND-PROCESSOR] Firestore snap listener error:", error.message);
+          // Auto healing restart loop
+          setTimeout(() => startBackgroundOrderListener(dbInstance), 12000);
+        });
+    } catch (err: any) {
+      console.error("[BACKGROUND-PROCESSOR] Live listener mapping failed:", err.message);
+    }
+  };
+
+  // Improved Proxy for Provider with better logging and headers
+  app.post("/api/proxy-provider", async (req, res) => {
+    const { courseId, targetLink, quantity, orderId } = req.body;
+    
+    console.log(`[HTTP Proxy] Order transmission call received for order: ${orderId}`);
+    try {
+      const result = await transmitOrderToProviderDirect(orderId, { courseId, targetLink, quantity });
+      if (result.success) {
+        return res.json({ success: true, providerOrderId: result.providerOrderId });
+      } else {
+        return res.status(400).json({ success: false, error: result.alreadyProcessing ? "Processing in-progress..." : result.error });
+      }
+    } catch (e: any) {
+      console.error(`[HTTP Proxy] Severe endpoint exception: ${e.message}`);
+      return res.status(500).json({ success: false, error: e.message || "Unknown endpoint exception." });
     }
   });
 
@@ -872,7 +1027,7 @@ async function startServer() {
     const { orderId } = req.body;
     if (!orderId) return res.status(400).json({ error: "orderId required" });
     try {
-      const oS = await db.collection("orders").doc(orderId).get();
+      const oS = await getDocSafe("orders", orderId);
       if (!oS.exists) return res.status(404).json({ error: "Order not found" });
       res.json({ success: true, status: oS.data()?.status });
     } catch (e: any) {
@@ -886,7 +1041,7 @@ async function startServer() {
       const { orderId } = req.body;
       if (!orderId) return res.status(400).json({ error: "orderId required" });
 
-      const oS = await db.collection("orders").doc(orderId).get();
+      const oS = await getDocSafe("orders", orderId);
       if (!oS.exists) return res.status(404).json({ error: "Order not found" });
       const order = oS.data();
 
@@ -949,10 +1104,10 @@ async function startServer() {
           !order.updatedAt;
 
         if (shouldUpdate) {
-          await db.collection("orders").doc(orderId).update({ 
+          await updateDocSafe("orders", orderId, { 
             status: pStatus, 
             providerStatus: pStatus,
-            updatedAt: FieldValue.serverTimestamp() 
+            updatedAt: new Date()
           });
           console.log(`[SYNC] ✅ Updated order ${orderId} to ${pStatus}`);
           return res.json({ success: true, status: pStatus, updated: true });

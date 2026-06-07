@@ -123,6 +123,30 @@ export default function Dashboard() {
     );
   }
 
+  const formatErrorMessage = (err: any): string => {
+    if (!err) return "Unknown error";
+    if (typeof err === "string") return err;
+    if (typeof err === "object") {
+      if (err.message && typeof err.message === "string") return err.message;
+      if (err.error && typeof err.error === "string") return err.error;
+      if (err.msg && typeof err.msg === "string") return err.msg;
+      
+      const keys = ["message", "error", "msg", "errors", "detail", "err"];
+      for (const k of keys) {
+        if (err[k]) {
+          if (typeof err[k] === "string") return err[k];
+        }
+      }
+      
+      try {
+        return JSON.stringify(err);
+      } catch {
+        return "[Object]";
+      }
+    }
+    return String(err);
+  };
+
   const getStatusBadge = (status: string) => {
     switch (status?.toLowerCase()) {
       case 'pending':
@@ -138,7 +162,7 @@ export default function Dashboard() {
       case 'canceled':
         return <Badge className="bg-red-100 text-red-700 border-none">Canceled</Badge>;
       case 'failed':
-        return <Badge className="bg-red-600 text-white border-none">Failed (Refunded)</Badge>;
+        return <Badge className="bg-red-600 text-white border-none">Failed</Badge>;
       case 'refunded':
         return <Badge className="bg-gray-100 text-gray-700 border-none">Refunded</Badge>;
       case 'approved': // Legacy status from manual approval
@@ -222,9 +246,12 @@ export default function Dashboard() {
                   </div>
 
                   {order.status?.toLowerCase() === 'failed' && (
-                    <div className="p-2 bg-red-50 text-red-600 rounded-lg text-[10px] font-bold border border-red-100 flex items-center gap-1.5 animate-pulse">
-                      <AlertCircle className="w-3 h-3" />
-                      ORDER REJECTED - Amount (₹{order.totalPrice}) has been automatically refunded to your wallet.
+                    <div className="p-2 bg-red-50 text-red-600 rounded-lg text-[10px] font-bold border border-red-100 flex flex-col gap-1 animate-in fade-in">
+                      <div className="flex items-center gap-1.5">
+                        <AlertCircle className="w-3 h-3" />
+                        ORDER REJECTED
+                      </div>
+                      <p className="text-[9px] opacity-80 pl-4">{formatErrorMessage(order.error) || "Check target link or contact support."}</p>
                     </div>
                   )}
 
