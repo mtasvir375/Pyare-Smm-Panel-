@@ -22,7 +22,7 @@ import firebaseConfig from "../../firebase-applet-config.json";
 // displays the custom branded domain instead of the default project id firebaseapp.com fallback.
 const resolvedFirebaseConfig = { ...firebaseConfig };
 if (typeof window !== "undefined" && window.location.origin.includes("pyaresmmpanel.online")) {
-  resolvedFirebaseConfig.authDomain = "pyaresmmpanel.online";
+  resolvedFirebaseConfig.authDomain = window.location.hostname;
   console.log(`[Firebase Configuration] Branded Custom domain detected. Using dynamic authDomain: ${resolvedFirebaseConfig.authDomain}`);
 }
 
