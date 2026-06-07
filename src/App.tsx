@@ -46,9 +46,10 @@ export default function App() {
         
         // 1. Initial base URL fallback
         if (origin.includes("pyaresmmpanel.online")) {
-          // If accessing via the official custom domain, call its own API endpoint directly!
-          axios.defaults.baseURL = origin;
-          console.log(`[API] Custom domain 'pyaresmmpanel.online' detected. Routing API requests locally on the same origin: ${origin}`);
+          // Route API requests directly to Cloud Run backend to prevent Vercel's 10-second timeout limit
+          // on long-running SMM provider API requests.
+          axios.defaults.baseURL = activeBackendUrl;
+          console.log(`[API] Custom domain 'pyaresmmpanel.online' detected. Routing API requests directly to Backend Cloud Run: ${activeBackendUrl}`);
         } else if (!isLocalOrPreview || origin.includes("vercel") || origin.includes("netlify") || origin.includes("github.io")) {
           // If accessing from a custom domain (like pyaresmmpanel.online) or a static host (like vercel, netlify),
           // we MUST call the active Google Cloud Run backend directly to process API calls correctly.
@@ -78,7 +79,7 @@ export default function App() {
                                              (!finalUrl.includes(".run.app") && !finalUrl.includes("localhost") && !finalUrl.includes("127.0.0.1") && !finalUrl.includes(origin.replace("https://", "").replace("http://", "")));
               
               if (!isSavedUrlCustomDomain || origin.includes("pyaresmmpanel.online")) {
-                const targetUrl = origin.includes("pyaresmmpanel.online") ? origin : finalUrl;
+                const targetUrl = origin.includes("pyaresmmpanel.online") ? activeBackendUrl : finalUrl;
                 // Override baseURL if different from current configuration
                 if (axios.defaults.baseURL !== targetUrl) {
                   axios.defaults.baseURL = targetUrl;
