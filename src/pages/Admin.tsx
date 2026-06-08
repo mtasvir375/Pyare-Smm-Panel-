@@ -1572,7 +1572,16 @@ export default function Admin() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-xs font-bold uppercase tracking-wider text-primary font-bold">Backend Server URL</label>
+                      <div className="flex justify-between items-center">
+                        <label className="text-xs font-bold uppercase tracking-wider text-primary font-bold">Backend Server URL</label>
+                        <button
+                          type="button"
+                          onClick={() => setBackendApiUrl("https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app")}
+                          className="text-[10px] text-primary hover:underline font-semibold"
+                        >
+                          Auto-fill Stable API URL
+                        </button>
+                      </div>
                       <Input 
                         placeholder="e.g. https://ais-pre-...run.app" 
                         value={backendApiUrl}
@@ -1582,7 +1591,8 @@ export default function Admin() {
                     </div>
                   </div>
                   <p className="text-[10px] text-gray-500 mt-[-12px]">
-                    Note: If running on a custom domain, enter your stable Cloud Run App URL here (the public/shared URL ending with <strong>'ais-pre-...run.app'</strong>). Do not use the development sandbox URL ('ais-dev-...'). This allows routing user order creations securely.
+                    Note: Your stable Cloud Run backend URL is: <strong className="text-primary">https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app</strong>. 
+                    Do not use your custom domain or the dev sandbox URL ('ais-dev-...') here. Click "Auto-fill Stable API URL" above to set it correctly.
                   </p>
 
                   <div className="grid gap-4 md:grid-cols-2">

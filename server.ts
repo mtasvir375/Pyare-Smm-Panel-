@@ -1,4 +1,5 @@
 import express from "express";
+import cors from "cors";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import * as fs from "fs";
@@ -20,18 +21,24 @@ async function startServer() {
   app.use(express.json({ limit: "50mb" }));
   
   // Enable absolute CORS for custom domains calling this Cloud Run backend
-  app.use((req, res, next) => {
-    const origin = req.headers.origin || "*";
-    res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, Access-Control-Request-Method, Access-Control-Request-Headers");
-    res.setHeader("Access-Control-Allow-Credentials", "true");
-    if (req.method === "OPTIONS") {
-      res.setHeader("Access-Control-Max-Age", "86400"); // 24 hours cache for preflight
-      return res.sendStatus(200);
-    }
-    next();
-  });
+  app.use(cors({
+    origin: (origin, callback) => {
+      // Allow any origin, complying with white-label client-side custom domain setups
+      callback(null, true);
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+      "Origin",
+      "X-Requested-With",
+      "Content-Type",
+      "Accept",
+      "Authorization",
+      "Access-Control-Request-Method",
+      "Access-Control-Request-Headers"
+    ],
+    maxAge: 86400 // Cache preflight OPTIONS responses for 24 hours
+  }));
   
   // Load Firebase Config
   const configPath = path.join(process.cwd(), "firebase-applet-config.json");
