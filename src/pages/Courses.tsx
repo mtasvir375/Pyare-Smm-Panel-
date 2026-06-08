@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { collection, query, where, addDoc, serverTimestamp, getDoc, doc, updateDoc, writeBatch, increment, runTransaction, onSnapshot } from "firebase/firestore";
+import { collection, query, where, addDoc, serverTimestamp, getDoc, doc, updateDoc, writeBatch, increment, runTransaction, onSnapshot, setDoc } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "@/lib/firebase";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/context/AuthContext";
@@ -195,106 +195,89 @@ export default function Courses() {
         }
       }
 
-      const batch = writeBatch(db);
-
-      // 1. We NO LONGER deduct balance here. 
-      // The backend will deduct balance ONLY AFTER the provider panel accepts the order.
-      const userRef = doc(db, "users", user.uid);
-      batch.update(userRef, {
-        lastOrderedAt: serverTimestamp()
-      });
-
-      // 2. Create order - Start with 'Pending' status and enable background worker queue
-      const orderRef = doc(collection(db, "orders"));
-      const orderData = {
-        userId: user.uid,
-        userEmail: user.email,
-        courseId: selectedCourse.id,
-        courseTitle: selectedCourse.title,
-        category: selectedCourse.category || "Other",
-        quantity: Number(quantity),
-        targetLink: targetLink.trim(),
-        totalPrice: totalPrice,
-        status: "Pending", // Changed from 'Completed' to 'Pending'
-        createdAt: serverTimestamp(),
-        needsProviderTransmission: true, // Trigger background worker queue immediately via Firestore snapshot listener!
-        providerTransmissionStatus: "pending"
-      };
-      batch.set(orderRef, orderData);
-
-      // 3. Increment total orders and earnings counter
-      const statsRef = doc(db, "stats", "counters");
-      batch.set(statsRef, { 
-        totalOrders: increment(1)
-      }, { merge: true });
-
-      // Commit the batch
-      await batch.commit();
-
-      // Update local state for immediate feedback
-      setLastOrder({
-        ...orderData,
-        createdAt: new Date() // Approximate for UI
-      });
-
-      // 4. Listen to real-time updates on active order in Firestore
+      // 1. Show the loading toast immediately
       const sendingToastId = toast.loading("Processing order with provider panel...");
-      
-      const unsubscribe = onSnapshot(doc(db, "orders", orderRef.id), (snapshot) => {
-        if (!snapshot.exists()) return;
-        const currentData = snapshot.data();
-        
-        console.log(`[REALTIME-MONITOR] Real-time order state transition: status=${currentData.status}, transmission=${currentData.providerTransmissionStatus}`);
-        
-        if (currentData.status === "Completed") {
-          unsubscribe();
-          toast.dismiss(sendingToastId);
+
+      try {
+        // 2. Clear pre-existing order state
+        setLastOrder(null);
+
+        // 3. Make direct synchronous HTTP POST to backend to place and record order
+        const response = await axios.post("/api/proxy-provider", {
+          userId: user.uid,
+          userEmail: user.email || "",
+          courseId: selectedCourse.id,
+          courseTitle: selectedCourse.title,
+          category: selectedCourse.category || "Other",
+          quantity: Number(quantity),
+          targetLink: targetLink.trim(),
+          totalPrice: totalPrice
+        });
+
+        toast.dismiss(sendingToastId);
+
+        if (response.data && response.data.success === true) {
+          const pId = response.data.providerOrderId || "SENT";
+          
+          // Increment total orders counters and last ordered timestamp
+          try {
+            const statsRef = doc(db, "stats", "counters");
+            await setDoc(statsRef, { totalOrders: increment(1) }, { merge: true });
+            
+            const userRef = doc(db, "users", user.uid);
+            await setDoc(userRef, { lastOrderedAt: serverTimestamp() }, { merge: true });
+          } catch (statError) {
+            console.warn("[SYNC-ORDER] Secondary stats failed to update:", statError);
+          }
+
+          // Populate local state for display modal
+          setLastOrder({
+            userId: user.uid,
+            userEmail: user.email,
+            courseId: selectedCourse.id,
+            courseTitle: selectedCourse.title,
+            category: selectedCourse.category || "Other",
+            quantity: Number(quantity),
+            targetLink: targetLink.trim(),
+            totalPrice: totalPrice,
+            status: "Completed",
+            providerOrderId: pId,
+            createdAt: new Date()
+          });
+
+          // Open Success Dialog and reset forms
           setIsOrderSuccessOpen(true);
-          toast.success(currentData.providerOrderId ? `Success! Order ID: ${currentData.providerOrderId}` : "Order processed successfully", { duration: 5000 });
-          setLastOrder((prev: any) => prev ? { ...prev, status: "Completed", providerOrderId: currentData.providerOrderId || "SENT" } : null);
+          toast.success(`Success! Order ID: ${pId}`);
+
           setTargetLink("");
           setQuantity(String(selectedCourse.minLimit));
-          setSubmitting(false);
-        } else if (currentData.status === "Failed") {
-          unsubscribe();
-          toast.dismiss(sendingToastId);
-          const failErrorMsg = currentData.error || "Order transmission failed";
-          toast.error(`Order Failed: ${failErrorMsg}`, { duration: 8000 });
-          setLastOrder((prev: any) => prev ? { ...prev, status: "Failed", error: failErrorMsg } : null);
-          setSubmitting(false);
+        } else {
+          throw new Error(response.data?.error || "Provider rejected the order");
         }
-      });
+      } catch (proxyError: any) {
+        toast.dismiss(sendingToastId);
+        
+        const failErrorMsg = proxyError.response?.data?.error || proxyError.message || "Order transmission failed";
+        toast.error(`Order Failed: ${failErrorMsg}`, { duration: 8000 });
 
-      // Secure Fallback: In case the live onSnapshot background listener on the server-side wasn't active,
-      // we also trigger a manual same-origin helper trigger after 4 seconds.
-      setTimeout(async () => {
-        try {
-          const orderDocSnap = await getDoc(doc(db, "orders", orderRef.id));
-          if (orderDocSnap.exists() && orderDocSnap.data().status === "Pending") {
-            console.log("[FALLBACK] Order still pending. Triggering manual HTTP synchronization relay...");
-            // Call the same-origin/rewritten proxy provider
-            await axios.post("/api/proxy-provider", {
-              orderId: orderRef.id,
-              courseId: selectedCourse.id,
-              targetLink: targetLink.trim(),
-              quantity: Number(quantity)
-            }).catch((err) => {
-              console.warn("[FALLBACK] Same-origin HTTP synchronization failed (usually benign if background listener succeeds later):", err.message);
-            });
-          }
-        } catch (fallbackErr: any) {
-          console.error("[FALLBACK-ERR] Error in manual sync fallback:", fallbackErr.message);
-        }
-      }, 4000);
-
-      // Auto-Safety Unsubscribe after 90 seconds (prevent leaking listeners)
-      setTimeout(() => {
-        unsubscribe();
-      }, 90000);
-    } catch (error: any) {
-      const errorMsg = error.message || "Failed to place order";
-      toast.error(errorMsg);
-      console.error("Order error:", error);
+        setLastOrder({
+          userId: user.uid,
+          userEmail: user.email,
+          courseId: selectedCourse.id,
+          courseTitle: selectedCourse.title,
+          category: selectedCourse.category || "Other",
+          quantity: Number(quantity),
+          targetLink: targetLink.trim(),
+          totalPrice: totalPrice,
+          status: "Failed",
+          error: failErrorMsg,
+          createdAt: new Date()
+        });
+      } finally {
+        setSubmitting(false);
+      }
+    } catch (outerError: any) {
+      toast.error(outerError?.message || "Failed to place order");
       setSubmitting(false);
     }
   };

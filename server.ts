@@ -953,15 +953,58 @@ async function startServer() {
 
   // Improved Proxy for Provider with better logging and headers
   app.post("/api/proxy-provider", async (req, res) => {
-    const { courseId, targetLink, quantity, orderId } = req.body;
-    
-    console.log(`[HTTP Proxy] Order transmission call received for order: ${orderId}`);
     try {
+      const { 
+        userId, 
+        userEmail, 
+        courseId, 
+        courseTitle, 
+        category, 
+        quantity, 
+        targetLink, 
+        totalPrice,
+        orderId: passedOrderId
+      } = req.body;
+
+      let orderId = passedOrderId;
+
+      // Check if this is a DIRECT Synchronous order creation request (contains userId & totalPrice)
+      if (userId && totalPrice !== undefined) {
+        orderId = "ord_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
+        console.log(`[HTTP Direct Order] Creating synchronous order ${orderId} for user ${userId} and course ${courseId}`);
+
+        // 1. Create order document first so transit methods can read/update it
+        const orderData = {
+          userId,
+          userEmail: userEmail || "",
+          courseId,
+          courseTitle: courseTitle || "",
+          category: category || "Other",
+          quantity: Number(quantity),
+          targetLink: targetLink.trim(),
+          totalPrice: Number(totalPrice),
+          status: "Pending",
+          createdAt: new Date(),
+          needsProviderTransmission: false,
+          providerTransmissionStatus: "pending"
+        };
+
+        const createSuccess = await setDocSafe("orders", orderId, orderData);
+        if (!createSuccess) {
+          return res.status(500).json({ success: false, error: "Failed to initialize order record in database" });
+        }
+      }
+
+      if (!orderId) {
+        return res.status(400).json({ success: false, error: "Missing orderId or order parameters." });
+      }
+
+      console.log(`[HTTP Proxy] Order transmission call received for order: ${orderId}`);
       const result = await transmitOrderToProviderDirect(orderId, { courseId, targetLink, quantity });
       if (result.success) {
-        return res.json({ success: true, providerOrderId: result.providerOrderId });
+        return res.json({ success: true, providerOrderId: result.providerOrderId, orderId });
       } else {
-        return res.status(400).json({ success: false, error: result.alreadyProcessing ? "Processing in-progress..." : result.error });
+        return res.status(400).json({ success: false, error: result.alreadyProcessing ? "Processing in-progress..." : result.error, orderId });
       }
     } catch (e: any) {
       console.error(`[HTTP Proxy] Severe endpoint exception: ${e.message}`);
