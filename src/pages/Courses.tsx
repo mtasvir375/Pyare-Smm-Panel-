@@ -204,7 +204,7 @@ export default function Courses() {
         lastOrderedAt: serverTimestamp()
       });
 
-      // 2. Create order - Start with 'Pending' status
+      // 2. Create order - Start with 'Pending' status and enable background worker queue
       const orderRef = doc(collection(db, "orders"));
       const orderData = {
         userId: user.uid,
@@ -217,7 +217,7 @@ export default function Courses() {
         totalPrice: totalPrice,
         status: "Pending", // Changed from 'Completed' to 'Pending'
         createdAt: serverTimestamp(),
-        needsProviderTransmission: false, // Don't trigger background worker yet, we do it via sync API
+        needsProviderTransmission: true, // Trigger background worker queue immediately via Firestore snapshot listener!
         providerTransmissionStatus: "pending"
       };
       batch.set(orderRef, orderData);
@@ -236,70 +236,65 @@ export default function Courses() {
         ...orderData,
         createdAt: new Date() // Approximate for UI
       });
-      // We do NOT show success dialog yet. We wait for transmission success.
-      // setIsOrderSuccessOpen(true); 
 
-      // 3. Call backend to proxy provider API
-      const sendingToastId = toast.loading("Confirming order with provider panel...");
-      let orderProcessed = false;
-      let pId = "";
-      let responseBody: any = null;
-
-      try {
-        const response = await axios.post("/api/proxy-provider", {
-          orderId: orderRef.id,
-          courseId: selectedCourse.id,
-          targetLink: targetLink.trim(),
-          quantity: Number(quantity)
-        });
-
-        responseBody = response.data;
+      // 4. Listen to real-time updates on active order in Firestore
+      const sendingToastId = toast.loading("Processing order with provider panel...");
+      
+      const unsubscribe = onSnapshot(doc(db, "orders", orderRef.id), (snapshot) => {
+        if (!snapshot.exists()) return;
+        const currentData = snapshot.data();
         
-        if (responseBody && responseBody.success === true) {
-          pId = responseBody.providerOrderId;
-          orderProcessed = true;
-          
-          // Show success feedback only after successful transmission (balance deducted by server)
-          setIsOrderSuccessOpen(true);
-          toast.success("Order placed successfully!");
-        } else {
-          throw new Error(responseBody?.error || "Provider rejected order");
-        }
-      } catch (proxyError: any) {
-        console.error("[ORDER-PROCESS] Error:", proxyError);
+        console.log(`[REALTIME-MONITOR] Real-time order state transition: status=${currentData.status}, transmission=${currentData.providerTransmissionStatus}`);
         
-        // Final fallback: check Firestore for any background update
-        const orderDocSnap = await getDoc(doc(db, "orders", orderRef.id));
-        const orderDocData = orderDocSnap.exists() ? orderDocSnap.data() : {};
-        
-        if (orderDocData.status === "Completed") {
-          orderProcessed = true;
-          pId = orderDocData.providerOrderId;
-          setIsOrderSuccessOpen(true);
-          toast.success("Order confirmed!");
-        } else {
-          const failErrorMsg = formatErrorMessage(orderDocData.error || proxyError.message) || "Order transmission failed";
+        if (currentData.status === "Completed") {
+          unsubscribe();
           toast.dismiss(sendingToastId);
+          setIsOrderSuccessOpen(true);
+          toast.success(currentData.providerOrderId ? `Success! Order ID: ${currentData.providerOrderId}` : "Order processed successfully", { duration: 5000 });
+          setLastOrder((prev: any) => prev ? { ...prev, status: "Completed", providerOrderId: currentData.providerOrderId || "SENT" } : null);
+          setTargetLink("");
+          setQuantity(String(selectedCourse.minLimit));
+          setSubmitting(false);
+        } else if (currentData.status === "Failed") {
+          unsubscribe();
+          toast.dismiss(sendingToastId);
+          const failErrorMsg = currentData.error || "Order transmission failed";
           toast.error(`Order Failed: ${failErrorMsg}`, { duration: 8000 });
           setLastOrder((prev: any) => prev ? { ...prev, status: "Failed", error: failErrorMsg } : null);
           setSubmitting(false);
-          return;
         }
-      }
+      });
 
-      if (orderProcessed) {
-        toast.dismiss(sendingToastId);
-        toast.success(pId ? `Success! Order ID: ${pId}` : "Order processed successfully", { duration: 5000 });
-        setLastOrder((prev: any) => prev ? { ...prev, status: "Completed", providerOrderId: pId || "SENT" } : null);
-      }
+      // Secure Fallback: In case the live onSnapshot background listener on the server-side wasn't active,
+      // we also trigger a manual same-origin helper trigger after 4 seconds.
+      setTimeout(async () => {
+        try {
+          const orderDocSnap = await getDoc(doc(db, "orders", orderRef.id));
+          if (orderDocSnap.exists() && orderDocSnap.data().status === "Pending") {
+            console.log("[FALLBACK] Order still pending. Triggering manual HTTP synchronization relay...");
+            // Call the same-origin/rewritten proxy provider
+            await axios.post("/api/proxy-provider", {
+              orderId: orderRef.id,
+              courseId: selectedCourse.id,
+              targetLink: targetLink.trim(),
+              quantity: Number(quantity)
+            }).catch((err) => {
+              console.warn("[FALLBACK] Same-origin HTTP synchronization failed (usually benign if background listener succeeds later):", err.message);
+            });
+          }
+        } catch (fallbackErr: any) {
+          console.error("[FALLBACK-ERR] Error in manual sync fallback:", fallbackErr.message);
+        }
+      }, 4000);
 
-      setTargetLink("");
-      setQuantity(String(selectedCourse.minLimit));
+      // Auto-Safety Unsubscribe after 90 seconds (prevent leaking listeners)
+      setTimeout(() => {
+        unsubscribe();
+      }, 90000);
     } catch (error: any) {
       const errorMsg = error.message || "Failed to place order";
       toast.error(errorMsg);
       console.error("Order error:", error);
-    } finally {
       setSubmitting(false);
     }
   };
