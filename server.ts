@@ -106,16 +106,11 @@ async function startServer() {
       const snap = await paymentRef.get();
       if (snap.exists) {
         const data = snap.data() || {};
-        // If a custom domain like pyaresmmpanel.online or other unique backend is already stored, do NOT overwrite it.
-        if (data.backendApiUrl && 
-            (data.backendApiUrl.includes("pyaresmmpanel.online") || 
-             (!data.backendApiUrl.includes("run.app") && data.backendApiUrl.includes(".")))) {
-          console.log(`[INIT] Keeping custom backendApiUrl: ${data.backendApiUrl}`);
-          return;
-        }
+        // If a custom domain like pyaresmmpanel.online or other unique backend is stored, we MUST overwrite it to ACTIVE_BACKEND_URL
+        // because custom domains only host static frontends, which cannot receive API requests directly.
         if (data.backendApiUrl !== ACTIVE_BACKEND_URL) {
           await paymentRef.update({ backendApiUrl: ACTIVE_BACKEND_URL });
-          console.log(`[INIT] ✅ Successfully updated backendApiUrl to: ${ACTIVE_BACKEND_URL}`);
+          console.log(`[INIT] ✅ Successfully updated backendApiUrl from ${data.backendApiUrl || "none"} to stable backend: ${ACTIVE_BACKEND_URL}`);
         } else {
           console.log(`[INIT] ✅ backendApiUrl is already up to date: ${ACTIVE_BACKEND_URL}`);
         }
@@ -130,25 +125,12 @@ async function startServer() {
         const tidyDb = (!databaseId || databaseId === "(default)") ? "(default)" : databaseId;
         const restUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${tidyDb}/documents/settings/payment?key=${FIREBASE_API_KEY}&updateMask.fieldPaths=backendApiUrl`;
         
-        // Double check existing settings if possible before patching
-        let shouldPatch = true;
-        try {
-          const checkRes = await axios.get(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/${tidyDb}/documents/settings/payment?key=${FIREBASE_API_KEY}`, { timeout: 3000 });
-          const existingUrl = checkRes.data?.fields?.backendApiUrl?.stringValue || "";
-          if (existingUrl.includes("pyaresmmpanel.online") || (!existingUrl.includes("run.app") && existingUrl.includes("."))) {
-            shouldPatch = false;
-            console.log(`[INIT] Keeping custom backendApiUrl via REST: ${existingUrl}`);
+        await axios.patch(restUrl, {
+          fields: {
+            backendApiUrl: { stringValue: ACTIVE_BACKEND_URL }
           }
-        } catch (e) {}
-
-        if (shouldPatch) {
-          await axios.patch(restUrl, {
-            fields: {
-              backendApiUrl: { stringValue: ACTIVE_BACKEND_URL }
-            }
-          }, { timeout: 10000 });
-          console.log(`[INIT] ✅ Successfully patched backendApiUrl via Firestore REST API.`);
-        }
+        }, { timeout: 10000 });
+        console.log(`[INIT] ✅ Successfully patched backendApiUrl to ${ACTIVE_BACKEND_URL} via Firestore REST API.`);
       } catch (restErr: any) {
         console.error(`[INIT] ❌ REST patch fallback also failed: ${restErr.response?.data || restErr.message}`);
       }
