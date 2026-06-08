@@ -359,6 +359,13 @@ export default function Admin() {
       const cleanKey = providerApiKey.trim();
       const cleanBackend = backendApiUrl.trim();
 
+      if (cleanBackend.toLowerCase().includes("ais-dev-")) {
+        toast.error("You cannot save a development environment URL ('ais-dev-') as the backend! Please use the stable preview URL ('ais-pre-') instead.", {
+          description: "This prevents orders from failing when your browser AI Studio tab is closed."
+        });
+        return;
+      }
+
       await setDoc(doc(db, "settings", "payment"), {
         paymentQrUrl: base64,
         upiId: upiId.trim(),
@@ -1575,7 +1582,7 @@ export default function Admin() {
                     </div>
                   </div>
                   <p className="text-[10px] text-gray-500 mt-[-12px]">
-                    Note: If running on a custom domain pointing to static hosting, enter your Cloud Run app URL here. This allows routing frontend actions safely to the database and payment server. It is autodetected as <strong>{window.location.origin}</strong> on active server environments.
+                    Note: If running on a custom domain, enter your stable Cloud Run App URL here (the public/shared URL ending with <strong>'ais-pre-...run.app'</strong>). Do not use the development sandbox URL ('ais-dev-...'). This allows routing user order creations securely.
                   </p>
 
                   <div className="grid gap-4 md:grid-cols-2">

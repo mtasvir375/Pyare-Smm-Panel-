@@ -54,8 +54,14 @@ export default function App() {
                 const finalUrl = savedUrl.startsWith("http") ? savedUrl : `https://${savedUrl}`;
                 // If it is a valid Google Cloud Run URL, use it as our activeBackendUrl
                 if (finalUrl.includes(".run.app")) {
-                  activeBackendUrl = finalUrl;
-                  console.log(`[API] Dynamically discovered live Backend Cloud Run URL: ${activeBackendUrl}`);
+                  // If the saved URL is a development container, but the user is accessing from a non-dev environment,
+                  // do NOT use it. Fall back to the stable 'ais-pre-' backend instead to prevent Network Errors for users.
+                  if (finalUrl.includes("ais-dev-") && !origin.includes("ais-dev-")) {
+                    console.log(`[API] Stored backend URL is a development sandbox, but user is on custom domain/preview. Keeping stable preview URL: ${activeBackendUrl}`);
+                  } else {
+                    activeBackendUrl = finalUrl;
+                    console.log(`[API] Dynamically discovered live Backend Cloud Run URL: ${activeBackendUrl}`);
+                  }
                 }
               }
             }
