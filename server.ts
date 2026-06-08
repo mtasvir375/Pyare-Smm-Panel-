@@ -487,6 +487,39 @@ async function startServer() {
     hasAdminApp: getApps().length > 0
   }));
 
+  // Temporary developer debug endpoint to inspect orders and provider responses
+  app.get("/api/debug-orders", async (req, res) => {
+    try {
+      console.log("[DEBUG] Fetching last 15 orders for diagnostic purposes...");
+      const snapshot = await db.collection("orders")
+        .orderBy("createdAt", "desc")
+        .limit(15)
+        .get();
+      
+      const ordersList: any[] = [];
+      snapshot.forEach((doc: any) => {
+        const data = doc.data();
+        ordersList.push({
+          id: doc.id,
+          userId: data.userId,
+          courseTitle: data.courseTitle,
+          quantity: data.quantity,
+          totalPrice: data.totalPrice,
+          status: data.status,
+          providerOrderId: data.providerOrderId,
+          providerTransmissionStatus: data.providerTransmissionStatus,
+          error: data.error,
+          createdAt: data.createdAt ? (data.createdAt.toDate ? data.createdAt.toDate() : data.createdAt) : null,
+          providerRawResponse: data.providerRawResponse ? data.providerRawResponse.substring(0, 150) : null
+        });
+      });
+      res.json({ success: true, count: ordersList.length, orders: ordersList });
+    } catch (e: any) {
+      console.error("[DEBUG] Error fetching orders debug data:", e.message);
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
   // Razorpay
   app.post("/api/razorpay/create-order", async (req, res) => {
     try {
@@ -680,7 +713,7 @@ async function startServer() {
 
       let response;
       let attempts = 0;
-      const maxAttempts = 5;
+      const maxAttempts = 2;
 
       while (attempts < maxAttempts) {
         try {
@@ -722,7 +755,7 @@ async function startServer() {
               "Accept": "application/json, text/plain, */*",
               "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             },
-            timeout: 55000
+            timeout: 12000
           });
           break; // Succeeded!
         } catch (axiosError: any) {
@@ -856,7 +889,11 @@ async function startServer() {
         console.error(`[TRANSMIT] Provider rejected request: ${errorMsg}`);
         await logToDb("PROXY_PROVIDER_REJECTED", { error: errorMsg, resData, orderId });
 
-        const finalErrorStr = typeof errorMsg === "string" ? errorMsg : JSON.stringify(errorMsg);
+        let finalErrorStr = typeof errorMsg === "string" ? errorMsg : JSON.stringify(errorMsg);
+        
+        if (finalErrorStr.toLowerCase().includes("incorrect api key") || finalErrorStr.toLowerCase().includes("user disabled")) {
+          finalErrorStr = "SMM Panel API credentials (API Key) are incorrect or your account/user is disabled on the SMM vendor panel. Please contact the admin/owner to update their provider credentials.";
+        }
 
         await updateDocSafe("orders", orderId, {
           status: "Failed",
