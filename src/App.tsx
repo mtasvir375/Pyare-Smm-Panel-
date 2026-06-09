@@ -25,7 +25,7 @@ export default function App() {
     const DEV_API_URL = "https://ais-dev-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
     
     let activeBackendUrl = STABLE_API_URL;
-    if (origin.includes("ais-dev-")) {
+    if (origin.includes("ais-dev-") || origin.includes("localhost") || origin.includes("127.0.0.1")) {
       activeBackendUrl = DEV_API_URL;
     }
 
@@ -35,12 +35,20 @@ export default function App() {
                             origin.includes("ais-dev-");
 
     // 2. STAGE 1 (Synchronous Setup): Pre-set Axios baseURL instantly
-    if (origin.includes("pyaresmmpanel.online") || !isLocalOrPreview || origin.includes("vercel") || origin.includes("netlify") || origin.includes("github.io")) {
+    if (origin.includes("pyaresmmpanel.online")) {
+      // Custom domain is statically hosted on Vercel, so API calls must go directly to the stable backup backend.
       axios.defaults.baseURL = activeBackendUrl;
-      console.log(`[API] [SYNC_INIT] Axios baseURL configured immediately for external custom domain: ${activeBackendUrl}`);
+      console.log(`[API] [SYNC_INIT] Custom domain pyaresmmpanel.online detected. Pointing to Cloud Run backend: ${activeBackendUrl}`);
+    } else if (!isLocalOrPreview) {
+      // Other external static hosts, use backup backend
+      axios.defaults.baseURL = activeBackendUrl;
+      console.log(`[API] [SYNC_INIT] External domain detected. Pointing to Cloud Run backend: ${activeBackendUrl}`);
+    } else if (origin.includes("vercel") || origin.includes("netlify") || origin.includes("github.io")) {
+      axios.defaults.baseURL = activeBackendUrl;
+      console.log(`[API] [SYNC_INIT] Static hosting detected, setting stable backup backend: ${activeBackendUrl}`);
     } else {
       axios.defaults.baseURL = origin;
-      console.log(`[API] [SYNC_INIT] Axios baseURL configured immediately for local preview: ${origin}`);
+      console.log(`[API] [SYNC_INIT] Local preview environment, setting same-origin baseURL: ${origin}`);
     }
 
     // 3. Register request interceptor (must use current state of axios.defaults.baseURL)
@@ -69,8 +77,12 @@ export default function App() {
               const finalUrl = savedUrl.startsWith("http") ? savedUrl : `https://${savedUrl}`;
               // Verify it is a valid Google Cloud Run URL
               if (finalUrl.includes(".run.app")) {
-                if (finalUrl.includes("ais-dev-") && !origin.includes("ais-dev-")) {
-                  console.log(`[API] Stored backend is sandbox, staying with stable preview backend.`);
+                const isDevelopmentMode = origin.includes("ais-dev-") || origin.includes("localhost") || origin.includes("127.0.0.1");
+                if (isDevelopmentMode) {
+                  // Keep development sandbox URL to prevent shared database routing from matching production environment settings
+                  activeBackendUrl = DEV_API_URL;
+                  axios.defaults.baseURL = activeBackendUrl;
+                  console.log(`[API] Dev sandbox environment detected. Locked to dev backend: ${activeBackendUrl}`);
                 } else {
                   activeBackendUrl = finalUrl;
                   axios.defaults.baseURL = activeBackendUrl;

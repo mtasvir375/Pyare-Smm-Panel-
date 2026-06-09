@@ -252,12 +252,12 @@ export default function Courses() {
           setTargetLink("");
           setQuantity(String(selectedCourse.minLimit));
         } else {
-          throw new Error(response.data?.error || "Provider rejected the order");
+          throw new Error(formatErrorMessage(response.data) || "Provider rejected the order");
         }
       } catch (proxyError: any) {
         toast.dismiss(sendingToastId);
         
-        const failErrorMsg = proxyError.response?.data?.error || proxyError.message || "Order transmission failed";
+        const failErrorMsg = (proxyError.response?.data ? formatErrorMessage(proxyError.response.data) : null) || formatErrorMessage(proxyError) || "Order transmission failed";
         toast.error(`Order Failed: ${failErrorMsg}`, { duration: 8000 });
 
         setLastOrder({

@@ -296,16 +296,6 @@ async function startServer() {
         }
 
         const headers: any = { "Content-Type": "application/json" };
-        try {
-          const tokenRes = await axios.get("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token", {
-            headers: { "Metadata-Flavor": "Google" },
-            timeout: 1000
-          });
-          if (tokenRes.data?.access_token) {
-            headers["Authorization"] = `Bearer ${tokenRes.data.access_token}`;
-          }
-        } catch (e) {}
-
         await axios.patch(url, { fields }, { headers, timeout: 10000 });
         return true;
       } catch (restErr: any) {
@@ -349,16 +339,6 @@ async function startServer() {
         }
 
         const headers: any = { "Content-Type": "application/json" };
-        try {
-          const tokenRes = await axios.get("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token", {
-            headers: { "Metadata-Flavor": "Google" },
-            timeout: 1000
-          });
-          if (tokenRes.data?.access_token) {
-            headers["Authorization"] = `Bearer ${tokenRes.data.access_token}`;
-          }
-        } catch (e) {}
-
         const res = await axios.post(url, { fields }, { headers, timeout: 10000 });
         const nameParts = (res.data?.name || "").split("/");
         const generatedId = nameParts[nameParts.length - 1];
@@ -438,20 +418,6 @@ async function startServer() {
       "Content-Type": "application/json"
     };
 
-    try {
-      // Always try to fetch metadata token first in this environment
-      const tokenRes = await axios.get("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token", {
-        headers: { "Metadata-Flavor": "Google" },
-        timeout: 3000
-      });
-      if (tokenRes.data?.access_token) {
-        headers["Authorization"] = `Bearer ${tokenRes.data.access_token}`;
-        console.log("[REST-DB] Metadata token acquired.");
-      }
-    } catch (e: any) {
-      console.log("[REST-DB] Could not get metadata token, using API Key only.");
-    }
-
     console.log(`[REST-DB] Posting to: ${url.split('?')[0]}`);
     return axios.post(url, { fields }, { headers });
   };
@@ -491,28 +457,68 @@ async function startServer() {
   app.get("/api/debug-orders", async (req, res) => {
     try {
       console.log("[DEBUG] Fetching last 15 orders for diagnostic purposes...");
-      const snapshot = await db.collection("orders")
-        .orderBy("createdAt", "desc")
-        .limit(15)
-        .get();
-      
-      const ordersList: any[] = [];
-      snapshot.forEach((doc: any) => {
-        const data = doc.data();
-        ordersList.push({
-          id: doc.id,
-          userId: data.userId,
-          courseTitle: data.courseTitle,
-          quantity: data.quantity,
-          totalPrice: data.totalPrice,
-          status: data.status,
-          providerOrderId: data.providerOrderId,
-          providerTransmissionStatus: data.providerTransmissionStatus,
-          error: data.error,
-          createdAt: data.createdAt ? (data.createdAt.toDate ? data.createdAt.toDate() : data.createdAt) : null,
-          providerRawResponse: data.providerRawResponse ? data.providerRawResponse.substring(0, 150) : null
+      let ordersList: any[] = [];
+      try {
+        const snapshot = await db.collection("orders")
+          .orderBy("createdAt", "desc")
+          .limit(15)
+          .get();
+        
+        snapshot.forEach((doc: any) => {
+          const data = doc.data();
+          if (data.isSyslog !== true) {
+            ordersList.push({
+              id: doc.id,
+              userId: data.userId,
+              courseTitle: data.courseTitle,
+              quantity: data.quantity,
+              totalPrice: data.totalPrice,
+              status: data.status,
+              providerOrderId: data.providerOrderId,
+              providerTransmissionStatus: data.providerTransmissionStatus,
+              error: data.error,
+              createdAt: data.createdAt ? (data.createdAt.toDate ? data.createdAt.toDate() : data.createdAt) : null,
+              providerRawResponse: data.providerRawResponse ? data.providerRawResponse.substring(0, 150) : null
+            });
+          }
         });
-      });
+      } catch (sdkErr: any) {
+        console.warn(`[DEBUG-ORDERS] SDK path failed, falling back to REST: ${sdkErr.message}`);
+        const tidyDb = (!databaseId || databaseId === "(default)") ? "(default)" : databaseId;
+        const restUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${tidyDb}/documents/orders?key=${FIREBASE_API_KEY}&pageSize=50`;
+        const restRes = await axios.get(restUrl);
+        const docs = restRes.data.documents || [];
+        
+        const rawOrders = docs.map((d: any) => {
+          const fields = d.fields || {};
+          const id = d.name.split("/").pop();
+          const isSys = fields.isSyslog?.booleanValue;
+          const createdAtVal = fields.createdAt?.timestampValue || fields.createdAt?.stringValue;
+          return {
+            id,
+            isSyslog: isSys === true,
+            userId: fields.userId?.stringValue,
+            courseTitle: fields.courseTitle?.stringValue,
+            quantity: fields.quantity?.integerValue ? parseInt(fields.quantity.integerValue) : (fields.quantity?.doubleValue ? parseFloat(fields.quantity.doubleValue) : null),
+            totalPrice: fields.totalPrice?.integerValue ? parseInt(fields.totalPrice.integerValue) : (fields.totalPrice?.doubleValue ? parseFloat(fields.totalPrice.doubleValue) : null),
+            status: fields.status?.stringValue,
+            providerOrderId: fields.providerOrderId?.stringValue,
+            providerTransmissionStatus: fields.providerTransmissionStatus?.stringValue,
+            error: fields.error?.stringValue,
+            createdAt: createdAtVal ? new Date(createdAtVal) : null,
+            providerRawResponse: fields.providerRawResponse?.stringValue ? fields.providerRawResponse.stringValue : null
+          };
+        }).filter((o: any) => !o.isSyslog);
+
+        // Sort in memory
+        rawOrders.sort((a: any, b: any) => {
+          const tA = a.createdAt ? a.createdAt.getTime() : 0;
+          const tB = b.createdAt ? b.createdAt.getTime() : 0;
+          return tB - tA;
+        });
+
+        ordersList = rawOrders.slice(0, 15);
+      }
       res.json({ success: true, count: ordersList.length, orders: ordersList });
     } catch (e: any) {
       console.error("[DEBUG] Error fetching orders debug data:", e.message);
@@ -767,9 +773,25 @@ async function startServer() {
             // Final failure marking order fail
             let providerErr: any = "Connection failed";
             if (axiosError.response) {
-              providerErr = axiosError.response.data?.error || axiosError.response.data?.message || axiosError.response.data?.msg || `HTTP ${axiosError.response.status}`;
+              const rData = axiosError.response.data;
+              if (rData) {
+                if (typeof rData === "string") {
+                  const trimmed = rData.trim();
+                  if (trimmed.startsWith("<") || trimmed.includes("<!DOCTYPE") || trimmed.includes("<html") || trimmed.includes("<body")) {
+                    providerErr = `HTTP ${axiosError.response.status} (Provider backend blocking / server configuration issue. Often caused by Cloudflare anti-bot checks)`;
+                  } else {
+                    providerErr = trimmed.substring(0, 200);
+                  }
+                } else if (typeof rData === "object" && rData !== null) {
+                  providerErr = rData.error || rData.message || rData.msg || rData.errors || rData.reason || rData.error_message || JSON.stringify(rData);
+                } else {
+                  providerErr = `HTTP ${axiosError.response.status}`;
+                }
+              } else {
+                providerErr = `HTTP ${axiosError.response.status}`;
+              }
             } else if (axiosError.request) {
-              providerErr = "No response from provider (Timeout/Network)";
+              providerErr = "No response from provider (Timeout/Network failure)";
             } else {
               providerErr = axiosError.message;
             }
@@ -868,7 +890,7 @@ async function startServer() {
         return { success: true, providerOrderId: oId };
       } else {
         // Collect rejection errors
-        const rawError = resData?.error || resData?.message || resData?.msg || resData?.errors || resData?.ERR || resData?.status;
+        const rawError = resData?.error || resData?.message || resData?.msg || resData?.errors || resData?.ERR || resData?.status || resData?.reason || resData?.error_message || resData?.msg_error;
         let errorMsg = "Provider rejected the request.";
 
         if (rawError) {
@@ -882,8 +904,10 @@ async function startServer() {
               errorMsg = JSON.stringify(rawError);
             }
           }
-        } else if (typeof resData === "string" && resData.length > 0) {
-          errorMsg = resData;
+        } else if (typeof resData === "string" && resData.trim().length > 0) {
+          errorMsg = resData.trim();
+        } else if (typeof resData === "object" && resData !== null) {
+          errorMsg = JSON.stringify(resData);
         }
 
         console.error(`[TRANSMIT] Provider rejected request: ${errorMsg}`);
