@@ -36,14 +36,14 @@ export default function App() {
 
     // 2. STAGE 1 (Synchronous Setup): Pre-set Axios baseURL instantly
     if (origin.includes("pyaresmmpanel.online") || origin.includes("pyaresmmpanel.live")) {
-      // Set to current origin so that if they point their domain directly to Cloud Run,
-      // or proxy it via vercel.json rewrites, it targets the relative hostname correctly without CORS errors.
-      axios.defaults.baseURL = origin;
-      console.log(`[API] [SYNC_INIT] Custom domain detected. Pointing to relative same-origin: ${origin}`);
+      // Point directly to secure Cloud Run backend to avoid Vercel SPA html routing conflicts.
+      // Dynamic CORS is fully enabled on the server, ensuring direct browser calls succeed.
+      axios.defaults.baseURL = activeBackendUrl;
+      console.log(`[API] [SYNC_INIT] Custom domain detected. Pointing directly to stable Cloud Run backend: ${activeBackendUrl}`);
     } else if (!isLocalOrPreview) {
-      // Other external static hosts, use same origin or backup backend
-      axios.defaults.baseURL = origin;
-      console.log(`[API] [SYNC_INIT] External domain detected. Pointing to same-origin: ${origin}`);
+      // Connect directly to secure Cloud Run backend
+      axios.defaults.baseURL = activeBackendUrl;
+      console.log(`[API] [SYNC_INIT] External domain detected. Pointing directly to Cloud Run backend: ${activeBackendUrl}`);
     } else if (origin.includes("vercel") || origin.includes("netlify") || origin.includes("github.io")) {
       // If hosted on raw vercel / netlify domains and didn't define a custom domain rule, use backup backend
       axios.defaults.baseURL = activeBackendUrl;
@@ -86,11 +86,10 @@ export default function App() {
                   axios.defaults.baseURL = activeBackendUrl;
                   console.log(`[API] Dev sandbox environment detected. Locked to dev backend: ${activeBackendUrl}`);
                 } else if (!isLocalOrPreview) {
-                  // If we are on a custom domain or Vercel, we MUST preserve window.location.origin as the baseURL.
-                  // This ensures Vercel's proxy rewrite specified in vercel.json is triggered, bypassing browser CORS/Cookie blocks.
+                  // Direct connection to active Cloud Run backend for custom domains to avoid static index.html fallback
                   activeBackendUrl = finalUrl;
-                  axios.defaults.baseURL = origin;
-                  console.log(`[API] [ASYNC_REFRESH] Custom domain detected (${origin}). Preserved relative origin baseURL to support Vercel proxy rewrite to: ${finalUrl}`);
+                  axios.defaults.baseURL = finalUrl;
+                  console.log(`[API] [ASYNC_REFRESH] Custom domain detected. Pointing directly to active Cloud Run backend URL: ${finalUrl}`);
                 } else {
                   activeBackendUrl = finalUrl;
                   axios.defaults.baseURL = activeBackendUrl;
