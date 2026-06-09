@@ -106,11 +106,19 @@ export default function Courses() {
 
   useEffect(() => {
     if (selectedCourse) {
-      setQuantity(String(selectedCourse.minLimit || 1000));
+      if (selectedCourse.isPackage) {
+        setQuantity(String(selectedCourse.packageQuantity || 1000));
+      } else {
+        setQuantity(String(selectedCourse.minLimit || 1000));
+      }
     }
   }, [selectedCourseId]);
 
-  const totalPrice = selectedCourse ? (Number(quantity) * selectedCourse.pricePerThousand) / 1000 : 0;
+  const totalPrice = selectedCourse 
+    ? (selectedCourse.isPackage 
+        ? Number(selectedCourse.packagePrice || 0) 
+        : (Number(quantity) * selectedCourse.pricePerThousand) / 1000) 
+    : 0;
 
   const formatErrorMessage = (err: any): string => {
     if (!err) return "Unknown error";
@@ -532,8 +540,22 @@ export default function Courses() {
                     className="w-5 h-5" 
                   />
                 </div>
-                <span className="font-semibold flex-1 leading-tight whitespace-normal break-words py-1 pr-1">
-                  {selectedCourse ? `${selectedCourse.title} - ₹${selectedCourse.pricePerThousand}/1k` : "Select Service"}
+                <span className="font-semibold flex-1 leading-tight whitespace-normal break-words py-1 pr-1 flex items-center gap-1.5 flex-wrap">
+                  {selectedCourse ? (
+                    <>
+                      {selectedCourse.isPackage && (
+                        <Badge className="bg-primary/20 text-primary border-none text-[8px] h-3.5 px-1.5 font-bold uppercase shrink-0">
+                          Package
+                        </Badge>
+                      )}
+                      {selectedCourse.isPackage 
+                        ? selectedCourse.title 
+                        : `${selectedCourse.title} - ₹${selectedCourse.pricePerThousand}/1k`
+                      }
+                    </>
+                  ) : (
+                    "Select Service"
+                  )}
                 </span>
                 <div className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400">
                   <Share2 className={cn("w-4 h-4 transition-transform", isServiceOpen && "rotate-180")} />
@@ -566,8 +588,19 @@ export default function Courses() {
                         className="w-4 h-4 shrink-0" 
                       />
                         <div className="min-w-0 pr-2 flex-1">
-                          <p className="whitespace-normal leading-tight break-words">{service.title}</p>
-                          <p className="text-[10px] text-gray-400 font-bold mt-0.5">₹{service.pricePerThousand} per 1000</p>
+                          <p className="whitespace-normal leading-tight break-words flex items-center gap-1.5 flex-wrap">
+                            {service.title}
+                            {service.isPackage && (
+                              <Badge className="bg-primary/15 text-primary border-none text-[8px] h-3.5 px-1 font-bold shrink-0">
+                                PKG
+                              </Badge>
+                            )}
+                          </p>
+                          {!service.isPackage && (
+                            <p className="text-[10px] text-gray-400 font-bold mt-0.5">
+                              ₹{service.pricePerThousand} per 1000
+                            </p>
+                          )}
                         </div>
                       </button>
                     ))}
@@ -591,13 +624,16 @@ export default function Courses() {
           </div>
 
           <div className="space-y-1.5">
-            <Label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Quantity (Min: {selectedCourse?.minLimit || 0})</Label>
+            <Label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+              {selectedCourse?.isPackage ? "Package Quantity (Fixed)" : `Quantity (Min: ${selectedCourse?.minLimit || 0})`}
+            </Label>
             <Input 
               type="number"
-              placeholder="Enter quantity" 
+              placeholder={selectedCourse?.isPackage ? "Fixed quantity" : "Enter quantity"} 
               className="rounded-xl h-10 bg-gray-50 text-sm"
               value={quantity}
               onChange={(e) => setQuantity(e.target.value)}
+              disabled={selectedCourse?.isPackage}
             />
           </div>
 
@@ -649,14 +685,29 @@ export default function Courses() {
                 <span className="text-xs text-gray-500">Service ID</span>
                 <span className="text-xs font-bold">#{selectedCourse.id.slice(0, 8)}</span>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-gray-500">Rate per 1000</span>
-                <span className="text-xs font-bold text-primary">₹{selectedCourse.pricePerThousand}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-gray-500">Minimum Order</span>
-                <span className="text-xs font-bold">{selectedCourse.minLimit}</span>
-              </div>
+              {selectedCourse.isPackage ? (
+                <>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500">Package Quantity</span>
+                    <span className="text-xs font-bold text-primary">{selectedCourse.packageQuantity}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500">Package Offer Price</span>
+                    <span className="text-xs font-bold text-primary">₹{selectedCourse.packagePrice}</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500">Rate per 1000</span>
+                    <span className="text-xs font-bold text-primary">₹{selectedCourse.pricePerThousand}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500">Minimum Order</span>
+                    <span className="text-xs font-bold">{selectedCourse.minLimit}</span>
+                  </div>
+                </>
+              )}
               <div className="border-t pt-2 mt-2">
                 <p className="text-[10px] text-gray-400 font-bold uppercase mb-0.5">Description</p>
                 <p className="text-xs text-gray-600 leading-relaxed">

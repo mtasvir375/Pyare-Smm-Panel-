@@ -35,15 +35,17 @@ export default function App() {
                             origin.includes("ais-dev-");
 
     // 2. STAGE 1 (Synchronous Setup): Pre-set Axios baseURL instantly
-    if (origin.includes("pyaresmmpanel.online")) {
-      // Custom domain is statically hosted on Vercel, so API calls must go directly to the stable backup backend.
-      axios.defaults.baseURL = activeBackendUrl;
-      console.log(`[API] [SYNC_INIT] Custom domain pyaresmmpanel.online detected. Pointing to Cloud Run backend: ${activeBackendUrl}`);
+    if (origin.includes("pyaresmmpanel.online") || origin.includes("pyaresmmpanel.live")) {
+      // Set to current origin so that if they point their domain directly to Cloud Run,
+      // or proxy it via vercel.json rewrites, it targets the relative hostname correctly without CORS errors.
+      axios.defaults.baseURL = origin;
+      console.log(`[API] [SYNC_INIT] Custom domain detected. Pointing to relative same-origin: ${origin}`);
     } else if (!isLocalOrPreview) {
-      // Other external static hosts, use backup backend
-      axios.defaults.baseURL = activeBackendUrl;
-      console.log(`[API] [SYNC_INIT] External domain detected. Pointing to Cloud Run backend: ${activeBackendUrl}`);
+      // Other external static hosts, use same origin or backup backend
+      axios.defaults.baseURL = origin;
+      console.log(`[API] [SYNC_INIT] External domain detected. Pointing to same-origin: ${origin}`);
     } else if (origin.includes("vercel") || origin.includes("netlify") || origin.includes("github.io")) {
+      // If hosted on raw vercel / netlify domains and didn't define a custom domain rule, use backup backend
       axios.defaults.baseURL = activeBackendUrl;
       console.log(`[API] [SYNC_INIT] Static hosting detected, setting stable backup backend: ${activeBackendUrl}`);
     } else {

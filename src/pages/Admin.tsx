@@ -114,6 +114,9 @@ export default function Admin() {
   const [newCourseCategory, setNewCourseCategory] = useState("Instagram");
   const [newCourseProviderServiceId, setNewCourseProviderServiceId] = useState("");
   const [preventDuplicateLink, setPreventDuplicateLink] = useState(false);
+  const [newCourseIsPackage, setNewCourseIsPackage] = useState(false);
+  const [newCoursePackagePrice, setNewCoursePackagePrice] = useState("");
+  const [newCoursePackageQuantity, setNewCoursePackageQuantity] = useState("1000");
   const [qrUrl, setQrUrl] = useState("");
   const [upiId, setUpiId] = useState("");
   const [merchantName, setMerchantName] = useState("");
@@ -326,8 +329,14 @@ export default function Admin() {
         toast.error(response.data.error || "Connection failed");
       }
     } catch (error: any) {
-      const errorMessage = error.response?.data?.error || error.message || "Connection failed";
-      toast.error(`Error: ${errorMessage}`);
+      const hostname = window.location.hostname;
+      const isCustomDomain = !hostname.includes("run.app") && !hostname.includes("localhost") && !hostname.includes("127.0.0.1");
+      let errorMessage = error.response?.data?.error || error.message || "Connection failed";
+      
+      if (isCustomDomain && errorMessage.toLowerCase().includes("network error")) {
+        errorMessage = "Network Error: Google's Sandbox blocks API calls from custom domains on Vercel. Please open the site through the Google AI Studio preview window to configure and test provider APIs!";
+      }
+      toast.error(`Error: ${errorMessage}`, { duration: 6000 });
     } finally {
       if (providerId) {
         setTestingProviders(prev => {
@@ -804,25 +813,43 @@ export default function Admin() {
   };
 
   const handleCreateCourse = async () => {
-    if (!newCourseTitle || !newCoursePrice || !newCourseMinLimit || !newCourseProviderServiceId || !newCourseProviderId) {
-      toast.error("Please fill in all fields (including Provider and Service ID)");
-      return;
+    if (newCourseIsPackage) {
+      if (!newCourseTitle || !newCoursePackagePrice || !newCoursePackageQuantity || !newCourseProviderServiceId || !newCourseProviderId) {
+        toast.error("Please fill in all package fields (including Price, Quantity, Provider and Service ID)");
+        return;
+      }
+    } else {
+      if (!newCourseTitle || !newCoursePrice || !newCourseMinLimit || !newCourseProviderServiceId || !newCourseProviderId) {
+        toast.error("Please fill in all fields (including Price, Min Limit, Provider and Service ID)");
+        return;
+      }
     }
 
     try {
+      const pkgPrice = Number(newCoursePackagePrice);
+      const pkgQty = Number(newCoursePackageQuantity);
+      const computedPricePerThousand = newCourseIsPackage 
+        ? Number(((pkgPrice / pkgQty) * 1000).toFixed(4)) 
+        : Number(newCoursePrice);
+
       await addDoc(collection(db, "courses"), {
         title: newCourseTitle,
         category: newCourseCategory,
-        pricePerThousand: Number(newCoursePrice),
-        minLimit: Number(newCourseMinLimit),
+        pricePerThousand: computedPricePerThousand,
+        minLimit: newCourseIsPackage ? pkgQty : Number(newCourseMinLimit),
         serviceType: newCourseType,
         providerId: newCourseProviderId,
         providerServiceId: newCourseProviderServiceId,
         preventDuplicateLink: preventDuplicateLink,
         iconUrl: newCourseIcon || null,
         status: "published",
-        description: `High quality ${newCourseType} service`,
+        description: newCourseIsPackage 
+          ? `Offer Price: ₹${newCoursePackagePrice} for ${newCoursePackageQuantity} fixed quantity` 
+          : `High quality ${newCourseType} service`,
         createdAt: serverTimestamp(),
+        isPackage: newCourseIsPackage,
+        packagePrice: newCourseIsPackage ? pkgPrice : null,
+        packageQuantity: newCourseIsPackage ? pkgQty : null,
       });
       import("@/lib/cache").then(mod => mod.clearCache());
       toast.success("Service added successfully!");
@@ -832,6 +859,9 @@ export default function Admin() {
       setNewCourseProviderServiceId("");
       setPreventDuplicateLink(false);
       setNewCourseIcon(null);
+      setNewCourseIsPackage(false);
+      setNewCoursePackagePrice("");
+      setNewCoursePackageQuantity("1000");
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, "courses");
     }
@@ -846,31 +876,46 @@ export default function Admin() {
   const [editCategory, setEditCategory] = useState("Other");
   const [editType, setEditType] = useState("likes");
   const [editPreventDuplicate, setEditPreventDuplicate] = useState(false);
+  const [editIsPackage, setEditIsPackage] = useState(false);
+  const [editPackagePrice, setEditPackagePrice] = useState("");
+  const [editPackageQuantity, setEditPackageQuantity] = useState("");
 
   const startEditCourse = (course: any) => {
     setEditingCourse(course);
     setEditTitle(course.title);
-    setEditPrice(String(course.pricePerThousand));
-    setEditMinLimit(String(course.minLimit));
+    setEditPrice(String(course.pricePerThousand || ""));
+    setEditMinLimit(String(course.minLimit || ""));
     setEditProviderId(course.providerId || "");
     setEditServiceId(course.providerServiceId || "");
     setEditCategory(course.category || "Other");
     setEditType(course.serviceType || "likes");
     setEditPreventDuplicate(!!course.preventDuplicateLink);
+    setEditIsPackage(!!course.isPackage);
+    setEditPackagePrice(course.packagePrice ? String(course.packagePrice) : "");
+    setEditPackageQuantity(course.packageQuantity ? String(course.packageQuantity) : "");
   };
 
   const handleUpdateCourse = async () => {
     if (!editingCourse) return;
     try {
+      const pkgPrice = Number(editPackagePrice);
+      const pkgQty = Number(editPackageQuantity);
+      const computedPricePerThousand = editIsPackage 
+        ? Number(((pkgPrice / pkgQty) * 1000).toFixed(4)) 
+        : Number(editPrice);
+
       await updateDoc(doc(db, "courses", editingCourse.id), {
         title: editTitle,
-        pricePerThousand: Number(editPrice),
-        minLimit: Number(editMinLimit),
+        pricePerThousand: computedPricePerThousand,
+        minLimit: editIsPackage ? pkgQty : Number(editMinLimit),
         providerId: editProviderId,
         providerServiceId: editServiceId,
         category: editCategory,
         serviceType: editType,
         preventDuplicateLink: editPreventDuplicate,
+        isPackage: editIsPackage,
+        packagePrice: editIsPackage ? pkgPrice : null,
+        packageQuantity: editIsPackage ? pkgQty : null,
         updatedAt: serverTimestamp()
       });
       import("@/lib/cache").then(mod => mod.clearCache());
@@ -997,13 +1042,26 @@ export default function Admin() {
                           />
                         </div>
                         <div>
-                          <h3 className="font-bold text-sm leading-tight whitespace-normal">{course.title}</h3>
+                          <h3 className="font-bold text-sm leading-tight whitespace-normal flex items-center gap-1.5 flex-wrap">
+                            {course.title}
+                            {course.isPackage && (
+                              <Badge className="bg-primary/15 text-primary hover:bg-primary/20 border-none text-[9px] h-4 px-1.5 font-bold">
+                                Package
+                              </Badge>
+                            )}
+                          </h3>
                           <div className="flex items-center gap-3 mt-0.5">
                             <span className="text-xs text-gray-500 font-medium">{course.category || 'Other'}</span>
                             <span className="text-xs text-gray-500 font-medium">•</span>
-                            <span className="text-xs text-gray-500 font-medium">₹{course.pricePerThousand}/1k</span>
-                            <span className="text-xs text-gray-500 font-medium">•</span>
-                            <span className="text-xs text-gray-500 font-medium">Min: {course.minLimit}</span>
+                            {course.isPackage ? (
+                              <span className="text-xs text-gray-500 font-medium">₹{course.packagePrice} / {course.packageQuantity} qty</span>
+                            ) : (
+                              <>
+                                <span className="text-xs text-gray-500 font-medium">₹{course.pricePerThousand}/1k</span>
+                                <span className="text-xs text-gray-500 font-medium">•</span>
+                                <span className="text-xs text-gray-500 font-medium">Min: {course.minLimit}</span>
+                              </>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1090,26 +1148,67 @@ export default function Admin() {
                     onChange={(e) => setNewCourseTitle(e.target.value)}
                   />
                 </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Price per 1000 (INR)</label>
-                  <Input 
-                    placeholder="e.g. 50" 
-                    className="bg-white/10 border-white/20 text-white"
-                    type="number"
-                    value={newCoursePrice}
-                    onChange={(e) => setNewCoursePrice(e.target.value)}
+                <div className="md:col-span-2 pt-1 pb-1 flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    id="newCourseIsPackage"
+                    checked={newCourseIsPackage}
+                    onChange={(e) => setNewCourseIsPackage(e.target.checked)}
+                    className="w-5 h-5 rounded border-white/20 bg-white/10 text-primary focus:ring-primary focus:ring-offset-gray-900 cursor-pointer"
                   />
+                  <label htmlFor="newCourseIsPackage" className="text-sm font-medium text-gray-300 cursor-pointer select-none">
+                    Is this a Fixed Quantity SMM Package? (e.g. 100k views for ₹45)
+                    <span className="block text-xs text-gray-500 font-normal mt-0.5">Check this to offer a fixed quantity at a set offer price instead of calculation per 1000.</span>
+                  </label>
                 </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Minimum Limit</label>
-                  <Input 
-                    placeholder="e.g. 1000" 
-                    className="bg-white/10 border-white/20 text-white"
-                    type="number"
-                    value={newCourseMinLimit}
-                    onChange={(e) => setNewCourseMinLimit(e.target.value)}
-                  />
-                </div>
+
+                {newCourseIsPackage ? (
+                  <>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Package Special Price (INR)</label>
+                      <Input 
+                        placeholder="e.g. 45" 
+                        className="bg-white/10 border-white/20 text-white"
+                        type="number"
+                        value={newCoursePackagePrice}
+                        onChange={(e) => setNewCoursePackagePrice(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Package Quantity (Fixed)</label>
+                      <Input 
+                        placeholder="e.g. 100000" 
+                        className="bg-white/10 border-white/20 text-white"
+                        type="number"
+                        value={newCoursePackageQuantity}
+                        onChange={(e) => setNewCoursePackageQuantity(e.target.value)}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Price per 1000 (INR)</label>
+                      <Input 
+                        placeholder="e.g. 50" 
+                        className="bg-white/10 border-white/20 text-white"
+                        type="number"
+                        value={newCoursePrice}
+                        onChange={(e) => setNewCoursePrice(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Minimum Limit</label>
+                      <Input 
+                        placeholder="e.g. 1000" 
+                        className="bg-white/10 border-white/20 text-white"
+                        type="number"
+                        value={newCourseMinLimit}
+                        onChange={(e) => setNewCourseMinLimit(e.target.value)}
+                      />
+                    </div>
+                  </>
+                )}
                 <div className="space-y-2">
                   <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Service Type</label>
                   <select 
@@ -1595,6 +1694,38 @@ export default function Admin() {
                     Do not use your custom domain or the dev sandbox URL ('ais-dev-...') here. Click "Auto-fill Stable API URL" above to set it correctly.
                   </p>
 
+                  {(() => {
+                    const hostname = window.location.hostname;
+                    const isCustomDomain = !hostname.includes("run.app") && !hostname.includes("localhost") && !hostname.includes("127.0.0.1");
+                    if (isCustomDomain) {
+                      return (
+                        <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 space-y-2 mt-2">
+                          <p className="text-amber-500 font-bold text-xs uppercase tracking-wider flex items-center gap-1.5">
+                            ⚠️ Custom Domain Warning ({hostname})
+                          </p>
+                          <p className="text-xs text-gray-300 leading-relaxed">
+                            आप अपनी वेबसाइट को एक कस्टम डोमेन से खोल रहे हैं। लेकिन आपका <strong>Backend API</strong> अभी भी Google AI Studio Sandbox (<code className="text-primary-light">ais-pre-...run.app</code>) से जुड़ा है।
+                          </p>
+                          <p className="text-xs text-gray-400 leading-relaxed">
+                            Google Sandbox सुरक्षा कारणों से (strict cookie verification) बाहरी डोमेन से डायरेक्ट API कॉल्स ब्लॉक कर देता है, जिसकी वजह से custom domain पर <strong>Network Error</strong> आता है।
+                          </p>
+                          <p className="text-xs text-amber-500/90 font-medium">
+                            <strong>इसे ठीक करने के उपाय (How to Fix):</strong>
+                          </p>
+                          <ul className="list-disc pl-4 text-[11px] text-gray-400 space-y-1">
+                            <li>
+                              <strong>AI Studio Preview का उपयोग करें (अनुशंसित):</strong> Admin Panels, Settings या Test API का उपयोग करने के लिए हमेशा Google AI Studio की विंडो या "Open in new window" बटन का ही उपयोग करें (वहाँ balance और connection बिल्कुल सही काम करेगा)।
+                            </li>
+                            <li>
+                              <strong>कस्टम डोमेन को सीधे Cloud Run से जोड़ें:</strong> क्योंकि हमारा प्रोजेक्ट Full-Stack है (frontend और server दोनों एक साथ Cloud Run पर चलते हैं), आप अपने कस्टम डोमेन के DNS को सीधे अपने Google Cloud Run सर्विस से मैप कर सकते हैं (Vercel की आवश्यकता नहीं है)। ऐसा करने से same-origin होने के कारण कभी भी Network Error या API ब्लॉकेज नहीं होगा।
+                            </li>
+                          </ul>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
+
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
                       <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Provider API URL</label>
@@ -1804,24 +1935,65 @@ export default function Admin() {
                 onChange={(e) => setEditTitle(e.target.value)}
               />
             </div>
-            <div className="space-y-2">
-              <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Price per 1000 (INR)</label>
-              <Input 
-                className="rounded-xl"
-                type="number"
-                value={editPrice}
-                onChange={(e) => setEditPrice(e.target.value)}
+            <div className="md:col-span-2 pt-1 pb-1 flex items-center gap-3">
+              <input
+                type="checkbox"
+                id="editIsPackage"
+                checked={editIsPackage}
+                onChange={(e) => setEditIsPackage(e.target.checked)}
+                className="w-5 h-5 rounded border-gray-200 bg-gray-50 text-primary focus:ring-primary focus:ring-offset-white cursor-pointer"
               />
+              <label htmlFor="editIsPackage" className="text-sm font-medium text-gray-600 cursor-pointer select-none">
+                Is this a Fixed Quantity SMM Package? (e.g. 100k views for ₹45)
+                <span className="block text-xs text-gray-400 font-normal mt-0.5">Check this to offer a fixed quantity at a set offer price instead of calculation per 1000.</span>
+              </label>
             </div>
-            <div className="space-y-2">
-              <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Minimum Limit</label>
-              <Input 
-                className="rounded-xl"
-                type="number"
-                value={editMinLimit}
-                onChange={(e) => setEditMinLimit(e.target.value)}
-              />
-            </div>
+
+            {editIsPackage ? (
+              <>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Package Special Price (INR)</label>
+                  <Input 
+                    className="rounded-xl"
+                    placeholder="e.g. 45"
+                    type="number"
+                    value={editPackagePrice}
+                    onChange={(e) => setEditPackagePrice(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Package Quantity (Fixed)</label>
+                  <Input 
+                    className="rounded-xl"
+                    placeholder="e.g. 100000"
+                    type="number"
+                    value={editPackageQuantity}
+                    onChange={(e) => setEditPackageQuantity(e.target.value)}
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Price per 1000 (INR)</label>
+                  <Input 
+                    className="rounded-xl"
+                    type="number"
+                    value={editPrice}
+                    onChange={(e) => setEditPrice(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Minimum Limit</label>
+                  <Input 
+                    className="rounded-xl"
+                    type="number"
+                    value={editMinLimit}
+                    onChange={(e) => setEditMinLimit(e.target.value)}
+                  />
+                </div>
+              </>
+            )}
             <div className="space-y-2">
               <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Provider Service ID</label>
               <Input 
