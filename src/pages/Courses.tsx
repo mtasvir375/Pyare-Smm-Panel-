@@ -206,6 +206,119 @@ export default function Courses() {
       // 1. Show the loading toast immediately
       const sendingToastId = toast.loading("Processing order with provider panel...");
 
+      // Helper function to process order through the real-time database pipeline
+      const handleFirestoreFallbackOrder = async (fallbackToastId: string | number) => {
+        try {
+          const orderId = "ord_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
+          console.log(`[CORS Fallback] Creating order ${orderId} directly in Firestore...`);
+
+          const orderDocRef = doc(db, "orders", orderId);
+          await setDoc(orderDocRef, {
+            userId: user.uid,
+            userEmail: user.email || "",
+            courseId: selectedCourse.id,
+            courseTitle: selectedCourse.title,
+            category: selectedCourse.category || "Other",
+            quantity: Number(quantity),
+            targetLink: targetLink.trim(),
+            totalPrice: Number(totalPrice),
+            status: "Pending",
+            createdAt: new Date(),
+            needsProviderTransmission: true,
+            providerTransmissionStatus: "pending"
+          });
+
+          // Update toast status to waiting
+          toast.loading("Google Sandbox CORS proxy active. Routing order securely via direct DB pipeline (15s)...", {
+            id: fallbackToastId
+          });
+
+          // Listen for updates from real-time database observer
+          let solved = false;
+          const unsubscribe = onSnapshot(orderDocRef, async (snapshot) => {
+            if (!snapshot.exists()) return;
+            const data = snapshot.data();
+            
+            if (data.status === "Completed") {
+              solved = true;
+              unsubscribe();
+              toast.dismiss(fallbackToastId);
+
+              const pId = data.providerOrderId || "SENT";
+              
+              // Increment counters and timestamps
+              try {
+                const statsRef = doc(db, "stats", "counters");
+                await setDoc(statsRef, { totalOrders: increment(1) }, { merge: true });
+                
+                const userRef = doc(db, "users", user.uid);
+                await setDoc(userRef, { lastOrderedAt: serverTimestamp() }, { merge: true });
+              } catch (se) {
+                console.warn("[FALLBACK] Secondary stats update failed:", se);
+              }
+
+              setLastOrder({
+                userId: user.uid,
+                userEmail: user.email,
+                courseId: selectedCourse.id,
+                courseTitle: selectedCourse.title,
+                category: selectedCourse.category || "Other",
+                quantity: Number(quantity),
+                targetLink: targetLink.trim(),
+                totalPrice: totalPrice,
+                status: "Completed",
+                providerOrderId: pId,
+                createdAt: new Date()
+              });
+
+              setIsOrderSuccessOpen(true);
+              toast.success(`Success! Order ID: ${pId}`);
+              setTargetLink("");
+              setQuantity(String(selectedCourse.minLimit));
+              setSubmitting(false);
+
+            } else if (data.status === "Failed") {
+              solved = true;
+              unsubscribe();
+              toast.dismiss(fallbackToastId);
+
+              const dbErrorMsg = data.error || "Order dispatch rejected by provider";
+              toast.error(`Order Failed: ${dbErrorMsg}`, { duration: 10000 });
+
+              setLastOrder({
+                userId: user.uid,
+                userEmail: user.email,
+                courseId: selectedCourse.id,
+                courseTitle: selectedCourse.title,
+                category: selectedCourse.category || "Other",
+                quantity: Number(quantity),
+                targetLink: targetLink.trim(),
+                totalPrice: totalPrice,
+                status: "Failed",
+                error: dbErrorMsg,
+                createdAt: new Date()
+              });
+              setSubmitting(false);
+            }
+          });
+
+          // Fallback timeout after 30 seconds
+          setTimeout(() => {
+            if (!solved) {
+              unsubscribe();
+              toast.dismiss(fallbackToastId);
+              toast.error("The background network queue is processing your request. Please check the Dashboard page in a moment for final outcome status.", { duration: 8000 });
+              setSubmitting(false);
+            }
+          }, 30000);
+
+        } catch (dbErr: any) {
+          toast.dismiss(fallbackToastId);
+          toast.error(`Database transit failed: ${dbErr.message || dbErr}`);
+          setSubmitting(false);
+        }
+      };
+
       try {
         // 2. Clear pre-existing order state
         setLastOrder(null);
@@ -263,26 +376,38 @@ export default function Courses() {
           throw new Error(formatErrorMessage(response.data) || "Provider rejected the order");
         }
       } catch (proxyError: any) {
-        toast.dismiss(sendingToastId);
-        
         const failErrorMsg = (proxyError.response?.data ? formatErrorMessage(proxyError.response.data) : null) || formatErrorMessage(proxyError) || "Order transmission failed";
-        toast.error(`Order Failed: ${failErrorMsg}`, { duration: 8000 });
+        
+        // CORS proxy pre-flight or routing block triggers. Fallback automatically.
+        const isNetworkOrHtml = failErrorMsg.toLowerCase().includes("network error") || 
+                                failErrorMsg.toLowerCase().includes("<!doctype html") ||
+                                failErrorMsg.toLowerCase().includes("<html") ||
+                                failErrorMsg.toLowerCase().includes("failed to fetch") ||
+                                proxyError.message?.toLowerCase().includes("network error") ||
+                                !proxyError.response;
 
-        setLastOrder({
-          userId: user.uid,
-          userEmail: user.email,
-          courseId: selectedCourse.id,
-          courseTitle: selectedCourse.title,
-          category: selectedCourse.category || "Other",
-          quantity: Number(quantity),
-          targetLink: targetLink.trim(),
-          totalPrice: totalPrice,
-          status: "Failed",
-          error: failErrorMsg,
-          createdAt: new Date()
-        });
-      } finally {
-        setSubmitting(false);
+        if (isNetworkOrHtml) {
+          console.warn("[API Network Error] Standard HTTP route CORS-blocked by Google Sandbox. Switching to secure fallback direct Firestore queue mechanism...");
+          await handleFirestoreFallbackOrder(sendingToastId);
+        } else {
+          toast.dismiss(sendingToastId);
+          toast.error(`Order Failed: ${failErrorMsg}`, { duration: 8000 });
+
+          setLastOrder({
+            userId: user.uid,
+            userEmail: user.email,
+            courseId: selectedCourse.id,
+            courseTitle: selectedCourse.title,
+            category: selectedCourse.category || "Other",
+            quantity: Number(quantity),
+            targetLink: targetLink.trim(),
+            totalPrice: totalPrice,
+            status: "Failed",
+            error: failErrorMsg,
+            createdAt: new Date()
+          });
+          setSubmitting(false);
+        }
       }
     } catch (outerError: any) {
       toast.error(outerError?.message || "Failed to place order");
