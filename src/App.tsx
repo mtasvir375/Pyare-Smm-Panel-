@@ -85,6 +85,12 @@ export default function App() {
                   activeBackendUrl = DEV_API_URL;
                   axios.defaults.baseURL = activeBackendUrl;
                   console.log(`[API] Dev sandbox environment detected. Locked to dev backend: ${activeBackendUrl}`);
+                } else if (!isLocalOrPreview) {
+                  // If we are on a custom domain or Vercel, we MUST preserve window.location.origin as the baseURL.
+                  // This ensures Vercel's proxy rewrite specified in vercel.json is triggered, bypassing browser CORS/Cookie blocks.
+                  activeBackendUrl = finalUrl;
+                  axios.defaults.baseURL = origin;
+                  console.log(`[API] [ASYNC_REFRESH] Custom domain detected (${origin}). Preserved relative origin baseURL to support Vercel proxy rewrite to: ${finalUrl}`);
                 } else {
                   activeBackendUrl = finalUrl;
                   axios.defaults.baseURL = activeBackendUrl;
