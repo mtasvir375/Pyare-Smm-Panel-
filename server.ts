@@ -21,10 +21,10 @@ async function startServer() {
   app.use(express.json({ limit: "50mb" }));
   
   // Enable absolute CORS for custom domains calling this Cloud Run backend
-  app.use(cors({
+  const corsOptions = {
     origin: (origin, callback) => {
-      // Allow any origin, complying with white-label client-side custom domain setups
-      callback(null, true);
+      // Dynamic origin compliance: return the incoming origin directly to allow credentialed share, fallback to true if undefined
+      callback(null, origin || true);
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -38,7 +38,10 @@ async function startServer() {
       "Access-Control-Request-Headers"
     ],
     maxAge: 86400 // Cache preflight OPTIONS responses for 24 hours
-  }));
+  };
+
+  app.use(cors(corsOptions));
+  app.options("*", cors(corsOptions)); // Handle preflight OPTIONS requests explicitly for all routes
   
   // Load Firebase Config
   const configPath = path.join(process.cwd(), "firebase-applet-config.json");
