@@ -12,7 +12,7 @@ import { getFirestore, FieldValue } from "firebase-admin/firestore";
 
 dotenv.config();
 
-const PORT = 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
 async function startServer() {
   console.log("[STARTUP] Initializing server...");
