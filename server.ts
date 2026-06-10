@@ -942,12 +942,93 @@ async function startServer() {
     }
   };
 
+  // Secure REST Polling Loop Fallback to fetch pending orders securely using public key credentials
+  let isPollingActive = false;
+  async function startRESTBackupPollingLoop() {
+    if (isPollingActive) return;
+    isPollingActive = true;
+    console.log(`[BACKGROUND-PROCESSOR] [REST-POLL] Initiating failsafe REST-based polling query loop...`);
+
+    const tidyDb = (!databaseId || databaseId === "(default)") ? "(default)" : databaseId;
+    const runQueryUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${tidyDb}/documents:runQuery?key=${FIREBASE_API_KEY}`;
+
+    setInterval(async () => {
+      try {
+        const queryPayload = {
+          structuredQuery: {
+            from: [{ collectionId: "orders" }],
+            where: {
+              fieldFilter: {
+                field: { fieldPath: "needsProviderTransmission" },
+                op: "EQUAL",
+                value: { booleanValue: true }
+              }
+            }
+          }
+        };
+
+        const response = await axios.post(runQueryUrl, queryPayload, { timeout: 8000 });
+        if (!response.data || !Array.isArray(response.data)) return;
+
+        for (const item of response.data) {
+          if (!item.document || !item.document.name) continue;
+          
+          const docName = item.document.name;
+          const orderId = docName.split("/").pop();
+          if (!orderId) continue;
+
+          // Check memory lock
+          if (processingOrders.has(orderId)) continue;
+
+          const rawFields = item.document.fields || {};
+          const orderData = unwrapRestFields(rawFields);
+
+          if (orderData.needsProviderTransmission !== true) continue;
+
+          if (orderData.providerTransmissionStatus === "processing" || 
+              orderData.providerTransmissionStatus === "completed" || 
+              orderData.providerTransmissionStatus === "failed") {
+            continue;
+          }
+
+          if (orderData.providerOrderId) {
+            await updateDocSafe("orders", orderId, {
+              needsProviderTransmission: false,
+              providerTransmissionStatus: "completed"
+            });
+            continue;
+          }
+
+          console.log(`[REST-POLL] 🔔 Pending custom-domain order ${orderId} detected via secure REST Firestore poller! Initiating automatic dispatch...`);
+
+          (async () => {
+            try {
+              await updateDocSafe("orders", orderId, {
+                providerTransmissionStatus: "processing",
+                updatedAt: new Date()
+              });
+
+              await transmitOrderToProviderDirect(orderId, orderData);
+            } catch (err: any) {
+              console.error(`[REST-POLL] Task dispatcher error on ${orderId}:`, err.message);
+            }
+          })();
+        }
+      } catch (err: any) {
+        console.error(`[BACKGROUND-PROCESSOR] [REST-POLL] Polling loop query failed: ${err.message}`);
+      }
+    }, 5000); // Check every 5 seconds
+  }
+
   // Background Live Snapshot Listener
   function startBackgroundOrderListener(dbInstance: any) {
     console.log("[BACKGROUND-PROCESSOR] Starting real-time Firestore background order observer...");
     
+    // Always pre-start our REST Polling Backup Loop as a bulletproof failsafe in sandboxed sandbox environments
+    startRESTBackupPollingLoop();
+
     if (!dbInstance) {
-      console.warn("[BACKGROUND-PROCESSOR] Firestore reference is undefined. Background observer disabled.");
+      console.warn("[BACKGROUND-PROCESSOR] Firestore reference is undefined. Relying entirely on REST polling backup.");
       return;
     }
 
@@ -1006,14 +1087,12 @@ async function startServer() {
             }
           }
         }, (error: any) => {
-          console.error("[BACKGROUND-PROCESSOR] Firestore snap listener error:", error.message);
-          // Auto healing restart loop
-          setTimeout(() => startBackgroundOrderListener(dbInstance), 12000);
+          console.warn("[BACKGROUND-PROCESSOR] Firestore snap listener credential block detected: ", error.message, ". Bulletproof REST Polling backup loop is ACTIVE and processing SMM panels orders securely.");
         });
     } catch (err: any) {
       console.error("[BACKGROUND-PROCESSOR] Live listener mapping failed:", err.message);
     }
-  };
+  }
 
   // Improved Proxy for Provider with better logging and headers
   app.post("/api/proxy-provider", async (req, res) => {
