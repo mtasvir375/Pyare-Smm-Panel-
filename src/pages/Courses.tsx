@@ -372,6 +372,7 @@ export default function Courses() {
 
           setTargetLink("");
           setQuantity(String(selectedCourse.minLimit));
+          setSubmitting(false);
         } else {
           throw new Error(formatErrorMessage(response.data) || "Provider rejected the order");
         }
