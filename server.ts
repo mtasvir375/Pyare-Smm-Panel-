@@ -49,6 +49,7 @@ async function startServer() {
   const { projectId } = firebaseConfig;
   const databaseId = (firebaseConfig.firestoreDatabaseId || "").trim() || "(default)";
   const FIREBASE_API_KEY = firebaseConfig.apiKey;
+  let isPollingActive = false;
 
   const logToDb = async (event: string, meta: any = {}) => {
     try {
@@ -943,7 +944,6 @@ async function startServer() {
   };
 
   // Secure REST Polling Loop Fallback to fetch pending orders securely using public key credentials
-  let isPollingActive = false;
   async function startRESTBackupPollingLoop() {
     if (isPollingActive) return;
     isPollingActive = true;
