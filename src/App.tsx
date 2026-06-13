@@ -35,22 +35,13 @@ export default function App() {
                             origin.includes("ais-dev-");
 
     // 2. STAGE 1 (Synchronous Setup): Pre-set Axios baseURL instantly
-    if (origin.includes("pyaresmmpanel.online") || origin.includes("pyaresmmpanel.live")) {
-      // Point directly to secure Cloud Run backend to avoid Vercel SPA html routing conflicts.
-      // Dynamic CORS is fully enabled on the server, ensuring direct browser calls succeed.
-      axios.defaults.baseURL = activeBackendUrl;
-      console.log(`[API] [SYNC_INIT] Custom domain detected. Pointing directly to stable Cloud Run backend: ${activeBackendUrl}`);
-    } else if (!isLocalOrPreview) {
-      // Connect directly to secure Cloud Run backend
-      axios.defaults.baseURL = activeBackendUrl;
-      console.log(`[API] [SYNC_INIT] External domain detected. Pointing directly to Cloud Run backend: ${activeBackendUrl}`);
-    } else if (origin.includes("vercel") || origin.includes("netlify") || origin.includes("github.io")) {
-      // If hosted on raw vercel / netlify domains and didn't define a custom domain rule, use backup backend
-      axios.defaults.baseURL = activeBackendUrl;
-      console.log(`[API] [SYNC_INIT] Static hosting detected, setting stable backup backend: ${activeBackendUrl}`);
-    } else {
+    if (isLocalOrPreview) {
       axios.defaults.baseURL = origin;
-      console.log(`[API] [SYNC_INIT] Local preview environment, setting same-origin baseURL: ${origin}`);
+      console.log(`[API] [SYNC_INIT] Local preview/dev environment. Same-origin: ${origin}`);
+    } else {
+      // For any custom domain (including smmpanel.online), default to direct container routing first
+      axios.defaults.baseURL = activeBackendUrl;
+      console.log(`[API] [SYNC_INIT] Production/Custom domain detected. Routing to Cloud Run backend: ${activeBackendUrl}`);
     }
 
     // 3. Register request interceptor (must use current state of axios.defaults.baseURL)
@@ -67,8 +58,22 @@ export default function App() {
       (error) => Promise.reject(error)
     );
 
-    // 4. STAGE 2 (Asynchronous Lookup): Refresh activeBackendUrl if settings contain overrides
+    // 4. STAGE 2 (Asynchronous Lookup & Self-Healing Probe):
+    // Check if Express backend is running on same-origin (pointed directly to Cloud Run).
+    // If not, fall back to Firestore config or the stable Cloud Run URL.
     const resolveBackendUrl = async () => {
+      try {
+        console.log("[API] Probing same-origin endpoint: /api/health");
+        const probeRes = await axios.get(`${origin}/api/health`, { timeout: 2500 });
+        if (probeRes.data && probeRes.data.status === "ok") {
+          axios.defaults.baseURL = origin;
+          console.log(`[API] Same-origin Express backend DETECTED! Lock to same-origin routing: ${origin}`);
+          return;
+        }
+      } catch (probeErr) {
+        console.log("[API] Same-origin probe skipped (standard for static CDN custom domain routing). Probing cloud fallback settings...");
+      }
+
       try {
         const settingsSnap = await getDocFromServer(doc(db, "settings", "payment"));
         if (settingsSnap.exists()) {
@@ -77,30 +82,22 @@ export default function App() {
             const savedUrl = sData.backendApiUrl.trim();
             if (savedUrl && savedUrl.length > 0) {
               const finalUrl = savedUrl.startsWith("http") ? savedUrl : `https://${savedUrl}`;
-              // Verify it is a valid Google Cloud Run URL
-              if (finalUrl.includes(".run.app")) {
-                const isDevelopmentMode = origin.includes("ais-dev-") || origin.includes("localhost") || origin.includes("127.0.0.1");
-                if (isDevelopmentMode) {
-                  // Keep development sandbox URL to prevent shared database routing from matching production environment settings
-                  activeBackendUrl = DEV_API_URL;
-                  axios.defaults.baseURL = activeBackendUrl;
-                  console.log(`[API] Dev sandbox environment detected. Locked to dev backend: ${activeBackendUrl}`);
-                } else if (!isLocalOrPreview) {
-                  // Direct connection to active Cloud Run backend for custom domains to avoid static index.html fallback
-                  activeBackendUrl = finalUrl;
-                  axios.defaults.baseURL = finalUrl;
-                  console.log(`[API] [ASYNC_REFRESH] Custom domain detected. Pointing directly to active Cloud Run backend URL: ${finalUrl}`);
-                } else {
-                  activeBackendUrl = finalUrl;
-                  axios.defaults.baseURL = activeBackendUrl;
-                  console.log(`[API] [ASYNC_REFRESH] Updated Axios baseURL to Firestore configuration: ${activeBackendUrl}`);
-                }
+              
+              const isDevelopmentMode = origin.includes("ais-dev-") || origin.includes("localhost") || origin.includes("127.0.0.1");
+              if (isDevelopmentMode) {
+                activeBackendUrl = DEV_API_URL;
+                axios.defaults.baseURL = activeBackendUrl;
+                console.log(`[API] Dev sandbox environment. Locked to: ${activeBackendUrl}`);
+              } else {
+                axios.defaults.baseURL = finalUrl;
+                console.log(`[API] [ASYNC_REFRESH] Live backend configured in DB: ${finalUrl}`);
               }
+              return;
             }
           }
         }
       } catch (dbErr) {
-        console.warn("[API] Could not check live override in Firestore, running on stable synchronous defaults.", dbErr);
+        console.warn("[API] Could not check live override in Firestore, running on secure defaults.", dbErr);
       }
     };
     resolveBackendUrl();

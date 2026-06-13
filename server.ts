@@ -1017,14 +1017,14 @@ async function startServer() {
       } catch (err: any) {
         console.error(`[BACKGROUND-PROCESSOR] [REST-POLL] Polling loop query failed: ${err.message}`);
       }
-    }, 5000); // Check every 5 seconds
+    }, 12000); // Check every 12 seconds (extremely responsive and spends only ~7,200 reads/day, well within 50,000 free tier)
   }
 
   // Background Live Snapshot Listener
   function startBackgroundOrderListener(dbInstance: any) {
     console.log("[BACKGROUND-PROCESSOR] Starting real-time Firestore background order observer...");
     
-    // Always pre-start our REST Polling Backup Loop as a bulletproof failsafe in sandboxed sandbox environments
+    // REST Polling Backup loop activated as a solid, database-optimized failsafe
     startRESTBackupPollingLoop();
 
     if (!dbInstance) {
