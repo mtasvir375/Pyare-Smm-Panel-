@@ -15,6 +15,8 @@ import Dashboard from "./pages/Dashboard";
 import Profile from "./pages/Profile";
 import Admin from "./pages/Admin";
 import Login from "./pages/Login";
+import SEOLandingPage from "./pages/SEOLandingPage";
+import SEOServicesIndex from "./pages/SEOServicesIndex";
 
 export default function App() {
   useEffect(() => {
@@ -62,6 +64,15 @@ export default function App() {
     // Check if Express backend is running on same-origin (pointed directly to Cloud Run).
     // If not, fall back to Firestore config or the stable Cloud Run URL.
     const resolveBackendUrl = async () => {
+      // 1. Optimize SEO & Crawl Bot Traffic:
+      // If we are browsing seo-services index or individual service landing pages, bypass DB lookup.
+      // Static SEO landing pages and crawlers don't perform any transactional API calls.
+      const currentPath = window.location.pathname;
+      if (currentPath.startsWith("/services/") || currentPath === "/seo-services") {
+        console.log(`[API] Static SEO page route detected (${currentPath}). Skipping backend Firestore check to save limits.`);
+        return;
+      }
+
       try {
         console.log("[API] Probing same-origin endpoint: /api/health");
         const probeRes = await axios.get(`${origin}/api/health`, { timeout: 2500 });
@@ -117,6 +128,8 @@ export default function App() {
           <Route path="profile" element={<Profile />} />
           <Route path="admin" element={<Admin />} />
           <Route path="login" element={<Login />} />
+          <Route path="services/:slug" element={<SEOLandingPage />} />
+          <Route path="seo-services" element={<SEOServicesIndex />} />
         </Route>
       </Routes>
     </Router>

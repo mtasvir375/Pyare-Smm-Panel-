@@ -95,6 +95,22 @@ export default function Courses() {
     fetchSettings();
   }, []);
 
+  // Sync category state dynamically from SEO dynamic URL queries
+  useEffect(() => {
+    const queryCategory = searchParams.get("category");
+    if (queryCategory) {
+      const match = CATEGORIES.find(c => c.toLowerCase() === queryCategory.toLowerCase());
+      if (match) {
+        setSelectedCategory(match);
+      } else {
+        const foundData = courses.find(c => c.category && c.category.toLowerCase() === queryCategory.toLowerCase());
+        if (foundData) {
+          setSelectedCategory(foundData.category);
+        }
+      }
+    }
+  }, [searchParams, courses]);
+
   useEffect(() => {
     const services = courses.filter(c => c.category === selectedCategory);
     if (services.length > 0) {

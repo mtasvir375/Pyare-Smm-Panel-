@@ -1017,7 +1017,7 @@ async function startServer() {
       } catch (err: any) {
         console.error(`[BACKGROUND-PROCESSOR] [REST-POLL] Polling loop query failed: ${err.message}`);
       }
-    }, 12000); // Check every 12 seconds (extremely responsive and spends only ~7,200 reads/day, well within 50,000 free tier)
+    }, 120000); // Check every 120 seconds (2 minutes). Primary listener uses real-time WebSockets, so backup can be lightweight!
   }
 
   // Background Live Snapshot Listener
