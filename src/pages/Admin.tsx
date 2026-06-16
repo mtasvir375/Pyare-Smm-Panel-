@@ -129,6 +129,7 @@ export default function Admin() {
   const [razorpayEnabled, setRazorpayEnabled] = useState(false);
   const [razorpayKeyId, setRazorpayKeyId] = useState("");
   const [razorpayKeySecret, setRazorpayKeySecret] = useState("");
+  const [autoApproveDeposits, setAutoApproveDeposits] = useState(false);
   const [providers, setProviders] = useState<any[]>([]);
   const [newProviderName, setNewProviderName] = useState("");
   const [newProviderApiUrl, setNewProviderApiUrl] = useState("");
@@ -257,6 +258,7 @@ export default function Admin() {
           setRazorpayEnabled(settingsData.razorpayEnabled || false);
           setRazorpayKeyId(settingsData.razorpayKeyId || "");
           setRazorpayKeySecret(settingsData.razorpayKeySecret || "");
+          setAutoApproveDeposits(settingsData.autoApproveDeposits || false);
           
           // Load or auto-populate backend API URL with self-healing for transient dev URLs
           const savedBackendUrl = settingsData.backendApiUrl || "";
@@ -388,6 +390,7 @@ export default function Admin() {
         razorpayEnabled: razorpayEnabled,
         razorpayKeyId: razorpayKeyId.trim(),
         razorpayKeySecret: razorpayKeySecret.trim(),
+        autoApproveDeposits: autoApproveDeposits,
       });
       setQrUrl(base64);
       setProviderApiUrl(cleanUrl);
@@ -1796,6 +1799,83 @@ export default function Admin() {
                           className="rounded-xl h-12"
                         />
                         <p className="text-[10px] text-gray-500">YouTube video to show on the Profile page as a guide.</p>
+                      </div>
+                    </div>
+
+                    <div className="border-t pt-6 mt-6 space-y-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <div>
+                          <h3 className="font-bold text-sm text-amber-500 flex items-center gap-1.5">
+                            ⚠️ Instant Auto-Approve on UTR entry (बिना वेरिफिकेशन पेमेंट जोड़ें)
+                          </h3>
+                          <p className="text-[11px] text-gray-500 font-medium">
+                            खतरनाक (Not Secure): इसे चालू करने पर ग्राहक द्वारा कोई भी फर्जी 12-अंकों का UTR नंबर डालते ही पेमेंट तुरंत आटोमेटिक जुड़ जायेगी!
+                          </p>
+                        </div>
+                        <div 
+                          className={cn(
+                            "w-12 h-6 rounded-full p-1 cursor-pointer transition-colors duration-200 shrink-0",
+                            autoApproveDeposits ? "bg-amber-500" : "bg-gray-200"
+                          )}
+                          onClick={() => setAutoApproveDeposits(!autoApproveDeposits)}
+                        >
+                          <div className={cn(
+                            "w-4 h-4 bg-white rounded-full transition-transform duration-200",
+                            autoApproveDeposits ? "translate-x-6" : "translate-x-0"
+                          )} />
+                        </div>
+                      </div>
+                      
+                      {autoApproveDeposits && (
+                        <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 space-y-2">
+                          <p className="text-amber-500 font-bold text-[11px] uppercase tracking-wider">
+                            ⚠️ चेतावनी (Warning!)
+                          </p>
+                          <p className="text-xs text-gray-400 leading-relaxed">
+                            अगर आप इसे चालू रखते हैं, तो कोई भी व्यक्ति <strong>गलत या नकली (Fake) UTR</strong> डालकर वेबसाइट पर बैलेंस पा सकेगा। हम आपको इसे बंद रखने और नीचे दिए गए <strong>SMS Automatic Webhook</strong> का उपयोग करने की सलाह देते हैं जो 100% सुरक्षित और असली आटोमेटिक है।
+                          </p>
+                        </div>
+                      )}
+
+                      <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 space-y-3">
+                        <h4 className="font-bold text-xs text-primary uppercase tracking-wider flex items-center gap-1">
+                          📱 100% सुरक्षित ऑटो-पेमेंट (SMS gateway configuration)
+                        </h4>
+                        <p className="text-xs text-gray-400 leading-relaxed">
+                          यदि आप चाहते हैं कि जब ग्राहक पेमेंट करे, सिर्फ तभी उसका पेमेंट ऑटो-वेरीफाई हो (बिना किसी फेक UTR के), तो अपने उस एंड्रॉइड फ़ोन पर <strong>SMS Forwarder</strong> (जैसे <em>"SMS to Webhook" / "SMS Gateway"</em>) एप्प डालें जिसमें आपके UPI बैंक का SMS आता है।
+                        </p>
+                        
+                        <div className="space-y-2 text-xs font-mono bg-zinc-900 border p-3 rounded-xl overflow-x-auto text-[11px]">
+                          <div>
+                            <span className="text-gray-500">// Configure your SMS Forwarder App with:</span>
+                          </div>
+                          <div>
+                            <span className="text-primary-light">Webhook URL:</span>{" "}
+                            <span className="text-green-500 select-all">
+                              {(backendApiUrl || "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app").replace(/\/$/, "")}/api/webhooks/sms-gateway
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-primary-light">Query Parameter URL (Safe):</span>{" "}
+                            <span className="text-green-500 select-all">
+                              {(backendApiUrl || "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app").replace(/\/$/, "")}/api/webhooks/sms-gateway?secret=secure_sms_gateway_pwd_2026
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-primary-light">Content-Type:</span> <span className="text-zinc-400">application/json</span>
+                          </div>
+                          <div>
+                            <span className="text-primary-light">POST Parameter Body keys:</span> <span className="text-zinc-400">text, secret</span>
+                          </div>
+                          <div>
+                            <span className="text-primary-light">Secret Key Value:</span>{" "}
+                            <span className="text-green-500 select-all font-bold">secure_sms_gateway_pwd_2026</span>
+                          </div>
+                        </div>
+
+                        <p className="text-[11px] text-gray-500">
+                          <strong>यह कैसे काम करता है:</strong> ग्राहक QR कोड स्कैन करके पेमेंट करने के बाद अपनी UPI app से 12 डिजिट का UTR नंबर कॉपी करके वेबसाइट में डालेगा। उसकी रिक्वेस्ट "Pending" रहेगी। जैसे ही आपके उस फ़ोन पर बैंक का "Rs. Credited" वाला SMS आएगा, वह ऑटो-फॉरवर्ड होकर इस सर्वर पर आ जायेगा। सर्वर तुरंत UTR मैच करके उसे 1 सेकंड में 100% सही और ऑटो-अपुर्व कर देगा!
+                        </p>
                       </div>
                     </div>
 

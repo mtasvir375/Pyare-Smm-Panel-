@@ -41,12 +41,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // If it's a known admin, we can stop loading early to show the dashboard shell
-      if (firebaseUser.email === "mtasvir375@gmail.com" || firebaseUser.email === "mdsaudalam621@gmail.com") {
+      if (firebaseUser.email === "mtasvir375@gmail.com") {
         setLoading(false);
         // Set temporary profile to allow immediate access to restricted pages
         setProfile({ 
           email: firebaseUser.email, 
-          role: firebaseUser.email === "mtasvir375@gmail.com" ? "admin" : "payment_admin" 
+          role: "admin" 
         });
       }
 
@@ -120,7 +120,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     profile,
     loading,
     isAdmin: profile?.role === "admin" || user?.email === "mtasvir375@gmail.com",
-    isPaymentAdmin: user?.email?.toLowerCase() === "mdsaudalam621@gmail.com",
+    isPaymentAdmin: false,
     isInstructor: profile?.role === "instructor" || profile?.role === "admin" || user?.email === "mtasvir375@gmail.com",
   }), [user, profile, loading]);
 

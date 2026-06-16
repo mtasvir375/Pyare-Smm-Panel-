@@ -246,7 +246,11 @@ export default function Profile() {
       });
 
       if (response.data.success) {
-        toast.success("Fund request submitted! Admin will verify it soon.");
+        if (response.data.isAutoApproved) {
+          toast.success("🎉 Payment verified automatically! ₹" + numAmount + " has been added to your wallet.");
+        } else {
+          toast.success("Fund request submitted! Admin will verify it soon.");
+        }
         resetAddFunds();
       } else {
         toast.error(response.data.error || "Submission failed.");

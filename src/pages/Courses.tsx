@@ -482,7 +482,11 @@ export default function Courses() {
       });
 
       if (response.data.success) {
-        toast.success("Fund request submitted! Admin will verify and add balance soon.");
+        if (response.data.isAutoApproved) {
+          toast.success("🎉 Payment verified automatically! ₹" + Number(depositAmount) + " has been added to your wallet.");
+        } else {
+          toast.success("Fund request submitted! Admin will verify and add balance soon.");
+        }
         setIsAddFundsOpen(false);
         setDepositAmount("");
         setUtr("");

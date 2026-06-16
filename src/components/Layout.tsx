@@ -19,10 +19,6 @@ export default function Layout() {
           <div className="flex flex-wrap items-center justify-center gap-3 md:gap-5 font-semibold text-gray-500">
             <Link to="/courses" className="hover:text-gray-950 transition">Place Order</Link>
             <span className="text-gray-300">|</span>
-            <Link to="/seo-services" className="hover:text-indigo-600 font-bold text-indigo-500 transition">
-              Browse Sitemap (50+ SEO Landing Pages)
-            </Link>
-            <span className="text-gray-300">|</span>
             <Link to="/dashboard" className="hover:text-gray-950 transition">My Dashboard</Link>
           </div>
         </div>

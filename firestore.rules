@@ -82,7 +82,7 @@ service cloud.firestore {
     }
 
     function isPaymentAdmin() {
-      return isAuthenticated() && request.auth.token.email.lower() == "mdsaudalam621@gmail.com";
+      return false;
     }
 
     function isInstructor() {

@@ -6,8 +6,6 @@
 import { useEffect } from "react";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import axios from "axios";
-import { doc, getDocFromServer } from "firebase/firestore";
-import { db } from "./lib/firebase";
 import Layout from "./components/Layout";
 import Home from "./pages/Home";
 import Courses from "./pages/Courses";
@@ -15,8 +13,6 @@ import Dashboard from "./pages/Dashboard";
 import Profile from "./pages/Profile";
 import Admin from "./pages/Admin";
 import Login from "./pages/Login";
-import SEOLandingPage from "./pages/SEOLandingPage";
-import SEOServicesIndex from "./pages/SEOServicesIndex";
 
 export default function App() {
   useEffect(() => {
@@ -34,16 +30,18 @@ export default function App() {
     const isLocalOrPreview = origin.includes("localhost") || 
                             origin.includes("127.0.0.1") || 
                             origin.includes("ais-pre-") || 
-                            origin.includes("ais-dev-");
+                            origin.includes("ais-dev-") ||
+                            origin.includes("pyaresmmpanel.online") ||
+                            origin.includes("smmpanel.online");
 
     // 2. STAGE 1 (Synchronous Setup): Pre-set Axios baseURL instantly
-    if (isLocalOrPreview) {
+    if (isLocalOrPreview || !origin.includes(".vercel.app")) {
       axios.defaults.baseURL = origin;
-      console.log(`[API] [SYNC_INIT] Local preview/dev environment. Same-origin: ${origin}`);
+      console.log(`[API] [SYNC_INIT] Same-origin routing enabled: ${origin}`);
     } else {
-      // For any custom domain (including smmpanel.online), default to direct container routing first
+      // For any external static host (like Vercel), fallback to stable Cloud Run backend
       axios.defaults.baseURL = activeBackendUrl;
-      console.log(`[API] [SYNC_INIT] Production/Custom domain detected. Routing to Cloud Run backend: ${activeBackendUrl}`);
+      console.log(`[API] [SYNC_INIT] External host detected. Fallback routing to Cloud Run backend: ${activeBackendUrl}`);
     }
 
     // 3. Register request interceptor (must use current state of axios.defaults.baseURL)
@@ -60,56 +58,10 @@ export default function App() {
       (error) => Promise.reject(error)
     );
 
-    // 4. STAGE 2 (Asynchronous Lookup & Self-Healing Probe):
-    // Check if Express backend is running on same-origin (pointed directly to Cloud Run).
-    // If not, fall back to Firestore config or the stable Cloud Run URL.
+    // 4. STAGE 2: Self-Healing backend lookup is simplified because the app runs fully on Cloud Run.
+    // BaseURL is already pinned to origin synchronously, which eliminates the need to do Firestore reads on mount.
     const resolveBackendUrl = async () => {
-      // 1. Optimize SEO & Crawl Bot Traffic:
-      // If we are browsing seo-services index or individual service landing pages, bypass DB lookup.
-      // Static SEO landing pages and crawlers don't perform any transactional API calls.
-      const currentPath = window.location.pathname;
-      if (currentPath.startsWith("/services/") || currentPath === "/seo-services") {
-        console.log(`[API] Static SEO page route detected (${currentPath}). Skipping backend Firestore check to save limits.`);
-        return;
-      }
-
-      try {
-        console.log("[API] Probing same-origin endpoint: /api/health");
-        const probeRes = await axios.get(`${origin}/api/health`, { timeout: 2500 });
-        if (probeRes.data && probeRes.data.status === "ok") {
-          axios.defaults.baseURL = origin;
-          console.log(`[API] Same-origin Express backend DETECTED! Lock to same-origin routing: ${origin}`);
-          return;
-        }
-      } catch (probeErr) {
-        console.log("[API] Same-origin probe skipped (standard for static CDN custom domain routing). Probing cloud fallback settings...");
-      }
-
-      try {
-        const settingsSnap = await getDocFromServer(doc(db, "settings", "payment"));
-        if (settingsSnap.exists()) {
-          const sData = settingsSnap.data();
-          if (sData && sData.backendApiUrl) {
-            const savedUrl = sData.backendApiUrl.trim();
-            if (savedUrl && savedUrl.length > 0) {
-              const finalUrl = savedUrl.startsWith("http") ? savedUrl : `https://${savedUrl}`;
-              
-              const isDevelopmentMode = origin.includes("ais-dev-") || origin.includes("localhost") || origin.includes("127.0.0.1");
-              if (isDevelopmentMode) {
-                activeBackendUrl = DEV_API_URL;
-                axios.defaults.baseURL = activeBackendUrl;
-                console.log(`[API] Dev sandbox environment. Locked to: ${activeBackendUrl}`);
-              } else {
-                axios.defaults.baseURL = finalUrl;
-                console.log(`[API] [ASYNC_REFRESH] Live backend configured in DB: ${finalUrl}`);
-              }
-              return;
-            }
-          }
-        }
-      } catch (dbErr) {
-        console.warn("[API] Could not check live override in Firestore, running on secure defaults.", dbErr);
-      }
+      console.log("[API] App initialized. Using origin as identical backend target.");
     };
     resolveBackendUrl();
 
@@ -128,8 +80,6 @@ export default function App() {
           <Route path="profile" element={<Profile />} />
           <Route path="admin" element={<Admin />} />
           <Route path="login" element={<Login />} />
-          <Route path="services/:slug" element={<SEOLandingPage />} />
-          <Route path="seo-services" element={<SEOServicesIndex />} />
         </Route>
       </Routes>
     </Router>

@@ -1,9 +1,10 @@
 import { collection, query, where, getDocs, doc, getDoc, limit } from "firebase/firestore";
 import { db } from "./firebase";
+import axios from "axios";
 
 let cachedCourses: any = null;
 let lastCoursesFetch = 0;
-const CACHE_DURATION = 15 * 60 * 1000; // 15 minutes to save massive reads
+const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes to save massive reads
 
 // Clear cache (useful for admin when they update something)
 export const clearCache = () => {
@@ -17,6 +18,11 @@ export const clearCache = () => {
         localStorage.removeItem("cached_settings");
         localStorage.removeItem("cached_settings_time");
     } catch(e) {}
+    
+    // Concurrently clear server-side cache so visitors fetch fresh data immediately
+    axios.post("/api/clear-cache").catch((err) => {
+        console.error("Failed to clear server-side cache via API proxy:", err);
+    });
 }
 
 export const getCachedCourses = async (forceRefresh = false) => {
@@ -54,35 +60,16 @@ export const getCachedCourses = async (forceRefresh = false) => {
     } catch(e) {}
   }
   
-  const q = query(
-    collection(db, "courses"),
-    where("status", "==", "published")
-  );
-  
   try {
-    const snapshot = await getDocs(q);
-    cachedCourses = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    
-    // Sort courses by category priority: Instagram first
-    const categoryOrder = ["Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Twitter", "Other"];
-    cachedCourses.sort((a: any, b: any) => {
-      const orderA = categoryOrder.indexOf(a.category) === -1 ? 99 : categoryOrder.indexOf(a.category);
-      const orderB = categoryOrder.indexOf(b.category) === -1 ? 99 : categoryOrder.indexOf(b.category);
-      if (orderA !== orderB) return orderA - orderB;
-      
-      // Secondary sort by createdAt (latest first)
-      const timeA = a.createdAt?.seconds || 0;
-      const timeB = b.createdAt?.seconds || 0;
-      return timeB - timeA;
-    });
-
+    const res = await axios.get("/api/courses");
+    cachedCourses = res.data;
     lastCoursesFetch = now;
     try {
       localStorage.setItem("cached_courses_time", now.toString());
       localStorage.setItem("cached_courses", JSON.stringify(cachedCourses));
     } catch(e) {}
   } catch (err) {
-    console.error("Failed to fetch courses", err);
+    console.error("Failed to fetch courses via API proxy", err);
     if (!cachedCourses) cachedCourses = [];
   }
   
@@ -115,17 +102,15 @@ export const getCachedSettings = async (forceRefresh = false) => {
   }
   
   try {
-    const settingsDoc = await getDoc(doc(db, "settings", "payment"));
-    if (settingsDoc.exists()) {
-      cachedSettings = settingsDoc.data();
-      lastSettingsFetch = now;
-      try {
-        localStorage.setItem("cached_settings_time", now.toString());
-        localStorage.setItem("cached_settings", JSON.stringify(cachedSettings));
-      } catch(e) {}
-    }
+    const res = await axios.get("/api/settings");
+    cachedSettings = res.data;
+    lastSettingsFetch = now;
+    try {
+      localStorage.setItem("cached_settings_time", now.toString());
+      localStorage.setItem("cached_settings", JSON.stringify(cachedSettings));
+    } catch(e) {}
   } catch (err) {
-    console.error("Failed to fetch settings", err);
+    console.error("Failed to fetch settings via API proxy", err);
     if (!cachedSettings) cachedSettings = {};
   }
   return cachedSettings || {};

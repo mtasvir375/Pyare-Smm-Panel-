@@ -70,7 +70,7 @@ async function startServer() {
     }
   };
 
-  logToDb("SERVER_START", { message: "Express server started/restarted successfully" });
+  console.log("[STARTUP] Express server started/restarted successfully (0 Firestore writes/reads on boot).");
 
   console.log(`[INIT] Starting with Project: ${projectId}, DB: ${databaseId}`);
   
@@ -141,7 +141,8 @@ async function startServer() {
     }
   };
   
-  ensureBackendUrlIsSet();
+  // Commented out to eliminate Firestore read/write on every container start (optimized for free tier Spark plan)
+  // ensureBackendUrlIsSet();
   startBackgroundOrderListener(db);
   
   // IN-MEMORY CACHE FOR SERVER-SIDE
@@ -427,25 +428,7 @@ async function startServer() {
   };
 
   // Verify DB access on startup and auto-fallback if named DB is restricted/missing
-  try {
-    await db.collection("settings").doc("payment").get();
-    console.log(`[INIT] SDK connection verified for DB: ${databaseId || "(default)"}`);
-  } catch (err: any) {
-    console.error(`[INIT] SDK connection error with DB ${databaseId}: ${err.message}`);
-    // If permission denied or not found on a named DB, force switch to the default one
-    if (databaseId && databaseId !== "(default)" && (err.message.includes("PERMISSION_DENIED") || err.message.includes("NOT_FOUND"))) {
-      console.warn(`[INIT] Falling back to (default) database due to error...`);
-      try {
-        db = getFirestore(getApps()[0]);
-        // Also verify the fallback
-        await db.collection("settings").doc("payment").get();
-        console.log("[INIT] Successfully fell back to (default) database.");
-      } catch (fallbackErr: any) {
-        console.error(`[INIT] Fallback to default DB failed: ${fallbackErr.message}`);
-        // Even if it fails, we keep the defaultDb instance as it's our last hope
-      }
-    }
-  }
+  console.log(`[INIT] Firestore connection verification deferred to run on demand (saves quota reads on start).`);
 
   // Health check
   app.get("/api/health", (req, res) => res.json({ 
@@ -456,6 +439,154 @@ async function startServer() {
     envDatabase: process.env.GOOGLE_CLOUD_DATABASE || "not-set",
     hasAdminApp: getApps().length > 0
   }));
+
+  // Aggressive backend-side cache to protect Firestore read limits
+  let serverCachedCourses: any[] | null = null;
+  let serverCachedCoursesTime = 0;
+  let serverCachedSettings: any = null;
+  let serverCachedSettingsTime = 0;
+  
+  const BACKEND_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in-memory cache TTL by default
+
+  // API endpoint to programmatically clear backend cache when an admin updates courses/settings
+  app.post("/api/clear-cache", (req, res) => {
+    serverCachedCourses = null;
+    serverCachedCoursesTime = 0;
+    serverCachedSettings = null;
+    serverCachedSettingsTime = 0;
+    console.log("[SERVER-CACHE] Server-side cache cleared on Admin update request!");
+    res.json({ success: true, message: "Server-side cache cleared successfully" });
+  });
+
+  // Express API for Courses list with server-side in-memory caching
+  app.get("/api/courses", async (req, res) => {
+    const now = Date.now();
+    if (serverCachedCourses && (now - serverCachedCoursesTime < BACKEND_CACHE_DURATION)) {
+      console.log("[SERVER-CACHE] Serving courses from backend memory to save reads");
+      return res.json(serverCachedCourses);
+    }
+
+    try {
+      console.log("[SERVER-DB] Fetching published courses from Firestore to refresh cache...");
+      const snapshot = await db.collection("courses")
+        .where("status", "==", "published")
+        .get();
+      
+      const courses: any[] = [];
+      snapshot.forEach((doc: any) => {
+        courses.push({ id: doc.id, ...doc.data() });
+      });
+
+      // Sort courses by category priority: Instagram first
+      const categoryOrder = ["Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Twitter", "Other"];
+      courses.sort((a: any, b: any) => {
+        const orderA = categoryOrder.indexOf(a.category) === -1 ? 99 : categoryOrder.indexOf(a.category);
+        const orderB = categoryOrder.indexOf(b.category) === -1 ? 99 : categoryOrder.indexOf(b.category);
+        if (orderA !== orderB) return orderA - orderB;
+        
+        const timeA = a.createdAt?.seconds || a.createdAt?._seconds || 0;
+        const timeB = b.createdAt?.seconds || b.createdAt?._seconds || 0;
+        return timeB - timeA;
+      });
+
+      serverCachedCourses = courses;
+      serverCachedCoursesTime = now;
+      res.json(courses);
+    } catch (err: any) {
+      console.error("[SERVER-DB] Error fetching courses from database via SDK:", err.message);
+      
+      try {
+        console.log("[SERVER-REST] SDK Failed. Falling back to secure REST query for published courses...");
+        const tidyDb = (!databaseId || databaseId === "(default)") ? "(default)" : databaseId;
+        const runQueryUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${tidyDb}/documents:runQuery?key=${FIREBASE_API_KEY}`;
+        
+        const queryPayload = {
+          structuredQuery: {
+            from: [{ collectionId: "courses" }],
+            where: {
+              fieldFilter: {
+                field: { fieldPath: "status" },
+                op: "EQUAL",
+                value: { stringValue: "published" }
+              }
+            }
+          }
+        };
+
+        const response = await axios.post(runQueryUrl, queryPayload, { timeout: 10000 });
+        const courses: any[] = [];
+        
+        if (response.data && Array.isArray(response.data)) {
+          response.data.forEach((item: any) => {
+            if (item.document && item.document.name) {
+              const docName = item.document.name;
+              const courseId = docName.split("/").pop();
+              if (courseId) {
+                courses.push({
+                  id: courseId,
+                  ...unwrapRestFields(item.document.fields || {})
+                });
+              }
+            }
+          });
+        }
+        
+        // Sort courses by category priority: Instagram first
+        const categoryOrder = ["Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Twitter", "Other"];
+        courses.sort((a: any, b: any) => {
+          const orderA = categoryOrder.indexOf(a.category) === -1 ? 99 : categoryOrder.indexOf(a.category);
+          const orderB = categoryOrder.indexOf(b.category) === -1 ? 99 : categoryOrder.indexOf(b.category);
+          if (orderA !== orderB) return orderA - orderB;
+          
+          const timeA = a.createdAt?.seconds || a.createdAt?._seconds || 0;
+          const timeB = b.createdAt?.seconds || b.createdAt?._seconds || 0;
+          return timeB - timeA;
+        });
+
+        serverCachedCourses = courses;
+        serverCachedCoursesTime = now;
+        return res.json(courses);
+      } catch (restErr: any) {
+        console.error("[SERVER-REST] Terminal error fetching courses via REST API:", restErr.message);
+      }
+
+      if (serverCachedCourses) {
+        console.log("[SERVER-CACHE] Fallback to stale courses cache on DB error");
+        return res.json(serverCachedCourses);
+      }
+      res.status(500).json({ error: "Failed to fetch courses of panel" });
+    }
+  });
+
+  // Express API for Settings with server-side in-memory caching
+  app.get("/api/settings", async (req, res) => {
+    const now = Date.now();
+    if (serverCachedSettings && (now - serverCachedSettingsTime < BACKEND_CACHE_DURATION)) {
+      console.log("[SERVER-CACHE] Serving settings from backend memory to save reads");
+      return res.json(serverCachedSettings);
+    }
+
+    try {
+      console.log("[SERVER-DB] Fetching settings/payment from Firestore to refresh cache...");
+      const snap = await getDocSafe("settings", "payment");
+      
+      let settingsData = {};
+      if (snap.exists) {
+        settingsData = snap.data() || {};
+      }
+
+      serverCachedSettings = settingsData;
+      serverCachedSettingsTime = now;
+      res.json(settingsData);
+    } catch (err: any) {
+      console.error("[SERVER-DB] Error fetching settings from database:", err.message);
+      if (serverCachedSettings) {
+        console.log("[SERVER-CACHE] Fallback to stale settings cache on DB error");
+        return res.json(serverCachedSettings);
+      }
+      res.status(500).json({ error: "Failed to fetch settings" });
+    }
+  });
 
   // Temporary developer debug endpoint to inspect orders and provider responses
   app.get("/api/debug-orders", async (req, res) => {
@@ -574,25 +705,260 @@ async function startServer() {
         amount: Number(amount)
       });
 
-      const depId = await addDocSafe("deposits", {
-        userId, 
-        userEmail: userEmail || "not-provided", 
-        amount: Number(amount), 
-        utr: cleanUtr, 
-        screenshotUrl: screenshotUrl || "", 
-        status: "pending", 
-        createdAt: new Date(),
-        source: "rest-safe-manual"
-      });
+      // Check if Admin has enabled Auto-Approve Deposits
+      const sS = await getDocSafe("settings", "payment");
+      const paymentSettings = sS.exists ? sS.data() : {};
+      const autoApprove = paymentSettings.autoApproveDeposits === true;
 
-      if (depId) {
-        res.json({ success: true });
+      if (autoApprove) {
+        // Create an already-approved deposit entry
+        const depId = await addDocSafe("deposits", {
+          userId, 
+          userEmail: userEmail || "not-provided", 
+          amount: Number(amount), 
+          utr: cleanUtr, 
+          screenshotUrl: screenshotUrl || "", 
+          status: "approved", 
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          processedBy: "instant-auto-approval",
+          source: "rest-safe-manual-instant"
+        });
+
+        if (depId) {
+          // Immediately adjust user balance
+          const balanceAdjusted = await adjustUserBalanceSafe(userId, Number(amount));
+          if (balanceAdjusted) {
+            console.log(`[DEPOSIT] Instant auto-approved & balance adjusted for User=${userId} by ₹${amount}`);
+            res.json({ success: true, isAutoApproved: true });
+          } else {
+            console.error(`[DEPOSIT] Instant auto-approval wrote deposit ${depId} but failed to adjust balance for User=${userId}!`);
+            res.json({ success: true, isAutoApproved: true, warning: "Balance update delayed" });
+          }
+        } else {
+          throw new Error("Failed to write manual deposit to database.");
+        }
       } else {
-        throw new Error("Failed to write manual deposit to database.");
+        // Fallback to standard pending deposit
+        const depId = await addDocSafe("deposits", {
+          userId, 
+          userEmail: userEmail || "not-provided", 
+          amount: Number(amount), 
+          utr: cleanUtr, 
+          screenshotUrl: screenshotUrl || "", 
+          status: "pending", 
+          createdAt: new Date(),
+          source: "rest-safe-manual"
+        });
+
+        if (depId) {
+          res.json({ success: true, isAutoApproved: false });
+        } else {
+          throw new Error("Failed to write manual deposit to database.");
+        }
       }
     } catch (e: any) {
       console.error(`[DEPOSIT] Error submitting manual deposit: ${e.message}`);
       res.status(500).json({ error: e.message || "Failed to submit request." });
+    }
+  });
+
+  // Automatic SMS/UPI Webhook for Android SMS Forwarder Integration
+  app.post("/api/webhooks/sms-gateway", async (req, res) => {
+    try {
+      const querySecret = req.query.secret;
+      const bodySecret = req.body?.secret;
+      const expectedSecret = process.env.SMS_WEBHOOK_SECRET || "secure_sms_gateway_pwd_2026";
+
+      if (querySecret !== expectedSecret && bodySecret !== expectedSecret) {
+        console.warn("[SMS-WEBHOOK] Unauthorized access attempt detected. Secrets did not match.");
+        return res.status(401).json({ success: false, error: "Unauthorized: Invalid secret key." });
+      }
+
+      // Read text message body from the forwarded body
+      // Standard SMS forwarder keys are: 'message' / 'text' / 'body' / 'msg' / 'content'
+      const text = String(req.body?.text || req.body?.message || req.body?.body || req.body?.msg || req.body?.content || "").trim();
+      const from = String(req.body?.from || req.body?.sender || req.body?.phone || "UNKNOWN").trim();
+
+      console.log(`[SMS-WEBHOOK] Received forwarded SMS from: ${from}. Content: "${text}"`);
+
+      if (!text) {
+        return res.status(400).json({ success: false, error: "Empty message text." });
+      }
+
+      // 1. Parse UTR: Find all distinct sequences of exactly 12 contiguous digits.
+      // E.g., 'UPI616880951111' -> '616880951111'.
+      // This is extremely robust and bypasses \b word boundary limitations.
+      const digitSequences = text.match(/\d+/g) || [];
+      const candidateUtrs = Array.from(new Set(digitSequences.filter(seq => seq.length === 12)));
+
+      console.log(`[SMS-WEBHOOK] Extracted candidate UTRs: ${JSON.stringify(candidateUtrs)}`);
+
+      if (candidateUtrs.length === 0) {
+        console.log("[SMS-WEBHOOK] Could not parse any 12-digit UTR from the SMS. Skipping automatic deposit.");
+        return res.json({ 
+          success: false, 
+          message: "Parsed successfully but no 12-digit sequence found in details.", 
+          detectedUtr: null 
+        });
+      }
+
+      // 2. Parse Amount (Indian Rupees Format Rs, Rs., INR, ₹, etc., handling possible commas like 2,500.00)
+      const cleanText = text.replace(/,/g, "");
+      const amountMatch = cleanText.match(/(?:Rs\.?|INR|₹|amount of|Rs)\s*(\d+(?:\.\d{1,2})?)/i) || 
+                          cleanText.match(/credited with\s*(?:Rs\.?|INR|₹)?\s*(\d+(?:\.\d{1,2})?)/i) ||
+                          cleanText.match(/credited by\s*(?:Rs\.?|INR|₹)?\s*(\d+(?:\.\d{1,2})?)/i) ||
+                          cleanText.match(/rec(?:eive|eived)\s*(?:Rs\.?|INR|₹)?\s*(\d+(?:\.\d{1,2})?)/i);
+      
+      const parsedAmount = amountMatch ? parseFloat(amountMatch[1]) : null;
+      console.log(`[SMS-WEBHOOK] Extracted amount: ${parsedAmount}`);
+
+      // 3. Find matching pending manual deposit in Firestore
+      let depData: any = null;
+      let depositId: string = "";
+      let matchedUtr: string = "";
+
+      // Loop through all candidate UTRs to find a match in Firestore
+      for (const candidateUtr of candidateUtrs) {
+        try {
+          const depositsRef = db.collection("deposits");
+          const querySnap = await depositsRef.where("utr", "==", candidateUtr).where("status", "==", "pending").get();
+          if (!querySnap.empty) {
+            const depDoc = querySnap.docs[0];
+            depData = depDoc.data();
+            depositId = depDoc.id;
+            matchedUtr = candidateUtr;
+            break; // Found matching pending deposit!
+          }
+        } catch (sdkErr: any) {
+          console.warn(`[SMS-WEBHOOK] SDK Query failed for UTR ${candidateUtr}, trying REST fallback: ${sdkErr.message}`);
+          try {
+            const tidyDb = (!databaseId || databaseId === "(default)") ? "(default)" : databaseId;
+            const runQueryUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${tidyDb}/documents:runQuery?key=${FIREBASE_API_KEY}`;
+            
+            const queryPayload = {
+              structuredQuery: {
+                from: [{ collectionId: "deposits" }],
+                where: {
+                  compositeFilter: {
+                    op: "AND",
+                    filters: [
+                      {
+                        fieldFilter: {
+                          field: { fieldPath: "utr" },
+                          op: "EQUAL",
+                          value: { stringValue: candidateUtr }
+                        }
+                      },
+                      {
+                        fieldFilter: {
+                          field: { fieldPath: "status" },
+                          op: "EQUAL",
+                          value: { stringValue: "pending" }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            };
+
+            const response = await axios.post(runQueryUrl, queryPayload, { timeout: 10000 });
+            if (response.data && Array.isArray(response.data) && response.data.length > 0 && response.data[0].document) {
+              const doc = response.data[0].document;
+              const nameParts = doc.name.split("/");
+              depositId = nameParts[nameParts.length - 1];
+              depData = unwrapRestFields(doc.fields || {});
+              matchedUtr = candidateUtr;
+              break; // Found matching pending deposit!
+            }
+          } catch (restErr: any) {
+            console.error(`[SMS-WEBHOOK] REST fallback query failed for UTR ${candidateUtr}:`, restErr.message);
+          }
+        }
+      }
+
+      if (!depData || !depositId) {
+        console.warn(`[SMS-WEBHOOK] No pending deposit matching any extracted UTRs ${JSON.stringify(candidateUtrs)} was found in the system.`);
+        return res.json({ 
+          success: false, 
+          message: `Parsed UTRs ${JSON.stringify(candidateUtrs)} successfully, but no matching pending deposit found in database.`,
+          candidateUtrs,
+          parsedAmount
+        });
+      }
+
+      const utr = matchedUtr;
+      const originalAmount = Number(depData.amount || 0);
+      console.log(`[SMS-WEBHOOK] Found matching pending deposit ${depositId} of amount ₹${originalAmount} for userId: ${depData.userId} using matched UTR: ${utr}`);
+
+      // 4. Update the user balance & deposit status in a robust transaction
+      let updateSuccess = false;
+      try {
+        await db.runTransaction(async (transaction: any) => {
+          const userRef = db.collection("users").doc(depData.userId);
+          const userSnap = await transaction.get(userRef);
+          if (!userSnap.exists) throw new Error("User profile not found in system.");
+
+          const currentBalance = Number(userSnap.data().balance || 0);
+          
+          // Update user balance
+          transaction.update(userRef, { 
+            balance: currentBalance + originalAmount, 
+            updatedAt: new Date() 
+          });
+
+          // Approve the deposit
+          const depositRef = db.collection("deposits").doc(depositId);
+          transaction.update(depositRef, { 
+            status: "approved", 
+            updatedAt: new Date(),
+            processedBy: "automatic-sms-gateway",
+            actualSmsAmount: parsedAmount
+          });
+        });
+        updateSuccess = true;
+        console.log(`[SMS-WEBHOOK] Approved deposit via SDK Transaction`);
+      } catch (txnErr: any) {
+        console.warn(`[SMS-WEBHOOK] SDK Transaction failed (${txnErr.message}). Falling back to separate REST operations...`);
+        
+        // adjust user balance safely using REST
+        const adjusted = await adjustUserBalanceSafe(depData.userId, originalAmount);
+        if (adjusted) {
+          // approve deposit using REST
+          const approved = await updateDocSafe("deposits", depositId, {
+            status: "approved",
+            updatedAt: new Date(),
+            processedBy: "automatic-sms-gateway-rest-fallback",
+            actualSmsAmount: parsedAmount
+          });
+          if (approved) {
+            updateSuccess = true;
+            console.log(`[SMS-WEBHOOK] Approved deposit via REST Safe Operations`);
+          } else {
+            console.error(`[SMS-WEBHOOK] ❌ SYSTEM INCONSISTENCY: Balance was adjusted for user ${depData.userId} by ₹${originalAmount}, but we failed to update deposit ${depositId} status!`);
+          }
+        } else {
+          console.error(`[SMS-WEBHOOK] ❌ REST balance adjustment failed for user ${depData.userId}`);
+        }
+      }
+
+      if (updateSuccess) {
+        console.log(`[SMS-WEBHOOK] ✅ Payment of ₹${originalAmount} automatically approved for User ${depData.userId} via UTR: ${utr}`);
+        return res.json({ 
+          success: true, 
+          message: "Payment successfully parsed and automatically approved.", 
+          utr, 
+          originalAmount, 
+          userId: depData.userId 
+        });
+      } else {
+        throw new Error("Transacting balance update failed.");
+      }
+
+    } catch (err: any) {
+      console.error("[SMS-WEBHOOK] Transaction / system error:", err.message);
+      return res.status(500).json({ success: false, error: err.message });
     }
   });
 
@@ -611,27 +977,42 @@ async function startServer() {
     console.log(`[TRANSMIT] Locking & processing orderId: ${orderId}`);
 
     try {
-      // Recheck Firestore to verify it wasn't already completed by a parallel route
-      const snapObj = await getDocSafe("orders", orderId);
-      if (snapObj.exists) {
-        const snapData = snapObj.data() || {};
-        if (snapData.providerOrderId) {
-          console.log(`[TRANSMIT] Order ${orderId} already has providerOrderId registered: ${snapData.providerOrderId}`);
-          return { success: true, providerOrderId: snapData.providerOrderId };
+      // 0. Resolve orderData or fallback to Firestore fetch to avoid redundant DB reads
+      let currentOrderData = orderData;
+      if (!currentOrderData || !currentOrderData.userId || !currentOrderData.courseId) {
+        console.log(`[TRANSMIT] Fetching order document ${orderId} from Firestore (slow path fallback)`);
+        const snapObj = await getDocSafe("orders", orderId);
+        if (!snapObj.exists) throw new Error("Order not found");
+        currentOrderData = snapObj.data() || {};
+        
+        if (currentOrderData.providerOrderId) {
+          console.log(`[TRANSMIT] Order ${orderId} already has providerOrderId registered: ${currentOrderData.providerOrderId}`);
+          return { success: true, providerOrderId: currentOrderData.providerOrderId };
         }
-        if (snapData.providerTransmissionStatus === "completed") {
+        if (currentOrderData.providerTransmissionStatus === "completed") {
           console.log(`[TRANSMIT] Order ${orderId} transmission was already completed.`);
-          return { success: true, providerOrderId: snapData.providerOrderId || "SENT" };
+          return { success: true, providerOrderId: currentOrderData.providerOrderId || "SENT" };
         }
       }
 
-      // 0. Pre-check Balance
-      const currentOrderSnap = await getDocSafe("orders", orderId);
-      if (!currentOrderSnap.exists) throw new Error("Order not found");
-      const currentOrderData = currentOrderSnap.data();
-      const orderAmount = currentOrderData.totalPrice || 0;
-      
-      const userSnap = await getDocSafe("users", currentOrderData.userId);
+      const orderAmount = Number(currentOrderData.totalPrice || 0);
+      const courseId = currentOrderData.courseId;
+      const userId = currentOrderData.userId;
+      const targetLink = currentOrderData.targetLink || "";
+      const quantity = currentOrderData.quantity;
+
+      if (!courseId) {
+        throw new Error("Missing required field: courseId");
+      }
+
+      // 1. Fetch User, Course details, and general Payment Settings IN PARALLEL (FAST PATH)
+      console.log(`[TRANSMIT] Retrieving User, Course, and Settings in parallel for order ${orderId}`);
+      const [userSnap, cS, sS] = await Promise.all([
+        getDocSafe("users", userId),
+        getDocSafe("courses", courseId),
+        getDocSafe("settings", "payment")
+      ]);
+
       if (!userSnap.exists) throw new Error("User profile not found");
       const userBalance = Number(userSnap.data().balance || 0);
 
@@ -639,20 +1020,11 @@ async function startServer() {
         throw new Error(`Insufficient balance (Current: ₹${userBalance}, Required: ₹${orderAmount}). Order rejected.`);
       }
 
-      const { courseId, targetLink, quantity } = orderData;
-      if (!courseId) {
-        throw new Error("Missing required field: courseId");
-      }
-
-      // 1. Fetch Course details
-      let cS = await getDocSafe("courses", courseId);
       if (!cS || !cS.exists) {
         throw new Error(`Service configuration with ID "${courseId}" does not exist in the database.`);
       }
       const c = cS.data();
 
-      // 2. Fetch Settings
-      let sS = await getDocSafe("settings", "payment");
       const s = sS.exists ? (sS.data() || {}) : {};
 
       // 3. Resolve API credentials
@@ -1017,81 +1389,17 @@ async function startServer() {
       } catch (err: any) {
         console.error(`[BACKGROUND-PROCESSOR] [REST-POLL] Polling loop query failed: ${err.message}`);
       }
-    }, 120000); // Check every 120 seconds (2 minutes). Primary listener uses real-time WebSockets, so backup can be lightweight!
+    }, 300000); // Check every 300 seconds (5 minutes). Primary listener uses direct HTTP api POST, so backup can be extremely lightweight and save reads!
   }
 
-  // Background Live Snapshot Listener
+  // Background Live Snapshot Listener (Optimized for Spark Free tier - Deactivated real-time SDK listener to prevent permission-denied retry loop reads spam)
   function startBackgroundOrderListener(dbInstance: any) {
-    console.log("[BACKGROUND-PROCESSOR] Starting real-time Firestore background order observer...");
+    console.log("[BACKGROUND-PROCESSOR] Initializing lightweight order manager background scheduler...");
     
-    // REST Polling Backup loop activated as a solid, database-optimized failsafe
+    // REST Polling Backup loop activated as a solid, database-optimized failsafe (Runs once every 5 minutes)
     startRESTBackupPollingLoop();
 
-    if (!dbInstance) {
-      console.warn("[BACKGROUND-PROCESSOR] Firestore reference is undefined. Relying entirely on REST polling backup.");
-      return;
-    }
-
-    try {
-      dbInstance.collection("orders")
-        .where("needsProviderTransmission", "==", true)
-        .onSnapshot(async (snapshot: any) => {
-          if (!snapshot) return;
-          
-          for (const docChange of snapshot.docChanges()) {
-            if (docChange.type === "added" || docChange.type === "modified") {
-              const orderDoc = docChange.doc;
-              const orderId = orderDoc.id;
-              const orderData = orderDoc.data();
-
-              // Safeguard locks
-              if (processingOrders.has(orderId)) {
-                continue;
-              }
-
-              if (orderData.needsProviderTransmission !== true) {
-                continue;
-              }
-
-              if (orderData.providerTransmissionStatus === "processing" || 
-                  orderData.providerTransmissionStatus === "completed" || 
-                  orderData.providerTransmissionStatus === "failed") {
-                continue;
-              }
-
-              if (orderData.providerOrderId) {
-                // Safeguard: Already sent or manually processed
-                await updateDocSafe("orders", orderId, {
-                  needsProviderTransmission: false,
-                  providerTransmissionStatus: "completed"
-                });
-                continue;
-              }
-
-              console.log(`[BACKGROUND-PROCESSOR] 🔔 Real-time trigger detected for Order ${orderId}. Initializing automatic dispatch loop...`);
-              
-              // In background workers, run it asynchronously (without blocking loop iteration)
-              (async () => {
-                try {
-                  // Mark in Firestore as "processing" to lock globally across nodes
-                  await updateDocSafe("orders", orderId, {
-                    providerTransmissionStatus: "processing",
-                    updatedAt: new Date()
-                  });
-
-                  await transmitOrderToProviderDirect(orderId, orderData);
-                } catch (err: any) {
-                  console.error(`[BACKGROUND-PROCESSOR] Task loop error on ${orderId}:`, err.message);
-                }
-              })();
-            }
-          }
-        }, (error: any) => {
-          console.warn("[BACKGROUND-PROCESSOR] Firestore snap listener credential block detected: ", error.message, ". Bulletproof REST Polling backup loop is ACTIVE and processing SMM panels orders securely.");
-        });
-    } catch (err: any) {
-      console.error("[BACKGROUND-PROCESSOR] Live listener mapping failed:", err.message);
-    }
+    console.log("[BACKGROUND-PROCESSOR] In-memory orders scheduler active. SDK onSnapshot stream remains disabled to prevent credential block retries.");
   }
 
   // Improved Proxy for Provider with better logging and headers
@@ -1143,7 +1451,18 @@ async function startServer() {
       }
 
       console.log(`[HTTP Proxy] Order transmission call received for order: ${orderId}`);
-      const result = await transmitOrderToProviderDirect(orderId, { courseId, targetLink, quantity });
+      const payloadData = {
+        userId,
+        userEmail: userEmail || "",
+        courseId,
+        courseTitle: courseTitle || "",
+        category: category || "Other",
+        quantity: Number(quantity),
+        targetLink: targetLink?.trim() || "",
+        totalPrice: Number(totalPrice),
+        status: "Pending"
+      };
+      const result = await transmitOrderToProviderDirect(orderId, payloadData);
       if (result.success) {
         return res.json({ success: true, providerOrderId: result.providerOrderId, orderId });
       } else {
