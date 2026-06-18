@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
-import { User, onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc, setDoc, serverTimestamp, onSnapshot, updateDoc, increment } from "firebase/firestore";
-import { auth, db } from "@/lib/firebase";
+import { User, Session } from "@supabase/supabase-js";
+import { supabase } from "@/lib/supabaseClient";
+import { dbClient } from "@/lib/dbClient";
 
 interface AuthContextType {
   user: User | null;
@@ -10,6 +10,8 @@ interface AuthContextType {
   isAdmin: boolean;
   isPaymentAdmin: boolean;
   isInstructor: boolean;
+  signOut: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -19,6 +21,8 @@ const AuthContext = createContext<AuthContextType>({
   isAdmin: false,
   isPaymentAdmin: false,
   isInstructor: false,
+  signOut: async () => {},
+  refreshProfile: async () => {},
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -28,100 +32,87 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [profile, setProfile] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const signOut = async () => {
+    await supabase.auth.signOut();
+  };
+
+  const refreshProfile = async () => {
+    if (user) {
+      const p = await dbClient.getUserProfile(user.id);
+      if (p) setProfile(p);
+    }
+  };
+
   useEffect(() => {
-    let unsubscribeProfile = () => {};
+    // 1. Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      handleUserChange(session);
+    });
 
-    const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
-      setUser(firebaseUser);
-      
-      if (!firebaseUser) {
-        setProfile(null);
-        setLoading(false);
-        return;
-      }
-
-      // If it's a known admin, we can stop loading early to show the dashboard shell
-      if (firebaseUser.email === "mtasvir375@gmail.com") {
-        setLoading(false);
-        // Set temporary profile to allow immediate access to restricted pages
-        setProfile({ 
-          email: firebaseUser.email, 
-          role: "admin" 
-        });
-      }
-
-      const userDocRef = doc(db, "users", firebaseUser.uid);
-      
-      try {
-        // Initial check and creation
-        const userDoc = await getDoc(userDocRef);
-        if (!userDoc.exists()) {
-          const role = firebaseUser.email === "mtasvir375@gmail.com" ? "admin" : "student";
-          
-          const newProfile = {
-            uid: firebaseUser.uid,
-            email: firebaseUser.email,
-            displayName: firebaseUser.displayName,
-            photoURL: firebaseUser.photoURL,
-            role: role,
-            balance: 1,
-            createdAt: serverTimestamp(),
-          };
-          await setDoc(userDocRef, newProfile);
-          
-          // Increment total users counter efficiently
-          try {
-            const statsRef = doc(db, "stats", "counters");
-            await setDoc(statsRef, { totalUsers: increment(1) }, { merge: true });
-          } catch (e) {
-            console.error("Error updating user stats:", e);
-          }
-        } else {
-          const data = userDoc.data();
-          if (firebaseUser.email === "mtasvir375@gmail.com" && data.role !== "admin") {
-            setDoc(userDocRef, { role: "admin" }, { merge: true });
-          }
-        }
-
-        // Real-time listener for profile (balance, etc.)
-        if (unsubscribeProfile) unsubscribeProfile();
-        unsubscribeProfile = onSnapshot(userDocRef, (doc) => {
-          if (doc.exists()) {
-            setProfile(doc.data());
-          }
-        });
-
-        // Update last active timestamp - Throttled significantly
-        const lastActiveUpdated = localStorage.getItem(`lastActive_${firebaseUser.uid}`);
-        const now = Date.now();
-        // Only update once every 24 hours to save writes
-        if (!lastActiveUpdated || now - parseInt(lastActiveUpdated) > 24 * 60 * 60 * 1000) { 
-          try {
-            // Don't await this, it's not critical for the app to start
-            setDoc(userDocRef, { lastActive: serverTimestamp() }, { merge: true });
-            localStorage.setItem(`lastActive_${firebaseUser.uid}`, now.toString());
-          } catch(e) {}
-        }
-      } catch (error) {
-        console.error("Auth initialization error:", error);
-      } finally {
-        setLoading(false);
-      }
+    // 2. Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      handleUserChange(session);
     });
 
     return () => {
-      unsubscribeAuth();
-      unsubscribeProfile();
+      subscription.unsubscribe();
     };
   }, []);
+
+  const handleUserChange = async (session: Session | null) => {
+    const sbUser = session?.user || null;
+    setUser(sbUser);
+    
+    if (!sbUser) {
+      setProfile(null);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      // Fetch or create profile
+      let userProfile = await dbClient.getUserProfile(sbUser.id);
+      
+      if (!userProfile) {
+        // Create new profile if it doesn't exist
+        const role = sbUser.email === "mtasvir375@gmail.com" ? "admin" : "student";
+        userProfile = {
+          id: sbUser.id,
+          email: sbUser.email,
+          display_name: sbUser.user_metadata?.full_name || sbUser.email?.split('@')[0],
+          role: role,
+          balance: 0,
+        };
+        await dbClient.createUserProfile(sbUser.id, userProfile);
+      } else if (sbUser.email === "mtasvir375@gmail.com" && userProfile.role !== "admin") {
+        // Ensure main admin email always has admin role in database
+        await dbClient.updateUserProfile(sbUser.id, { role: "admin" });
+        userProfile.role = "admin";
+      }
+
+      setProfile(userProfile);
+
+      // Subscribe to profile updates
+      dbClient.observeUserProfile(sbUser.id, (data) => {
+        if (data) setProfile(data);
+      });
+
+    } catch (err) {
+      console.error("Supabase Auth profile init error:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const value = React.useMemo(() => ({
     user,
     profile,
     loading,
     isAdmin: profile?.role === "admin" || user?.email === "mtasvir375@gmail.com",
-    isPaymentAdmin: false,
+    isPaymentAdmin: profile?.role === "payment_admin",
     isInstructor: profile?.role === "instructor" || profile?.role === "admin" || user?.email === "mtasvir375@gmail.com",
+    signOut,
+    refreshProfile
   }), [user, profile, loading]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

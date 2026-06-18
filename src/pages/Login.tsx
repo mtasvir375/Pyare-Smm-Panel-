@@ -3,9 +3,10 @@ import { motion } from "motion/react";
 import { Lock, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { loginWithGoogle } from "@/lib/firebase";
+import { loginWithGoogle } from "@/lib/auth";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { supabase } from "@/lib/supabaseClient";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -14,24 +15,17 @@ export default function Login() {
   const handleGoogleLogin = async () => {
     setIsLoading(true);
     try {
-      await loginWithGoogle();
-      toast.success("आसानी से गूगल लॉगिन हो गया!");
-      navigate("/");
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: window.location.origin
+        }
+      });
+      if (error) throw error;
+      // Note: Redirect happens automatically for OAuth
     } catch (error: any) {
       console.error("Google login error:", error);
-      if (error?.code === "auth/unauthorized-domain" || String(error).includes("unauthorized-domain")) {
-        toast.error("यह custom domain (pyaresmmpanel.online) Firebase Console में Authorized नहीं है।", {
-          description: "कृपया Firebase Console -> Authentication -> Settings -> Authorized Domains में 'pyaresmmpanel.online' को जोड़ें।",
-          duration: 12000
-        });
-      } else if (error?.code === "auth/popup-blocked" || error?.code === "auth/cancelled-popup-request") {
-        toast.error("Google Pop-up Block हो गया।", {
-          description: "कृपया अपने ब्राउज़र में pop-ups को allow करें ताकि Google login popup खुल सके।",
-          duration: 8000
-        });
-      } else {
-        toast.error("Failed to sign in with Google: " + (error?.message || error));
-      }
+      toast.error("Failed to sign in with Google: " + (error?.message || error));
     } finally {
       setIsLoading(false);
     }

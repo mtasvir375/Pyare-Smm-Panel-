@@ -1,5 +1,3 @@
-import { collection, query, where, getDocs, doc, getDoc, limit } from "firebase/firestore";
-import { db } from "./firebase";
 import axios from "axios";
 
 let cachedCourses: any = null;
@@ -47,9 +45,9 @@ export const getCachedCourses = async (forceRefresh = false) => {
             const orderB = categoryOrder.indexOf(b.category) === -1 ? 99 : categoryOrder.indexOf(b.category);
             if (orderA !== orderB) return orderA - orderB;
             
-            // Secondary sort by createdAt (latest first)
-            const timeA = a.createdAt?.seconds || 0;
-            const timeB = b.createdAt?.seconds || 0;
+            // Secondary sort by updatedAt preferred, fallback to createdAt (latest first)
+            const timeA = a.updatedAt?.seconds || a.createdAt?.seconds || 0;
+            const timeB = b.updatedAt?.seconds || b.createdAt?.seconds || 0;
             return timeB - timeA;
           });
           cachedCourses = parsed;

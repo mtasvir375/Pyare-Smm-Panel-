@@ -4,8 +4,7 @@ import { Play, CheckCircle, Clock, ChevronRight, History, ExternalLink, Youtube,
 import CategoryIcon from "@/components/CategoryIcon";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { collection, query, where, onSnapshot, doc, getDoc, orderBy, updateDoc, limit } from "firebase/firestore";
-import { db, handleFirestoreError, OperationType } from "@/lib/firebase";
+import { dbClient } from "@/lib/dbClient";
 import { useAuth } from "@/context/AuthContext";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Link } from "react-router-dom";
@@ -29,7 +28,7 @@ export default function Dashboard() {
     
     const fetchOrders = async () => {
       // 1. Check Session Storage Cache
-      const cacheKey = `orders_${user.uid}`;
+      const cacheKey = `orders_${user.id}`;
       const cachedData = sessionStorage.getItem(cacheKey);
       const cacheTime = sessionStorage.getItem(`${cacheKey}_time`);
       const now = Date.now();
@@ -42,16 +41,8 @@ export default function Dashboard() {
       }
 
       try {
-        const { getDocs } = await import("firebase/firestore");
-        const qOrders = query(
-          collection(db, "orders"),
-          where("userId", "==", user.uid),
-          orderBy("createdAt", "desc"),
-          limit(renderLimit)
-        );
-        const snapshot = await getDocs(qOrders);
+        const ordersData = await dbClient.getUserOrders(user.id, renderLimit);
         if (!isMounted) return;
-        const ordersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         
         // Update State and Cache
         setOrders(ordersData);
@@ -60,7 +51,7 @@ export default function Dashboard() {
         
         setLoading(false);
       } catch (error) {
-        handleFirestoreError(error, OperationType.LIST, "orders");
+        console.error("Error fetching orders:", error);
         if (isMounted) setLoading(false);
       }
     };
@@ -88,11 +79,8 @@ export default function Dashboard() {
       for (const order of ordersToProcess) {
         const currentStatus = (order.status || '').toLowerCase();
         
-        // Removed auto-completion logic from frontend to prevent write storms.
-        // Server-side background sync will handle this.
-
-        // Only check status for orders that have a providerOrderId and are not in a final state
-        if (order.providerOrderId && !['completed', 'canceled', 'refunded', 'partial'].includes(currentStatus)) {
+        // Only check status for orders that have a provider_order_id and are not in a final state
+        if (order.provider_order_id && !['completed', 'canceled', 'refunded', 'partial'].includes(currentStatus)) {
           try {
             await axios.post("/api/sync-order-status", {
               orderId: order.id
@@ -219,7 +207,7 @@ export default function Dashboard() {
                         <CategoryIcon category={order.category} className="w-5 h-5" />
                       </div>
                       <div className="min-w-0 py-1">
-                        <h3 className="font-bold text-sm line-clamp-2 leading-tight">{order.courseTitle}</h3>
+                        <h3 className="font-bold text-sm line-clamp-2 leading-tight">{order.title}</h3>
                         <p className="text-[10px] text-gray-400 font-medium">{order.category || 'Other'}</p>
                       </div>
                     </div>
@@ -229,19 +217,19 @@ export default function Dashboard() {
                   <div className="grid grid-cols-2 gap-4 text-[10px]">
                     <div className="space-y-1">
                       <p className="text-gray-400 uppercase font-bold">Order Details</p>
-                      <p className="font-medium">Qty: {order.quantity} | ₹{order.totalPrice}</p>
+                      <p className="font-medium">Qty: {order.quantity} | ₹{order.total_price}</p>
                     </div>
                     <div className="space-y-1 text-right">
                       <p className="text-gray-400 uppercase font-bold">Date & Time</p>
-                      <p className="font-medium">{order.createdAt?.toDate ? order.createdAt.toDate().toLocaleString() : new Date(order.createdAt).toLocaleString()}</p>
+                      <p className="font-medium">{new Date(order.created_at).toLocaleString()}</p>
                     </div>
                   </div>
 
                   <div className="p-2 bg-gray-50 rounded-lg border border-gray-100">
                     <p className="text-[9px] font-bold text-gray-400 uppercase mb-1">Target Link</p>
-                    <a href={order.targetLink} target="_blank" rel="noreferrer" className="text-[10px] text-primary hover:underline break-all flex items-center gap-1">
+                    <a href={order.target_link} target="_blank" rel="noreferrer" className="text-[10px] text-primary hover:underline break-all flex items-center gap-1">
                       <ExternalLink className="w-3 h-3" />
-                      {order.targetLink}
+                      {order.target_link}
                     </a>
                   </div>
 
@@ -255,7 +243,7 @@ export default function Dashboard() {
                     </div>
                   )}
 
-                  {order.status === 'pending' && !order.providerOrderId && (
+                  {order.status === 'pending' && !order.provider_order_id && (
                     <p className="text-[10px] text-orange-600 bg-orange-50 p-2 rounded-lg font-medium">
                       Order is pending. We are trying to connect to the provider. If it stays pending, please contact support.
                     </p>

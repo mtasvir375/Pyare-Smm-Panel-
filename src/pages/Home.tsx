@@ -4,8 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Search, TrendingUp, Star, Clock, PlusCircle, Share2 } from "lucide-react";
-import { collection, query, where, limit, onSnapshot } from "firebase/firestore";
-import { db, handleFirestoreError, OperationType } from "@/lib/firebase";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useNavigate } from "react-router-dom";
 

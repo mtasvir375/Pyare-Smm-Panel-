@@ -41,8 +41,7 @@ import {
   DialogFooter
 } from "@/components/ui/dialog";
 import { useAuth } from "@/context/AuthContext";
-import { logout, db, handleFirestoreError, OperationType } from "@/lib/firebase";
-import { collection, addDoc, serverTimestamp, doc, getDoc, query, where, getDocs, updateDoc, increment, limit, runTransaction } from "firebase/firestore";
+import { dbClient } from "@/lib/dbClient";
 import { useNavigate, Link } from "react-router-dom";
 import { toast } from "sonner";
 import { useState, useEffect } from "react";
@@ -72,7 +71,7 @@ const getYoutubeEmbedUrl = (url: string) => {
 };
 
 export default function Profile() {
-  const { user, profile, isAdmin, isPaymentAdmin } = useAuth();
+  const { user, profile, isAdmin, isPaymentAdmin, signOut } = useAuth();
   const navigate = useNavigate();
   const [isAddFundsOpen, setIsAddFundsOpen] = useState(false);
   const [amount, setAmount] = useState("");
@@ -113,7 +112,7 @@ export default function Profile() {
     try {
       const response = await axios.post("/api/razorpay/create-order", {
         amount: Number(amount),
-        userId: user?.uid,
+        userId: user?.id,
       });
 
       const { order } = response.data;
@@ -129,7 +128,7 @@ export default function Profile() {
           const verifyRes = await axios.post("/api/razorpay/verify", {
             ...response,
             amount: Number(amount),
-            userId: user?.uid,
+            userId: user?.id,
             userEmail: user?.email,
           });
 
@@ -173,7 +172,7 @@ export default function Profile() {
 
   const handleLogout = async () => {
     try {
-      await logout();
+      await signOut();
       toast.success("Logged out successfully");
       navigate("/login");
     } catch (error) {
@@ -241,7 +240,7 @@ export default function Profile() {
         amount: numAmount,
         utr: cleanUtr,
         screenshotUrl: screenshotPreview,
-        userId: user.uid,
+        userId: user.id,
         userEmail: user.email
       });
 
@@ -260,36 +259,18 @@ export default function Profile() {
       console.error("Server payment submission failed, trying client-side fallback...", error);
       
       // OPTION 2: Client-side Direct Write Fallback (Bypasses Server IAM issues)
-      // Enforce One UTR = One Request via Transaction
+      // Enforce One UTR = One Request via dbClient check and insertion
       try {
         const cleanUtr = utr.replace(/\D/g, "");
         if (cleanUtr.length !== 12) throw new Error("Invalid UTR format");
 
-        await runTransaction(db, async (transaction) => {
-          const lockRef = doc(db, "utr_locks", cleanUtr);
-          const lockSnap = await transaction.get(lockRef);
-          
-          if (lockSnap.exists()) {
-            throw new Error("This UTR has already been submitted.");
-          }
-
-          transaction.set(lockRef, {
-            userId: user.uid,
-            createdAt: serverTimestamp(),
-            amount: Number(amount)
-          });
-
-          const depositRef = doc(collection(db, "deposits"));
-          transaction.set(depositRef, {
-            userId: user.uid,
-            userEmail: user.email || "not-provided",
-            amount: Number(amount),
-            utr: cleanUtr,
-            screenshotUrl: screenshotPreview,
-            status: "pending",
-            createdAt: serverTimestamp(),
-            source: "client-transaction-fallback"
-          });
+        const depositId = "dep_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
+        await dbClient.submitManualDeposit(depositId, {
+          user_id: user.id,
+          user_email: user.email,
+          amount: Number(amount),
+          utr: cleanUtr,
+          screenshot_url: screenshotPreview || ""
         });
 
         toast.success("Request submitted successfully!");
@@ -297,10 +278,8 @@ export default function Profile() {
       } catch (clientError: any) {
         console.error("Client fallback failed:", clientError);
         let msg = "Submission failed.";
-        if (clientError.message?.includes("already been submitted")) {
+        if (clientError.message?.includes("already been submitted") || clientError.message?.includes("already been used")) {
           msg = "This UTR number has already been used for a payment request.";
-        } else if (clientError.code === "permission-denied" || clientError.message?.includes("permissions")) {
-          msg = "Permission Denied: Please contact admin to check database settings.";
         } else {
           msg = clientError.message || "An unexpected error occurred.";
         }

@@ -26,15 +26,17 @@ import {
   Facebook,
   Twitter,
   Music2,
-  AlertCircle
+  AlertCircle,
+  Database,
+  ShieldCheck
 } from "lucide-react";
 import CategoryIcon from "@/components/CategoryIcon";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { collection, addDoc, query, where, getDocs, onSnapshot, serverTimestamp, deleteDoc, doc, setDoc, getDoc, updateDoc, orderBy, limit, getCountFromServer, runTransaction } from "firebase/firestore";
-import { db, handleFirestoreError, OperationType } from "@/lib/firebase";
+import { dbClient } from "@/lib/dbClient";
+import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -80,21 +82,17 @@ export default function Admin() {
     setIsSyncing(true);
     const syncToast = toast.loading("Syncing counts... (कोटा सुरक्षित कर रहे हैं)");
     try {
-      const [userCountSnap, ordersCountSnap] = await Promise.all([
-        getCountFromServer(collection(db, "users")),
-        getCountFromServer(collection(db, "orders"))
+      const [uCount, oCount] = await Promise.all([
+        dbClient.getTableCount("users"),
+        dbClient.getTableCount("orders")
       ]);
       
-      const uCount = userCountSnap.data().count;
-      const oCount = ordersCountSnap.data().count;
-      
       // SYNC READ-WRITE OPTIMIZATION
-      const statsRef = doc(db, "stats", "counters");
-      await setDoc(statsRef, { 
+      await dbClient.saveDoc("stats", "counters", { 
         totalUsers: uCount, 
         totalOrders: oCount,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
+        updated_at: new Date().toISOString()
+      });
 
       setTotalUserCount(uCount);
       setTotalOrdersCount(oCount);
@@ -165,16 +163,16 @@ export default function Admin() {
     try {
       let updatedCount = 0;
       // Filter strictly for tasks that need check
-      const qCheck = query(
-        collection(db, "orders"),
-        where("status", "in", ["processing", "pending", "in progress"]),
-        limit(5)
-      );
-      const snapshot = await getDocs(qCheck);
-      const ordersToProcess = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      const { data: ordersToProcess, error } = await supabase
+        .from("orders")
+        .select("*")
+        .in("status", ["processing", "pending", "in progress"])
+        .limit(5);
+      
+      if (error) throw error;
 
-      for (const order of ordersToProcess) {
-        if (order.providerOrderId) {
+      for (const order of ordersToProcess || []) {
+        if (order.provider_order_id) {
           try {
             // Use the optimized sync endpoint
             const response = await axios.post("/api/sync-order-status", {
@@ -217,62 +215,53 @@ export default function Admin() {
     setIsRefreshing(true);
     try {
       if (tab === "courses") {
-        const qCourses = query(collection(db, "courses"), limit(20)); 
-        const snapshot = await getDocs(qCourses);
-        setCourses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-        
-        // Also fetch providers so adding/editing courses has provider options loaded immediately
-        try {
-          const qProviders = query(collection(db, "providers")); 
-          const pSnapshot = await getDocs(qProviders);
-          setProviders(pSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-        } catch (pErr) {
-          console.error("Error pre-fetching providers on courses tab:", pErr);
-        }
+        const coursesList = await dbClient.getCourses();
+        setCourses(coursesList);
+        const providersList = await dbClient.getProviders();
+        setProviders(providersList);
       } else if (tab === "orders" && isAdmin) {
-        const qOrders = query(collection(db, "orders"), orderBy("createdAt", "desc"), limit(10));
-        const snapshot = await getDocs(qOrders);
-        setOrders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        const ordersList = await dbClient.getOrdersAdmin(50);
+        setOrders(ordersList);
       } else if (tab === "deposits") {
-        const qDeposits = query(collection(db, "deposits"), where("status", "==", "pending"), orderBy("createdAt", "desc"), limit(5)); // Extremely low limit for pending
-        const snapshot = await getDocs(qDeposits);
-        setDeposits(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        const depositsList = await dbClient.getDepositsAdmin(50);
+        setDeposits(depositsList);
       } else if (tab === "users" && isAdmin) {
         await handleSearchUser(force);
       } else if (tab === "providers" && isAdmin) {
-        const qProviders = query(collection(db, "providers")); 
-        const snapshot = await getDocs(qProviders);
-        setProviders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        const providersList = await dbClient.getProviders();
+        setProviders(providersList);
       } else if (tab === "settings" && isAdmin) {
-        const { getCachedSettings } = await import("@/lib/cache");
-        const settingsData = await getCachedSettings();
+        const settingsData = await dbClient.getDoc("settings", "payment");
         if (settingsData) {
-          setQrUrl(settingsData.paymentQrUrl || "");
-          setUpiId(settingsData.upiId || "");
-          setMerchantName(settingsData.merchantName || "");
-          setProviderApiUrl(settingsData.providerApiUrl || "");
-          setProviderApiKey(settingsData.providerApiKey || "");
-          setWhatsappLink(settingsData.whatsappLink || "");
-          setWhatsappChatNumber(settingsData.whatsappChatNumber || "");
-          setGuideVideoUrl(settingsData.guideVideoUrl || "");
-          setRazorpayEnabled(settingsData.razorpayEnabled || false);
-          setRazorpayKeyId(settingsData.razorpayKeyId || "");
-          setRazorpayKeySecret(settingsData.razorpayKeySecret || "");
-          setAutoApproveDeposits(settingsData.autoApproveDeposits || false);
+          setQrUrl(settingsData.payment_qr_url || "");
+          setUpiId(settingsData.upi_id || "");
+          setMerchantName(settingsData.merchant_name || "");
+          setProviderApiUrl(settingsData.provider_api_url || "");
+          setProviderApiKey(settingsData.provider_api_key || "");
+          setWhatsappLink(settingsData.whatsapp_link || "");
+          setWhatsappChatNumber(settingsData.whatsapp_chat_number || "");
+          setGuideVideoUrl(settingsData.guide_video_url || "");
+          setRazorpayEnabled(settingsData.razorpay_enabled || false);
+          setRazorpayKeyId(settingsData.razorpay_key_id || "");
+          setRazorpayKeySecret(settingsData.razorpay_key_secret || "");
+          setAutoApproveDeposits(settingsData.auto_approve_deposits || false);
           
-          // Load or auto-populate backend API URL with self-healing for transient dev URLs
-          const savedBackendUrl = settingsData.backendApiUrl || "";
+          const savedBackendUrl = settingsData.backend_api_url || "";
           const activeBackendUrl = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
-          const isCustomDomain = savedBackendUrl.includes("pyaresmmpanel.online") || 
-                                 (!savedBackendUrl.includes("run.app") && savedBackendUrl.includes("."));
-          if (!savedBackendUrl || savedBackendUrl.includes("ais-dev-") || (!savedBackendUrl.includes("run.app") && !isCustomDomain)) {
+          if (!savedBackendUrl || savedBackendUrl.includes("ais-dev-")) {
             setBackendApiUrl(activeBackendUrl);
           } else {
             setBackendApiUrl(savedBackendUrl);
           }
         }
       }
-      setFetchedTabs(prev => new Set(prev).add(tab));
+      setFetchedTabs(prev => {
+        const next = new Set(prev);
+        next.add(tab);
+        return next;
+      });
+      setIsRefreshing(false);
+      return;
     } catch (error) {
       console.error(`Error fetching tab ${tab}:`, error);
     } finally {
@@ -299,7 +288,7 @@ export default function Admin() {
         fetchTabData(activeTab);
       }
     }
-  }, [user?.uid, isAdmin, isPaymentAdmin, authLoading, activeTab]);
+  }, [user?.id, isAdmin, isPaymentAdmin, authLoading, activeTab]);
 
   useEffect(() => {
     // We removed auto-sync on mount to save significant Read/Write quota.
@@ -377,20 +366,20 @@ export default function Admin() {
         return;
       }
 
-      await setDoc(doc(db, "settings", "payment"), {
-        paymentQrUrl: base64,
-        upiId: upiId.trim(),
-        merchantName: merchantName.trim(),
-        providerApiUrl: cleanUrl,
-        providerApiKey: cleanKey,
-        backendApiUrl: cleanBackend,
-        whatsappLink: whatsappLink.trim(),
-        whatsappChatNumber: whatsappChatNumber.trim(),
-        guideVideoUrl: guideVideoUrl.trim(),
-        razorpayEnabled: razorpayEnabled,
-        razorpayKeyId: razorpayKeyId.trim(),
-        razorpayKeySecret: razorpayKeySecret.trim(),
-        autoApproveDeposits: autoApproveDeposits,
+      await dbClient.saveDoc("settings", "payment", {
+        payment_qr_url: base64,
+        upi_id: upiId.trim(),
+        merchant_name: merchantName.trim(),
+        provider_api_url: cleanUrl,
+        provider_api_key: cleanKey,
+        backend_api_url: cleanBackend,
+        whatsapp_link: whatsappLink.trim(),
+        whatsapp_chat_number: whatsappChatNumber.trim(),
+        guide_video_url: guideVideoUrl.trim(),
+        razorpay_enabled: razorpayEnabled,
+        razorpay_key_id: razorpayKeyId.trim(),
+        razorpay_key_secret: razorpayKeySecret.trim(),
+        auto_approve_deposits: autoApproveDeposits,
       });
       setQrUrl(base64);
       setProviderApiUrl(cleanUrl);
@@ -421,37 +410,34 @@ export default function Admin() {
     setLastSearchTime(now);
     try {
       if (!userSearch) {
-        // Simple query for latest users - saves complex multi-query reads
-        const recentUsersQ = query(collection(db, "users"), orderBy("createdAt", "desc"), limit(15));
-        const recentUsersSnap = await getDocs(recentUsersQ);
-        const recentUsers = recentUsersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setAllUsers(recentUsers);
+        // Simple query for latest users
+        const { data: recentUsers, error } = await supabase
+          .from("users")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .limit(15);
+        
+        if (error) throw error;
+        setAllUsers(recentUsers || []);
       } else {
         const searchTerm = userSearch.toLowerCase().trim();
-        // Create prefix bounds for search
-        const endTerm = searchTerm + '\uf8ff';
+        const { data: searchResults, error } = await supabase
+          .from("users")
+          .select("*")
+          .or(`email.ilike.%${searchTerm}%,display_name.ilike.%${searchTerm}%`)
+          .limit(20);
 
-        // 1. Search by email prefix
-        const qEmail = query(
-          collection(db, "users"),
-          where("email", ">=", searchTerm),
-          where("email", "<=", endTerm),
-          limit(20) // Reduced limit
-        );
-        
-        const emailSnap = await getDocs(qEmail);
-        const searchResults = emailSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-        if (searchResults.length === 0) {
-          toast.error("No users found matching that email");
-        } else {
+        if (error) throw error;
+        if (searchResults && searchResults.length === 0) {
+          toast.error("No users found matching that term");
+        } else if (searchResults) {
           toast.success(`Found ${searchResults.length} users`);
         }
-        setAllUsers(searchResults);
+        setAllUsers(searchResults || []);
       }
     } catch (err) {
       console.error("Search error:", err);
-      handleFirestoreError(err, OperationType.LIST, "users");
+      toast.error("Failed to search users");
     } finally {
       setIsSearchingUser(false);
     }
@@ -463,23 +449,23 @@ export default function Admin() {
 
     try {
       if (status === 'cancelled') {
-        // Refund balance
-        const userRef = doc(db, "users", order.userId);
-        const userSnap = await getDoc(userRef);
-        if (userSnap.exists()) {
-          const currentBalance = userSnap.data().balance || 0;
-          await updateDoc(userRef, {
-            balance: currentBalance + order.totalPrice
+        const userProfile = await dbClient.getUserProfile(order.user_id);
+        if (userProfile) {
+          const currentBalance = Number(userProfile.balance) || 0;
+          await dbClient.updateUserProfile(order.user_id, {
+            balance: currentBalance + Number(order.total_price)
           });
         }
       }
 
-      await updateDoc(doc(db, "orders", order.id), { status, updatedAt: serverTimestamp() });
+      await dbClient.updateDoc("orders", order.id, { 
+        status, 
+        updated_at: new Date().toISOString() 
+      });
       setOrders(prev => prev.filter(o => o.id !== order.id));
       toast.success(`Order ${status}!`);
     } catch (error: any) {
       toast.error(`Error updating order: ${error.message}`);
-      handleFirestoreError(error, OperationType.UPDATE, `orders/${order.id}`);
     } finally {
       setProcessingActions(prev => {
         const next = new Set(prev);
@@ -532,8 +518,8 @@ export default function Admin() {
       try {
         const response = await axios.post("/api/proxy-provider", {
           orderId: order.id,
-          courseId: order.courseId,
-          targetLink: order.targetLink,
+          courseId: order.service_id,
+          targetLink: order.target_link,
           quantity: order.quantity
         });
 
@@ -554,24 +540,21 @@ export default function Admin() {
         console.log("[ADMIN-RETRY] Proxy request blocked. Attempting direct CORS-friendly admin retry...");
         
         // 1. Fetch Course details
-        const courseSnap = await getDoc(doc(db, "courses", order.courseId));
-        if (!courseSnap.exists()) {
-          throw new Error(`Service configuration with ID "${order.courseId}" does not exist in the database.`);
+        const c = await dbClient.getDoc("services", order.service_id);
+        if (!c) {
+          throw new Error(`Service configuration with ID "${order.service_id}" does not exist in the database.`);
         }
-        const c = courseSnap.data();
 
         // 2. Fetch Settings
-        const settingsSnap = await getDoc(doc(db, "settings", "payment"));
-        const s = settingsSnap.exists() ? (settingsSnap.data() || {}) : {};
+        const s = await dbClient.getDoc("settings", "payment") || {};
 
         // 3. Resolve API credentials
         let pUrl = (s.providerApiUrl || "").trim() || "https://smmbin.com/api/v2";
         let pKey = (s.providerApiKey || "").trim();
 
         if (c.providerId && c.providerId !== "global") {
-          const provSnap = await getDoc(doc(db, "providers", c.providerId));
-          if (provSnap.exists()) {
-            const pData = provSnap.data() || {};
+          const pData = await dbClient.getDoc("providers", c.providerId);
+          if (pData) {
             pUrl = (pData.apiUrl || "").trim();
             pKey = (pData.apiKey || "").trim();
           }
@@ -585,7 +568,7 @@ export default function Admin() {
         params.append("key", pKey);
         params.append("action", "add");
         params.append("service", String(c.providerServiceId).trim());
-        params.append("link", String(order.targetLink).trim());
+        params.append("link", String(order.target_link).trim());
         params.append("quantity", String(order.quantity).trim());
 
         let directRes;
@@ -625,17 +608,17 @@ export default function Admin() {
           pId = providerOrderId ? String(providerOrderId) : "SENT_NO_ID";
           orderProcessed = true;
           
-          await updateDoc(doc(db, "orders", order.id), {
-            providerOrderId: pId,
-            status: "Completed",
-            error: null,
-            providerRawResponse: JSON.stringify(resData).substring(0, 800),
-            updatedAt: serverTimestamp()
-          });
+      await dbClient.updateDoc("orders", order.id, {
+        provider_order_id: pId,
+        status: "Completed",
+        error: null,
+        provider_raw_response: JSON.stringify(resData).substring(0, 800),
+        updated_at: new Date().toISOString()
+      });
         } else {
           // Put the order into wait-queue for background listener to re-process securely
           console.log("[ADMIN-RETRY] Local direct retry failed. Queueing order for Cloud Run background worker...");
-          await updateDoc(doc(db, "orders", order.id), {
+          await dbClient.updateDoc("orders", order.id, {
             needsProviderTransmission: true,
             providerTransmissionStatus: "pending",
             providerOrderId: null,
@@ -712,7 +695,7 @@ export default function Admin() {
           });
         });
       } else {
-        await updateDoc(doc(db, "deposits", deposit.id), { 
+        await dbClient.updateDoc("deposits", deposit.id, { 
           status: 'cancelled',
           updatedAt: serverTimestamp(),
           processedBy: user?.email
@@ -741,7 +724,7 @@ export default function Admin() {
   const handleUpdateUserBalance = async () => {
     if (!editingUser || newBalance === "") return;
     try {
-      await updateDoc(doc(db, "users", editingUser.uid), {
+      await dbClient.updateDoc("users", editingUser.id, {
         balance: Number(newBalance)
       });
       toast.success("User finances updated!");
@@ -749,7 +732,7 @@ export default function Admin() {
       setNewBalance("");
     } catch (error: any) {
       toast.error(`Error updating user: ${error.message}`);
-      handleFirestoreError(error, OperationType.UPDATE, `users/${editingUser.uid}`);
+      handleFirestoreError(error, OperationType.UPDATE, `users/${editingUser.id}`);
     }
   };
 
@@ -762,7 +745,7 @@ export default function Admin() {
       const cleanUrl = newProviderApiUrl.trim();
       const cleanKey = newProviderApiKey.trim();
       
-      await addDoc(collection(db, "providers"), {
+      await dbClient.addDoc("providers", {
         name: newProviderName.trim(),
         apiUrl: cleanUrl,
         apiKey: cleanKey,
@@ -781,7 +764,7 @@ export default function Admin() {
   const confirmDeleteProvider = async () => {
     if (!providerToDelete) return;
     try {
-      await deleteDoc(doc(db, "providers", providerToDelete.id));
+      await dbClient.deleteDoc("providers", providerToDelete.id);
       toast.success("Provider deleted!");
       fetchTabData(activeTab, true);
     } catch (error) {
@@ -835,24 +818,25 @@ export default function Admin() {
         ? Number(((pkgPrice / pkgQty) * 1000).toFixed(4)) 
         : Number(newCoursePrice);
 
-      await addDoc(collection(db, "courses"), {
+      await dbClient.saveDoc("services", {
         title: newCourseTitle,
         category: newCourseCategory,
-        pricePerThousand: computedPricePerThousand,
-        minLimit: newCourseIsPackage ? pkgQty : Number(newCourseMinLimit),
-        serviceType: newCourseType,
-        providerId: newCourseProviderId,
-        providerServiceId: newCourseProviderServiceId,
-        preventDuplicateLink: preventDuplicateLink,
-        iconUrl: newCourseIcon || null,
+        price: computedPricePerThousand,
+        min_limit: newCourseIsPackage ? pkgQty : Number(newCourseMinLimit),
+        service_type: newCourseType,
+        provider_id: newCourseProviderId,
+        provider_service_id: newCourseProviderServiceId,
+        prevent_duplicate_link: preventDuplicateLink,
+        icon_url: newCourseIcon || null,
         status: "published",
         description: newCourseIsPackage 
           ? `Offer Price: ₹${newCoursePackagePrice} for ${newCoursePackageQuantity} fixed quantity` 
           : `High quality ${newCourseType} service`,
-        createdAt: serverTimestamp(),
-        isPackage: newCourseIsPackage,
-        packagePrice: newCourseIsPackage ? pkgPrice : null,
-        packageQuantity: newCourseIsPackage ? pkgQty : null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        is_package: newCourseIsPackage,
+        package_price: newCourseIsPackage ? pkgPrice : null,
+        package_quantity: newCourseIsPackage ? pkgQty : null,
       });
       import("@/lib/cache").then(mod => mod.clearCache());
       toast.success("Service added successfully!");
@@ -907,19 +891,19 @@ export default function Admin() {
         ? Number(((pkgPrice / pkgQty) * 1000).toFixed(4)) 
         : Number(editPrice);
 
-      await updateDoc(doc(db, "courses", editingCourse.id), {
+      await dbClient.updateDoc("services", editingCourse.id, {
         title: editTitle,
-        pricePerThousand: computedPricePerThousand,
-        minLimit: editIsPackage ? pkgQty : Number(editMinLimit),
-        providerId: editProviderId,
-        providerServiceId: editServiceId,
+        price: computedPricePerThousand,
+        min_limit: editIsPackage ? pkgQty : Number(editMinLimit),
+        provider_id: editProviderId,
+        provider_service_id: editServiceId,
         category: editCategory,
-        serviceType: editType,
-        preventDuplicateLink: editPreventDuplicate,
-        isPackage: editIsPackage,
-        packagePrice: editIsPackage ? pkgPrice : null,
-        packageQuantity: editIsPackage ? pkgQty : null,
-        updatedAt: serverTimestamp()
+        service_type: editType,
+        prevent_duplicate_link: editPreventDuplicate,
+        is_package: editIsPackage,
+        package_price: editIsPackage ? pkgPrice : null,
+        package_quantity: editIsPackage ? pkgQty : null,
+        updated_at: new Date().toISOString()
       });
       import("@/lib/cache").then(mod => mod.clearCache());
       toast.success("Service updated successfully!");
@@ -933,7 +917,7 @@ export default function Admin() {
   const handleDeleteCourse = async (courseId: string) => {
     if (!window.confirm("Are you sure you want to delete this service?")) return;
     try {
-      await deleteDoc(doc(db, "courses", courseId));
+      await dbClient.deleteDoc("services", courseId);
       toast.success("Service deleted!");
       fetchTabData(activeTab, true);
       import("@/lib/cache").then(mod => mod.clearCache());
@@ -1398,12 +1382,11 @@ export default function Admin() {
                             </div>
                             <div>
                               <p className="font-bold text-sm">{order.userEmail}</p>
-                              <p className="text-xs text-gray-500">Service: {order.courseTitle}</p>
+                              <p className="text-xs text-gray-500">Service: {order.title}</p>
                               <p className="text-[10px] text-gray-400 font-medium">
-                                {order.createdAt?.toDate ? order.createdAt.toDate().toLocaleString() : 
-                                 order.createdAt ? new Date(order.createdAt).toLocaleString() : "Date N/A"}
+                                {order.created_at ? new Date(order.created_at).toLocaleString() : "Date N/A"}
                               </p>
-                              <p className="text-xs font-bold text-primary">Qty: {order.quantity} | Total: ₹{order.totalPrice}</p>
+                              <p className="text-xs font-bold text-primary">Qty: {order.quantity} | Total: ₹{order.total_price}</p>
                             </div>
                           </div>
                           <div className="text-right space-y-1">
@@ -1417,8 +1400,8 @@ export default function Admin() {
                             )}>
                               {order.status}
                             </Badge>
-                            {order.providerOrderId && (
-                              <p className="text-[9px] text-gray-400 font-mono">ID: {order.providerOrderId}</p>
+                            {order.provider_order_id && (
+                              <p className="text-[9px] text-gray-400 font-mono">ID: {order.provider_order_id}</p>
                             )}
                           </div>
                         </div>
@@ -1444,13 +1427,13 @@ export default function Admin() {
                           <div className="space-y-1">
                             <p className="text-[10px] font-bold text-gray-400 uppercase">Target Link</p>
                             <a 
-                              href={order.targetLink} 
+                              href={order.target_link} 
                               target="_blank" 
                               rel="noreferrer"
                               className="flex items-center gap-2 text-xs text-pink-600 hover:underline break-all"
                             >
                               <Share2 className="w-4 h-4" />
-                              {order.targetLink}
+                              {order.target_link}
                             </a>
                           </div>
                         </div>
@@ -1610,7 +1593,7 @@ export default function Admin() {
               <div className="space-y-3">
                 {allUsers
                   .map((u) => (
-                    <Card key={u.uid} className="border-none shadow-sm">
+                    <Card key={u.id} className="border-none shadow-sm">
                       <CardContent className="p-4 flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center font-bold text-gray-500">

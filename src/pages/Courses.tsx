@@ -5,8 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { collection, query, where, addDoc, serverTimestamp, getDoc, doc, updateDoc, writeBatch, increment, runTransaction, onSnapshot, setDoc } from "firebase/firestore";
-import { db, handleFirestoreError, OperationType } from "@/lib/firebase";
+import { dbClient } from "@/lib/dbClient";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/context/AuthContext";
 import { useSearchParams, useNavigate } from "react-router-dom";
@@ -131,9 +130,9 @@ export default function Courses() {
   }, [selectedCourseId]);
 
   const totalPrice = selectedCourse 
-    ? (selectedCourse.isPackage 
-        ? Number(selectedCourse.packagePrice || 0) 
-        : (Number(quantity) * selectedCourse.pricePerThousand) / 1000) 
+    ? (selectedCourse.is_package 
+        ? Number(selectedCourse.package_price || 0) 
+        : (Number(quantity) * (selectedCourse.price || 0)) / 1000) 
     : 0;
 
   const formatErrorMessage = (err: any): string => {
@@ -177,13 +176,13 @@ export default function Courses() {
       toast.error("Please provide a valid target link, profile, or username");
       return;
     }
-    if (!selectedCourse.providerServiceId || selectedCourse.providerServiceId === "0") {
+    if (!selectedCourse.provider_service_id || selectedCourse.provider_service_id === "0") {
       toast.error("This service is not currently available (missing configuration).");
       return;
     }
     const qtyNum = Number(quantity);
-    if (!quantity || qtyNum < selectedCourse.minLimit) {
-      toast.error(`Minimum quantity is ${selectedCourse.minLimit}`);
+    if (!quantity || qtyNum < selectedCourse.min_limit) {
+      toast.error(`Minimum quantity is ${selectedCourse.min_limit}`);
       return;
     }
     if ((profile?.balance || 0) < totalPrice) {
@@ -195,236 +194,142 @@ export default function Courses() {
     try {
       // Check for duplicate link if required
       if (selectedCourse.preventDuplicateLink) {
-        const { getDocs, query, collection, where, limit, orderBy } = await import("firebase/firestore");
-        const duplicateCheckQuery = query(
-          collection(db, "orders"),
-          where("userId", "==", user.uid),
-          where("courseId", "==", selectedCourse.id),
-          where("targetLink", "==", targetLink),
-          orderBy("createdAt", "desc"),
-          limit(1)
-        );
-        const dupSnap = await getDocs(duplicateCheckQuery);
-        
-        if (!dupSnap.empty) {
-          const data = dupSnap.docs[0].data();
-          if (data.createdAt) {
-            const orderTime = data.createdAt.toMillis ? data.createdAt.toMillis() : data.createdAt.toDate().getTime();
-            if ((Date.now() - orderTime) < 10 * 60 * 1000) { // 10 minutes
-              toast.error("Please wait 10 minutes before placing another order with the same link for this service.");
-              setSubmitting(false);
-              return;
-            }
-          }
+        const isDuplicate = await dbClient.checkDuplicateOrder(user.id, selectedCourse.id, targetLink);
+        if (isDuplicate) {
+          toast.error("Please wait 10 minutes before placing another order with the same link for this service.");
+          setSubmitting(false);
+          return;
         }
       }
 
       // 1. Show the loading toast immediately
-      const sendingToastId = toast.loading("Processing order with provider panel...");
-
-      // Helper function to process order through the real-time database pipeline
-      const handleFirestoreFallbackOrder = async (fallbackToastId: string | number) => {
-        try {
-          const orderId = "ord_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
-          console.log(`[CORS Fallback] Creating order ${orderId} directly in Firestore...`);
-
-          const orderDocRef = doc(db, "orders", orderId);
-          await setDoc(orderDocRef, {
-            userId: user.uid,
-            userEmail: user.email || "",
-            courseId: selectedCourse.id,
-            courseTitle: selectedCourse.title,
-            category: selectedCourse.category || "Other",
-            quantity: Number(quantity),
-            targetLink: targetLink.trim(),
-            totalPrice: Number(totalPrice),
-            status: "Pending",
-            createdAt: new Date(),
-            needsProviderTransmission: true,
-            providerTransmissionStatus: "pending"
-          });
-
-          // Update toast status to waiting
-          toast.loading("Google Sandbox CORS proxy active. Routing order securely via direct DB pipeline (15s)...", {
-            id: fallbackToastId
-          });
-
-          // Listen for updates from real-time database observer
-          let solved = false;
-          const unsubscribe = onSnapshot(orderDocRef, async (snapshot) => {
-            if (!snapshot.exists()) return;
-            const data = snapshot.data();
-            
-            if (data.status === "Completed") {
-              solved = true;
-              unsubscribe();
-              toast.dismiss(fallbackToastId);
-
-              const pId = data.providerOrderId || "SENT";
-              
-              // Increment counters and timestamps
-              try {
-                const statsRef = doc(db, "stats", "counters");
-                await setDoc(statsRef, { totalOrders: increment(1) }, { merge: true });
-                
-                const userRef = doc(db, "users", user.uid);
-                await setDoc(userRef, { lastOrderedAt: serverTimestamp() }, { merge: true });
-              } catch (se) {
-                console.warn("[FALLBACK] Secondary stats update failed:", se);
-              }
-
-              setLastOrder({
-                userId: user.uid,
-                userEmail: user.email,
-                courseId: selectedCourse.id,
-                courseTitle: selectedCourse.title,
-                category: selectedCourse.category || "Other",
-                quantity: Number(quantity),
-                targetLink: targetLink.trim(),
-                totalPrice: totalPrice,
-                status: "Completed",
-                providerOrderId: pId,
-                createdAt: new Date()
-              });
-
-              setIsOrderSuccessOpen(true);
-              toast.success(`Success! Order ID: ${pId}`);
-              setTargetLink("");
-              setQuantity(String(selectedCourse.minLimit));
-              setSubmitting(false);
-
-            } else if (data.status === "Failed") {
-              solved = true;
-              unsubscribe();
-              toast.dismiss(fallbackToastId);
-
-              const dbErrorMsg = data.error || "Order dispatch rejected by provider";
-              toast.error(`Order Failed: ${dbErrorMsg}`, { duration: 10000 });
-
-              setLastOrder({
-                userId: user.uid,
-                userEmail: user.email,
-                courseId: selectedCourse.id,
-                courseTitle: selectedCourse.title,
-                category: selectedCourse.category || "Other",
-                quantity: Number(quantity),
-                targetLink: targetLink.trim(),
-                totalPrice: totalPrice,
-                status: "Failed",
-                error: dbErrorMsg,
-                createdAt: new Date()
-              });
-              setSubmitting(false);
-            }
-          });
-
-          // Fallback timeout after 30 seconds
-          setTimeout(() => {
-            if (!solved) {
-              unsubscribe();
-              toast.dismiss(fallbackToastId);
-              toast.error("The background network queue is processing your request. Please check the Dashboard page in a moment for final outcome status.", { duration: 8000 });
-              setSubmitting(false);
-            }
-          }, 30000);
-
-        } catch (dbErr: any) {
-          toast.dismiss(fallbackToastId);
-          toast.error(`Database transit failed: ${dbErr.message || dbErr}`);
-          setSubmitting(false);
-        }
-      };
+      const sendingToastId = toast.loading("Processing your service order instantly...");
 
       try {
-        // 2. Clear pre-existing order state
+        // 2. Clear pre-existing order state and prepare new ID
         setLastOrder(null);
+        const orderId = "ord_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
 
-        // 3. Make direct synchronous HTTP POST to backend to place and record order
-        const response = await axios.post("/api/proxy-provider", {
-          userId: user.uid,
+        console.log(`[Instant Order] Creating order document ${orderId} in database...`);
+        await dbClient.createOrder(orderId, {
+          userId: user.id,
           userEmail: user.email || "",
-          courseId: selectedCourse.id,
-          courseTitle: selectedCourse.title,
+          serviceId: selectedCourse.id,
+          title: selectedCourse.title,
           category: selectedCourse.category || "Other",
           quantity: Number(quantity),
           targetLink: targetLink.trim(),
-          totalPrice: totalPrice
+          totalPrice: Number(totalPrice),
+          status: "Pending"
         });
 
-        toast.dismiss(sendingToastId);
+        // 3. Register real-time snapshot observer to handle fast UI state update
+        let solved = false;
+        const unsubscribe = dbClient.observeOrder(orderId, async (data) => {
+          if (!data) return;
 
-        if (response.data && response.data.success === true) {
-          const pId = response.data.providerOrderId || "SENT";
-          
-          // Increment total orders counters and last ordered timestamp
-          try {
-            const statsRef = doc(db, "stats", "counters");
-            await setDoc(statsRef, { totalOrders: increment(1) }, { merge: true });
+          if (data.status === "Completed") {
+            solved = true;
+            unsubscribe();
+            toast.dismiss(sendingToastId);
+
+            const pId = data.provider_order_id || "SENT";
             
-            const userRef = doc(db, "users", user.uid);
-            await setDoc(userRef, { lastOrderedAt: serverTimestamp() }, { merge: true });
-          } catch (statError) {
-            console.warn("[SYNC-ORDER] Secondary stats failed to update:", statError);
+            // Increment statistics counters via quiet updates
+            try {
+              await dbClient.updateUserProfile(user.id, { last_ordered_at: new Date().toISOString() });
+            } catch (se) {
+              console.warn("[SYNC-ORDER] Secondary stats update failed:", se);
+            }
+
+            setLastOrder({
+              user_id: user.id,
+              user_email: user.email,
+              service_id: selectedCourse.id,
+              title: selectedCourse.title,
+              category: selectedCourse.category || "Other",
+              quantity: Number(quantity),
+              target_link: targetLink.trim(),
+              total_price: totalPrice,
+              status: "Completed",
+              provider_order_id: pId,
+              created_at: new Date().toISOString()
+            });
+
+            setIsOrderSuccessOpen(true);
+            toast.success(`Success! Order ID: ${pId}`);
+
+            setTargetLink("");
+            setQuantity(String(selectedCourse.minLimit));
+            setSubmitting(false);
+
+          } else if (data.status === "Failed") {
+            solved = true;
+            unsubscribe();
+            toast.dismiss(sendingToastId);
+
+            const dbErrorMsg = data.error || "Order dispatch rejected by provider";
+            toast.error(`Order Failed: ${dbErrorMsg}`, { duration: 10000 });
+
+            setLastOrder({
+              user_id: user.id,
+              user_email: user.email,
+              service_id: selectedCourse.id,
+              title: selectedCourse.title,
+              category: selectedCourse.category || "Other",
+              quantity: Number(quantity),
+              target_link: targetLink.trim(),
+              total_price: totalPrice,
+              status: "Failed",
+              error: dbErrorMsg,
+              created_at: new Date().toISOString()
+            });
+            setSubmitting(false);
           }
+        });
 
-          // Populate local state for display modal
-          setLastOrder({
-            userId: user.uid,
-            userEmail: user.email,
-            courseId: selectedCourse.id,
-            courseTitle: selectedCourse.title,
+        // 4. Trigger un-awaited HTTP Proxy Transmit call with async flag
+        try {
+          console.log(`[API Proxy Submit] Alerting backend server to process order ${orderId} in the background`);
+          await axios.post("/api/proxy-provider", {
+            orderId: orderId,
+            user_id: user.id,
+            user_email: user.email || "",
+            service_id: selectedCourse.id,
+            title: selectedCourse.title,
             category: selectedCourse.category || "Other",
             quantity: Number(quantity),
-            targetLink: targetLink.trim(),
-            totalPrice: totalPrice,
-            status: "Completed",
-            providerOrderId: pId,
-            createdAt: new Date()
+            target_link: targetLink.trim(),
+            total_price: totalPrice,
+            isAsync: true
           });
-
-          // Open Success Dialog and reset forms
-          setIsOrderSuccessOpen(true);
-          toast.success(`Success! Order ID: ${pId}`);
-
-          setTargetLink("");
-          setQuantity(String(selectedCourse.minLimit));
-          setSubmitting(false);
-        } else {
-          throw new Error(formatErrorMessage(response.data) || "Provider rejected the order");
+        } catch (proxyError: any) {
+          const failErr = (proxyError.response?.data ? formatErrorMessage(proxyError.response.data) : null) || formatErrorMessage(proxyError) || "";
+          
+          if (!solved) {
+            // Real bad request error (e.g. invalid course fields or server crash)
+            solved = true;
+            unsubscribe();
+            toast.dismiss(sendingToastId);
+            toast.error(`Order Placement Error: ${failErr || proxyError.message}`, { duration: 8000 });
+            setSubmitting(false);
+          }
         }
-      } catch (proxyError: any) {
-        const failErrorMsg = (proxyError.response?.data ? formatErrorMessage(proxyError.response.data) : null) || formatErrorMessage(proxyError) || "Order transmission failed";
-        
-        // CORS proxy pre-flight or routing block triggers. Fallback automatically.
-        const isNetworkOrHtml = failErrorMsg.toLowerCase().includes("network error") || 
-                                failErrorMsg.toLowerCase().includes("<!doctype html") ||
-                                failErrorMsg.toLowerCase().includes("<html") ||
-                                failErrorMsg.toLowerCase().includes("failed to fetch") ||
-                                proxyError.message?.toLowerCase().includes("network error") ||
-                                !proxyError.response;
 
-        if (isNetworkOrHtml) {
-          console.warn("[API Network Error] Standard HTTP route CORS-blocked by Google Sandbox. Switching to secure fallback direct Firestore queue mechanism...");
-          await handleFirestoreFallbackOrder(sendingToastId);
-        } else {
-          toast.dismiss(sendingToastId);
-          toast.error(`Order Failed: ${failErrorMsg}`, { duration: 8000 });
+        // 5. Hard Timeout backup (30 seconds) to avoid freezing UI
+        setTimeout(() => {
+          if (!solved) {
+            unsubscribe();
+            toast.dismiss(sendingToastId);
+            toast.error("The background network queue is processing your request. Please check the Dashboard page in a moment for final outcome status.", { duration: 8000 });
+            setSubmitting(false);
+          }
+        }, 30000);
 
-          setLastOrder({
-            userId: user.uid,
-            userEmail: user.email,
-            courseId: selectedCourse.id,
-            courseTitle: selectedCourse.title,
-            category: selectedCourse.category || "Other",
-            quantity: Number(quantity),
-            targetLink: targetLink.trim(),
-            totalPrice: totalPrice,
-            status: "Failed",
-            error: failErrorMsg,
-            createdAt: new Date()
-          });
-          setSubmitting(false);
-        }
+      } catch (outerError: any) {
+        toast.dismiss(sendingToastId);
+        toast.error(outerError?.message || "Failed to place order");
+        setSubmitting(false);
       }
     } catch (outerError: any) {
       toast.error(outerError?.message || "Failed to place order");
@@ -477,7 +382,7 @@ export default function Courses() {
         amount: Number(depositAmount),
         utr: cleanUtr,
         screenshotUrl: screenshotPreview,
-        userId: user.uid,
+        userId: user.id,
         userEmail: user.email
       });
 
@@ -503,31 +408,13 @@ export default function Courses() {
         const cleanUtr = utr.replace(/\D/g, "");
         if (cleanUtr.length !== 12) throw new Error("Invalid UTR format");
 
-        await runTransaction(db, async (transaction) => {
-          const lockRef = doc(db, "utr_locks", cleanUtr);
-          const lockSnap = await transaction.get(lockRef);
-          
-          if (lockSnap.exists()) {
-            throw new Error("This UTR has already been submitted.");
-          }
-
-          transaction.set(lockRef, {
-            userId: user.uid,
-            createdAt: serverTimestamp(),
-            amount: Number(depositAmount)
-          });
-
-          const depositRef = doc(collection(db, "deposits"));
-          transaction.set(depositRef, {
-            userId: user.uid,
-            userEmail: user.email || "not-provided",
-            amount: Number(depositAmount),
-            utr: cleanUtr,
-            screenshotUrl: screenshotPreview,
-            status: "pending",
-            createdAt: serverTimestamp(),
-            source: "client-transaction-fallback"
-          });
+        const depositId = "dep_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
+        await dbClient.submitManualDeposit(depositId, {
+          userId: user.id,
+          userEmail: user.email || "not-provided",
+          amount: Number(depositAmount),
+          utr: cleanUtr,
+          screenshotUrl: screenshotPreview || ""
         });
 
         toast.success("Request submitted successfully!");
@@ -1006,7 +893,7 @@ export default function Courses() {
               <div className="w-full bg-gray-50 rounded-2xl p-4 space-y-2 text-left border border-gray-100">
                 <div className="flex flex-col gap-1 text-xs">
                   <span className="text-gray-400 font-bold uppercase">Service</span>
-                  <span className="font-bold text-gray-700 line-clamp-2 leading-tight">{lastOrder.courseTitle}</span>
+                  <span className="font-bold text-gray-700 line-clamp-2 leading-tight">{lastOrder.title}</span>
                 </div>
                 <div className="flex justify-between text-xs">
                   <span className="text-gray-400 font-bold uppercase">Quantity</span>
@@ -1014,7 +901,7 @@ export default function Courses() {
                 </div>
                 <div className="flex justify-between text-xs">
                   <span className="text-gray-400 font-bold uppercase">Amount</span>
-                  <span className="font-bold text-primary">₹{lastOrder.totalPrice}</span>
+                  <span className="font-bold text-primary">₹{lastOrder.total_price}</span>
                 </div>
                 <div className="flex justify-between text-xs">
                   <span className="text-gray-400 font-bold uppercase">Status</span>

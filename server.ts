@@ -7,10 +7,14 @@ import axios from "axios";
 import dotenv from "dotenv";
 import Razorpay from "razorpay";
 import crypto from "crypto";
-import { initializeApp, getApps } from "firebase-admin/app";
-import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
+
+// Supabase Admin Client (using service role key to bypass RLS for backend tasks)
+const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
@@ -43,404 +47,123 @@ async function startServer() {
   app.use(cors(corsOptions));
   app.options("*", cors(corsOptions)); // Handle preflight OPTIONS requests explicitly for all routes
   
-  // Load Firebase Config
-  const configPath = path.join(process.cwd(), "firebase-applet-config.json");
-  const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-  const { projectId } = firebaseConfig;
-  const databaseId = (firebaseConfig.firestoreDatabaseId || "").trim() || "(default)";
-  const FIREBASE_API_KEY = firebaseConfig.apiKey;
-  let isPollingActive = false;
-
-  const logToDb = async (event: string, meta: any = {}) => {
-    try {
-      const tidyDb = (!databaseId || databaseId === "(default)") ? "(default)" : databaseId;
-      const customId = `syslog_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      const restUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${tidyDb}/documents/orders/${customId}?key=${FIREBASE_API_KEY}`;
-      await axios.patch(restUrl, {
-        fields: {
-          timestamp: { timestampValue: new Date().toISOString() },
-          isSyslog: { booleanValue: true },
-          event: { stringValue: event },
-          env: { stringValue: process.env.NODE_ENV || "unknown" },
-          meta: { stringValue: JSON.stringify(meta).substring(0, 1500) }
-        }
-      }, { timeout: 8000 });
-    } catch (err: any) {
-      console.error("Failed to write syslog to Firestore:", err.message);
-    }
+  // Storage for basic app config that doesn't change often
+  const serverCache = {
+    settings: null as any,
+    courses: new Map<string, any>(),
+    providers: new Map<string, any>(),
   };
 
-  console.log("[STARTUP] Express server started/restarted successfully (0 Firestore writes/reads on boot).");
-
-  console.log(`[INIT] Starting with Project: ${projectId}, DB: ${databaseId}`);
-  
-  // Initialize Admin
-  if (!getApps().length) {
-    try {
-      initializeApp({ projectId });
-      console.log("[INIT] Firebase Admin initialized.");
-    } catch (e: any) {
-      console.error("[INIT] Initialization failed:", e.message);
-      initializeApp();
-    }
-  }
-
-  // Get DB instance with aggressive fallback
-  let db: any;
-  const getDbInstance = (dbId?: string) => {
-    try {
-      const targetDb = (!dbId || dbId === "(default)") ? undefined : dbId;
-      // In newer firebase-admin, you can call getFirestore(targetDb) for the default app
-      return getFirestore(targetDb);
-    } catch (e: any) {
-      console.error(`[INIT] getFirestore failure for ${dbId}:`, e.message);
-      return getFirestore();
-    }
-  };
-
-  db = getDbInstance(databaseId);
-  console.log(`[INIT] Firestore instance bound to DB: ${databaseId}`);
-
-  // Auto-verify and populate backend API URL in Firestore settings so client domains route correctly
-  const ensureBackendUrlIsSet = async () => {
-    const ACTIVE_BACKEND_URL = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
-    try {
-      console.log(`[INIT] Auto-ensuring backend URL in Firestore: ${ACTIVE_BACKEND_URL}`);
-      const paymentRef = db.collection("settings").doc("payment");
-      const snap = await paymentRef.get();
-      if (snap.exists) {
-        const data = snap.data() || {};
-        // If a custom domain like pyaresmmpanel.online or other unique backend is stored, we MUST overwrite it to ACTIVE_BACKEND_URL
-        // because custom domains only host static frontends, which cannot receive API requests directly.
-        if (data.backendApiUrl !== ACTIVE_BACKEND_URL) {
-          await paymentRef.update({ backendApiUrl: ACTIVE_BACKEND_URL });
-          console.log(`[INIT] ✅ Successfully updated backendApiUrl from ${data.backendApiUrl || "none"} to stable backend: ${ACTIVE_BACKEND_URL}`);
-        } else {
-          console.log(`[INIT] ✅ backendApiUrl is already up to date: ${ACTIVE_BACKEND_URL}`);
-        }
-      } else {
-        await paymentRef.set({ backendApiUrl: ACTIVE_BACKEND_URL });
-        console.log(`[INIT] ✅ Created settings/payment with backendApiUrl: ${ACTIVE_BACKEND_URL}`);
-      }
-    } catch (err: any) {
-      console.warn(`[INIT] ⚠️ Auto-updating backendApiUrl via SDK failed: ${err.message}`);
-      // Fallback via REST write if databaseId / permissions are weird
-      try {
-        const tidyDb = (!databaseId || databaseId === "(default)") ? "(default)" : databaseId;
-        const restUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${tidyDb}/documents/settings/payment?key=${FIREBASE_API_KEY}&updateMask.fieldPaths=backendApiUrl`;
-        
-        await axios.patch(restUrl, {
-          fields: {
-            backendApiUrl: { stringValue: ACTIVE_BACKEND_URL }
-          }
-        }, { timeout: 10000 });
-        console.log(`[INIT] ✅ Successfully patched backendApiUrl to ${ACTIVE_BACKEND_URL} via Firestore REST API.`);
-      } catch (restErr: any) {
-        console.error(`[INIT] ❌ REST patch fallback also failed: ${restErr.response?.data || restErr.message}`);
-      }
-    }
-  };
-  
-  // Commented out to eliminate Firestore read/write on every container start (optimized for free tier Spark plan)
-  // ensureBackendUrlIsSet();
-  startBackgroundOrderListener(db);
-  
-  // IN-MEMORY CACHE FOR SERVER-SIDE
-  const serverCache: any = {
-    settings: { data: null, time: 0 },
-    courses: new Map(), // Map<courseId, {data, time}>
-    providers: new Map() // Map<providerId, {data, time}>
-  };
-  const SERVER_CACHE_TTL = 5 * 1000; // 5 seconds (Fast fallback/highly responsive)
-
-  // FIREBASE HELPERS
-  const unwrapRestFields = (fields: any) => {
-    const result: any = {};
-    for (const key in fields) {
-      const val = fields[key];
-      if (val.stringValue !== undefined) result[key] = val.stringValue;
-      else if (val.doubleValue !== undefined) result[key] = Number(val.doubleValue);
-      else if (val.integerValue !== undefined) result[key] = Number(val.integerValue);
-      else if (val.timestampValue !== undefined) result[key] = val.timestampValue;
-      else if (val.booleanValue !== undefined) result[key] = val.booleanValue;
-      else if (val.mapValue !== undefined) result[key] = unwrapRestFields(val.mapValue.fields || {});
-    }
-    return result;
-  };
-
-  const restGet = async (col: string, id: string, dbId?: string) => {
-    const tidyDb = (!dbId || dbId === "(default)") ? "(default)" : dbId;
-    const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${tidyDb}/documents/${col}/${id}?key=${FIREBASE_API_KEY}`;
-    console.log(`[REST-GET] 🌐 ${url.split('?')[0]}`);
-    try {
-      const res = await axios.get(url, { timeout: 10000 });
-      if (res.data && res.data.name) {
-        return {
-          exists: true,
-          data: () => ({ id, ...unwrapRestFields(res.data.fields || {}) })
-        };
-      }
-      return { exists: false, data: () => ({}) };
-    } catch (e: any) {
-      console.error(`[REST-GET] ❌ Failed: ${e.message}`);
-      if (e.response?.status === 404) return { exists: false, data: () => ({}) };
-      throw e;
-    }
-  };
-
-  const getDocSafe = async (col: string, id: string) => {
+  // Supabase Helpers that replace Firestore ones
+  const getDocSafe = async (collect: string, id: string) => {
     const now = Date.now();
-    if (col === "settings" && id === "payment") {
-      if (serverCache.settings.data && (now - serverCache.settings.time < SERVER_CACHE_TTL)) {
-        return { exists: true, data: () => serverCache.settings.data };
-      }
-    } else if (col === "courses" || col === "providers") {
-      const cached = col === "courses" ? serverCache.courses.get(id) : serverCache.providers.get(id);
-      if (cached && (now - cached.time < SERVER_CACHE_TTL)) {
-        return { exists: true, data: () => cached.data };
-      }
+    // Quick cache for settings
+      if (collect === "settings" && id === "payment" && serverCache.settings && now - serverCache.settings.time < 300000) {
+      return { exists: true, data: () => serverCache.settings.data };
     }
 
     try {
-      const snap = await db.collection(col).doc(id).get();
-      if (snap.exists) {
-        const data = snap.data();
-        if (col === "settings" && id === "payment") serverCache.settings = { data, time: now };
-        else if (col === "courses") serverCache.courses.set(id, { data, time: now });
-        else if (col === "providers") serverCache.providers.set(id, { data, time: now });
-        return snap;
+      const { data, error } = await supabaseAdmin.from(collect).select("*").eq("id", id).maybeSingle();
+      if (error) throw error;
+      
+      if (data) {
+        if (collect === "settings" && id === "payment") serverCache.settings = { data, time: now };
+        return { exists: true, data: () => data };
       }
     } catch (err: any) {
-      console.error(`[ORDER-FS] SDK Error: ${err.message}`);
+      console.warn(`[SUPABASE-GET] Failed for ${collect}/${id}: ${err.message}`);
     }
-
-    const restResult = await restGet(col, id, databaseId);
-    if (restResult.exists) return restResult;
-
-    if (databaseId && databaseId !== "(default)") {
-      const restDefault = await restGet(col, id, "(default)");
-      if (restDefault.exists) return restDefault;
-    }
-    
-    return { exists: false, data: () => ({}) };
+    return { exists: false, data: () => null };
   };
 
   const updateDocSafe = async (col: string, id: string, data: any) => {
-    console.log(`[ORDER-FS] Attempting UPDATE: ${col}/${id} on ${databaseId}`);
     try {
-      await db.collection(col).doc(id).update(data);
-      console.log(`[ORDER-FS] ✅ Success: ${col}/${id} updated via SDK.`);
+      const { error } = await supabaseAdmin.from(col).update(data).eq("id", id);
+      if (error) {
+        console.warn(`[SUPABASE-UPDATE] Error updating ${col}/${id}:`, error.message);
+        return false;
+      }
       return true;
     } catch (err: any) {
-      console.warn(`[ORDER-FS] ⚠️ SDK Update Failed: ${err.message}`);
-      
-      if (databaseId && databaseId !== "(default)") {
-        try {
-          const defaultDb = getDbInstance("(default)");
-          await defaultDb.collection(col).doc(id).update(data);
-          return true;
-        } catch (e) {
-          console.error(`[ORDER-FS] SDK Fallback Update failed.`);
-        }
-      }
-
-      try {
-        const tidyDb = (!databaseId || databaseId === "(default)") ? "(default)" : databaseId;
-        const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${tidyDb}/documents/${col}/${id}?updateMask.fieldPaths=${Object.keys(data).join('&updateMask.fieldPaths=')}&key=${FIREBASE_API_KEY}`;
-        
-        const fields: any = {};
-        for (const key in data) {
-          const val = data[key];
-          if (typeof val === "string") fields[key] = { stringValue: val };
-          else if (typeof val === "number") fields[key] = { doubleValue: val };
-          else if (val instanceof Date) fields[key] = { timestampValue: val.toISOString() };
-          else if (typeof val === "boolean") fields[key] = { booleanValue: val };
-          else if (val === null) fields[key] = { nullValue: null };
-        }
-
-        await axios.patch(url, { fields }, { timeout: 10000 });
-        return true;
-      } catch (restErr: any) {
-        console.error(`[ORDER-FS] ‼️ Terminal: REST Update also failed: ${restErr.message}`);
-      }
+      console.warn(`[SUPABASE-UPDATE] Exception: ${err.message}`);
+      return false;
     }
-    return false;
   };
 
   const setDocSafe = async (col: string, id: string, data: any) => {
-    console.log(`[ORDER-FS] Attempting SET: ${col}/${id} on ${databaseId}`);
     try {
-      await db.collection(col).doc(id).set(data);
-      console.log(`[ORDER-FS] ✅ Success: ${col}/${id} set via SDK.`);
+      const { error } = await supabaseAdmin.from(col).upsert({ id, ...data });
+      if (error) {
+        console.warn(`[SUPABASE-SET] Error upserting ${col}/${id}:`, error.message);
+        return false;
+      }
       return true;
     } catch (err: any) {
-      console.warn(`[ORDER-FS] ⚠️ SDK Set Failed: ${err.message}`);
-      
-      if (databaseId && databaseId !== "(default)") {
-        try {
-          const defaultDb = getDbInstance("(default)");
-          await defaultDb.collection(col).doc(id).set(data);
-          return true;
-        } catch (e) {
-          console.error(`[ORDER-FS] SDK Fallback Set failed.`);
-        }
-      }
-
-      try {
-        const tidyDb = (!databaseId || databaseId === "(default)") ? "(default)" : databaseId;
-        const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${tidyDb}/documents/${col}/${id}?key=${FIREBASE_API_KEY}`;
-        
-        const fields: any = {};
-        for (const key in data) {
-          const val = data[key];
-          if (typeof val === "string") fields[key] = { stringValue: val };
-          else if (typeof val === "number") fields[key] = { doubleValue: val };
-          else if (val instanceof Date) fields[key] = { timestampValue: val.toISOString() };
-          else if (typeof val === "boolean") fields[key] = { booleanValue: val };
-          else if (val === null) fields[key] = { nullValue: null };
-        }
-
-        const headers: any = { "Content-Type": "application/json" };
-        await axios.patch(url, { fields }, { headers, timeout: 10000 });
-        return true;
-      } catch (restErr: any) {
-        console.error(`[ORDER-FS] ‼️ Terminal: REST Set also failed: ${restErr.message}`);
-      }
+      console.warn(`[SUPABASE-SET] Exception: ${err.message}`);
+      return false;
     }
-    return false;
   };
 
   const addDocSafe = async (col: string, data: any) => {
-    console.log(`[ORDER-FS] Attempting ADD: ${col} on ${databaseId}`);
     try {
-      const docRef = await db.collection(col).add(data);
-      console.log(`[ORDER-FS] ✅ Success: ${col}/${docRef.id} added via SDK.`);
-      return docRef.id;
+      const { data: result, error } = await supabaseAdmin.from(col).insert(data).select("id").single();
+      if (error) {
+        console.warn(`[SUPABASE-ADD] Error adding to ${col}:`, error.message);
+        return null;
+      }
+      return result.id;
     } catch (err: any) {
-      console.warn(`[ORDER-FS] ⚠️ SDK Add Failed: ${err.message}`);
-      
-      if (databaseId && databaseId !== "(default)") {
-        try {
-          const defaultDb = getDbInstance("(default)");
-          const docRef = await defaultDb.collection(col).add(data);
-          return docRef.id;
-        } catch (e) {
-          console.error(`[ORDER-FS] SDK Fallback Add failed.`);
-        }
-      }
-
-      try {
-        const tidyDb = (!databaseId || databaseId === "(default)") ? "(default)" : databaseId;
-        const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${tidyDb}/documents/${col}?key=${FIREBASE_API_KEY}`;
-        
-        const fields: any = {};
-        for (const key in data) {
-          const val = data[key];
-          if (typeof val === "string") fields[key] = { stringValue: val };
-          else if (typeof val === "number") fields[key] = { doubleValue: val };
-          else if (val instanceof Date) fields[key] = { timestampValue: val.toISOString() };
-          else if (typeof val === "boolean") fields[key] = { booleanValue: val };
-          else if (val === null) fields[key] = { nullValue: null };
-        }
-
-        const headers: any = { "Content-Type": "application/json" };
-        const res = await axios.post(url, { fields }, { headers, timeout: 10000 });
-        const nameParts = (res.data?.name || "").split("/");
-        const generatedId = nameParts[nameParts.length - 1];
-        if (generatedId) {
-          console.log(`[ORDER-FS] REST Add success with ID: ${generatedId}`);
-          return generatedId;
-        }
-      } catch (restErr: any) {
-        console.error(`[ORDER-FS] ‼️ Terminal: REST Add also failed: ${restErr.message}`);
-      }
+      console.warn(`[SUPABASE-ADD] Exception: ${err.message}`);
+      return null;
     }
-    return null;
   };
 
-  const adjustUserBalanceSafe = async (userId: string, change: number) => {
-    console.log(`[BALANCE-SAFE] Adjusting balance for ${userId} by ${change}`);
-    
-    // 1. Try SDK Transaction first
+  // Activate auto-ensure on startup
+  const ensureBackendUrlIsSet = async () => {
+    const ACTIVE_BACKEND_URL = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
     try {
-      let success = false;
-      await db.runTransaction(async (transaction: any) => {
-        const userRef = db.collection("users").doc(userId);
-        const userSnap = await transaction.get(userRef);
-        if (userSnap.exists) {
-          const current = Number(userSnap.data().balance || 0);
-          transaction.update(userRef, { balance: FieldValue.increment(change) });
-          success = true;
+      console.log(`[INIT] Auto-ensuring backend URL in database: ${ACTIVE_BACKEND_URL}`);
+      const { data, error } = await supabaseAdmin.from("settings").select("*").eq("id", "payment").maybeSingle();
+      if (error) throw error;
+      if (data) {
+        if (data.backendApiUrl !== ACTIVE_BACKEND_URL) {
+          await supabaseAdmin.from("settings").update({ backendApiUrl: ACTIVE_BACKEND_URL }).eq("id", "payment");
+          console.log(`[INIT] ✅ Supabase backendApiUrl updated.`);
         }
-      });
-      if (success) {
-        console.log(`[BALANCE-SAFE] SDK transaction adjusted balance successfully by ${change}`);
-        return true;
+      } else {
+        await supabaseAdmin.from("settings").insert({ id: "payment", backendApiUrl: ACTIVE_BACKEND_URL });
       }
-    } catch (sdkErr: any) {
-      console.warn(`[BALANCE-SAFE] SDK transaction adjustment failed: ${sdkErr.message}. Falling back to REST.`);
+    } catch (err: any) {
+      console.warn(`[INIT] ⚠️ Auto-updating backendApiUrl failed: ${err.message}`);
     }
+  };
+  ensureBackendUrlIsSet();
+  const adjustUserBalanceSafe = async (user_id: string, change: number) => {
+    console.log(`[BALANCE-SAFE] Adjusting balance for ${user_id} by ${change}`);
+    try {
+      const { data: user, error: getErr } = await supabaseAdmin.from("users").select("balance").eq("id", user_id).single();
+      if (getErr || !user) throw new Error("User not found");
 
-    // 2. Fallback: Read balance and overwrite via REST
-    try {
-      const uSnap = await getDocSafe("users", userId);
-      if (uSnap && uSnap.exists) {
-        const uData = uSnap.data() || {};
-        const currentBalance = Number(uData.balance || 0);
-        const newBalance = Number((currentBalance + change).toFixed(2));
-        const res = await updateDocSafe("users", userId, { balance: newBalance });
-        if (res) {
-          console.log(`[BALANCE-SAFE] REST successfully adjusted balance by ${change} (New balance: ${newBalance})`);
-          return true;
-        }
-      }
-    } catch (restErr: any) {
-      console.error(`[BALANCE-SAFE] Terminal fallback failed: ${restErr.message}`);
+      const newBalance = Number((Number(user.balance || 0) + change).toFixed(2));
+      const { error: updErr } = await supabaseAdmin.from("users").update({ balance: newBalance }).eq("id", user_id);
+      
+      if (updErr) throw updErr;
+      console.log(`[BALANCE-SAFE] Balance adjusted successfully to ${newBalance}`);
+      return true;
+    } catch (err: any) {
+      console.error(`[BALANCE-SAFE] Error: ${err.message}`);
+      return false;
     }
-    return false;
   };
   
-  // ULTIMATE REST FALLBACK HELPER
-  // This uses the API Key which can sometimes bypass Service Account permission gaps
-  const saveDepositViaRest = async (data: any) => {
-    const tidyProjectId = projectId?.trim();
-    const tidyDbId = databaseId?.trim();
-    const isCloudRun = !!process.env.K_SERVICE || !!process.env.FUNCTION_NAME || true; // Assume high-trust env
-
-    const url = `https://firestore.googleapis.com/v1/projects/${tidyProjectId}/databases/${tidyDbId || "(default)"}/documents/deposits?key=${FIREBASE_API_KEY}`;
-    
-    // Create fields map with proper Firestore REST types
-    const fields: any = {};
-    for (const key in data) {
-      const val = data[key];
-      if (typeof val === "string") fields[key] = { stringValue: val };
-      else if (typeof val === "number") fields[key] = { doubleValue: val };
-      else if (val instanceof Date) fields[key] = { timestampValue: val.toISOString() };
-      else if (key === "createdAt") fields[key] = { timestampValue: new Date().toISOString() };
-    }
-
-    const headers: any = {
-      "Content-Type": "application/json"
-    };
-
-    console.log(`[REST-DB] Posting to: ${url.split('?')[0]}`);
-    return axios.post(url, { fields }, { headers });
-  };
-
-  // Verify DB access on startup and auto-fallback if named DB is restricted/missing
-  console.log(`[INIT] Firestore connection verification deferred to run on demand (saves quota reads on start).`);
-
   // Health check
   app.get("/api/health", (req, res) => res.json({ 
     status: "ok", 
-    configProjectId: projectId, 
-    configDatabaseId: databaseId || "(default)",
-    envProject: process.env.GOOGLE_CLOUD_PROJECT || "not-set",
-    envDatabase: process.env.GOOGLE_CLOUD_DATABASE || "not-set",
-    hasAdminApp: getApps().length > 0
+    supabaseUrl: supabaseUrl,
+    hasServiceKey: !!supabaseServiceKey
   }));
 
-  // Aggressive backend-side cache to protect Firestore read limits
+  // Aggressive backend-side cache to protect database read limits
   let serverCachedCourses: any[] | null = null;
   let serverCachedCoursesTime = 0;
   let serverCachedSettings: any = null;
@@ -467,94 +190,36 @@ async function startServer() {
     }
 
     try {
-      console.log("[SERVER-DB] Fetching published courses from Firestore to refresh cache...");
-      const snapshot = await db.collection("courses")
-        .where("status", "==", "published")
-        .get();
+      console.log("[SERVER-DB] Fetching published services from Supabase to refresh cache...");
+      const { data: services, error } = await supabaseAdmin
+        .from("services")
+        .select("*")
+        .eq("status", "published");
       
-      const courses: any[] = [];
-      snapshot.forEach((doc: any) => {
-        courses.push({ id: doc.id, ...doc.data() });
-      });
+      if (error) throw error;
 
-      // Sort courses by category priority: Instagram first
+      // Sort services by category priority
       const categoryOrder = ["Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Twitter", "Other"];
-      courses.sort((a: any, b: any) => {
+      services.sort((a: any, b: any) => {
         const orderA = categoryOrder.indexOf(a.category) === -1 ? 99 : categoryOrder.indexOf(a.category);
         const orderB = categoryOrder.indexOf(b.category) === -1 ? 99 : categoryOrder.indexOf(b.category);
         if (orderA !== orderB) return orderA - orderB;
         
-        const timeA = a.createdAt?.seconds || a.createdAt?._seconds || 0;
-        const timeB = b.createdAt?.seconds || b.createdAt?._seconds || 0;
+        const timeA = new Date(a.updated_at || a.created_at || 0).getTime();
+        const timeB = new Date(b.updated_at || b.created_at || 0).getTime();
         return timeB - timeA;
       });
 
-      serverCachedCourses = courses;
+      serverCachedCourses = services;
       serverCachedCoursesTime = now;
-      res.json(courses);
+      res.json(services);
     } catch (err: any) {
-      console.error("[SERVER-DB] Error fetching courses from database via SDK:", err.message);
-      
-      try {
-        console.log("[SERVER-REST] SDK Failed. Falling back to secure REST query for published courses...");
-        const tidyDb = (!databaseId || databaseId === "(default)") ? "(default)" : databaseId;
-        const runQueryUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${tidyDb}/documents:runQuery?key=${FIREBASE_API_KEY}`;
-        
-        const queryPayload = {
-          structuredQuery: {
-            from: [{ collectionId: "courses" }],
-            where: {
-              fieldFilter: {
-                field: { fieldPath: "status" },
-                op: "EQUAL",
-                value: { stringValue: "published" }
-              }
-            }
-          }
-        };
-
-        const response = await axios.post(runQueryUrl, queryPayload, { timeout: 10000 });
-        const courses: any[] = [];
-        
-        if (response.data && Array.isArray(response.data)) {
-          response.data.forEach((item: any) => {
-            if (item.document && item.document.name) {
-              const docName = item.document.name;
-              const courseId = docName.split("/").pop();
-              if (courseId) {
-                courses.push({
-                  id: courseId,
-                  ...unwrapRestFields(item.document.fields || {})
-                });
-              }
-            }
-          });
-        }
-        
-        // Sort courses by category priority: Instagram first
-        const categoryOrder = ["Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Twitter", "Other"];
-        courses.sort((a: any, b: any) => {
-          const orderA = categoryOrder.indexOf(a.category) === -1 ? 99 : categoryOrder.indexOf(a.category);
-          const orderB = categoryOrder.indexOf(b.category) === -1 ? 99 : categoryOrder.indexOf(b.category);
-          if (orderA !== orderB) return orderA - orderB;
-          
-          const timeA = a.createdAt?.seconds || a.createdAt?._seconds || 0;
-          const timeB = b.createdAt?.seconds || b.createdAt?._seconds || 0;
-          return timeB - timeA;
-        });
-
-        serverCachedCourses = courses;
-        serverCachedCoursesTime = now;
-        return res.json(courses);
-      } catch (restErr: any) {
-        console.error("[SERVER-REST] Terminal error fetching courses via REST API:", restErr.message);
-      }
-
+      console.error("[SERVER-DB] Error fetching services from database:", err.message);
       if (serverCachedCourses) {
-        console.log("[SERVER-CACHE] Fallback to stale courses cache on DB error");
+        console.log("[SERVER-CACHE] Fallback to stale services cache on DB error");
         return res.json(serverCachedCourses);
       }
-      res.status(500).json({ error: "Failed to fetch courses of panel" });
+      res.status(500).json({ error: "Failed to fetch services" });
     }
   });
 
@@ -562,98 +227,32 @@ async function startServer() {
   app.get("/api/settings", async (req, res) => {
     const now = Date.now();
     if (serverCachedSettings && (now - serverCachedSettingsTime < BACKEND_CACHE_DURATION)) {
-      console.log("[SERVER-CACHE] Serving settings from backend memory to save reads");
       return res.json(serverCachedSettings);
     }
 
     try {
-      console.log("[SERVER-DB] Fetching settings/payment from Firestore to refresh cache...");
       const snap = await getDocSafe("settings", "payment");
-      
-      let settingsData = {};
-      if (snap.exists) {
-        settingsData = snap.data() || {};
-      }
-
+      let settingsData = snap.exists ? snap.data() : {};
       serverCachedSettings = settingsData;
       serverCachedSettingsTime = now;
       res.json(settingsData);
     } catch (err: any) {
-      console.error("[SERVER-DB] Error fetching settings from database:", err.message);
-      if (serverCachedSettings) {
-        console.log("[SERVER-CACHE] Fallback to stale settings cache on DB error");
-        return res.json(serverCachedSettings);
-      }
+      console.error("[SERVER-DB] Error fetching settings:", err.message);
+      if (serverCachedSettings) return res.json(serverCachedSettings);
       res.status(500).json({ error: "Failed to fetch settings" });
     }
   });
 
-  // Temporary developer debug endpoint to inspect orders and provider responses
+  // Temporary developer debug endpoint to inspect orders
   app.get("/api/debug-orders", async (req, res) => {
     try {
-      console.log("[DEBUG] Fetching last 15 orders for diagnostic purposes...");
-      let ordersList: any[] = [];
-      try {
-        const snapshot = await db.collection("orders")
-          .orderBy("createdAt", "desc")
-          .limit(15)
-          .get();
-        
-        snapshot.forEach((doc: any) => {
-          const data = doc.data();
-          if (data.isSyslog !== true) {
-            ordersList.push({
-              id: doc.id,
-              userId: data.userId,
-              courseTitle: data.courseTitle,
-              quantity: data.quantity,
-              totalPrice: data.totalPrice,
-              status: data.status,
-              providerOrderId: data.providerOrderId,
-              providerTransmissionStatus: data.providerTransmissionStatus,
-              error: data.error,
-              createdAt: data.createdAt ? (data.createdAt.toDate ? data.createdAt.toDate() : data.createdAt) : null,
-              providerRawResponse: data.providerRawResponse ? data.providerRawResponse.substring(0, 150) : null
-            });
-          }
-        });
-      } catch (sdkErr: any) {
-        console.warn(`[DEBUG-ORDERS] SDK path failed, falling back to REST: ${sdkErr.message}`);
-        const tidyDb = (!databaseId || databaseId === "(default)") ? "(default)" : databaseId;
-        const restUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${tidyDb}/documents/orders?key=${FIREBASE_API_KEY}&pageSize=50`;
-        const restRes = await axios.get(restUrl);
-        const docs = restRes.data.documents || [];
-        
-        const rawOrders = docs.map((d: any) => {
-          const fields = d.fields || {};
-          const id = d.name.split("/").pop();
-          const isSys = fields.isSyslog?.booleanValue;
-          const createdAtVal = fields.createdAt?.timestampValue || fields.createdAt?.stringValue;
-          return {
-            id,
-            isSyslog: isSys === true,
-            userId: fields.userId?.stringValue,
-            courseTitle: fields.courseTitle?.stringValue,
-            quantity: fields.quantity?.integerValue ? parseInt(fields.quantity.integerValue) : (fields.quantity?.doubleValue ? parseFloat(fields.quantity.doubleValue) : null),
-            totalPrice: fields.totalPrice?.integerValue ? parseInt(fields.totalPrice.integerValue) : (fields.totalPrice?.doubleValue ? parseFloat(fields.totalPrice.doubleValue) : null),
-            status: fields.status?.stringValue,
-            providerOrderId: fields.providerOrderId?.stringValue,
-            providerTransmissionStatus: fields.providerTransmissionStatus?.stringValue,
-            error: fields.error?.stringValue,
-            createdAt: createdAtVal ? new Date(createdAtVal) : null,
-            providerRawResponse: fields.providerRawResponse?.stringValue ? fields.providerRawResponse.stringValue : null
-          };
-        }).filter((o: any) => !o.isSyslog);
-
-        // Sort in memory
-        rawOrders.sort((a: any, b: any) => {
-          const tA = a.createdAt ? a.createdAt.getTime() : 0;
-          const tB = b.createdAt ? b.createdAt.getTime() : 0;
-          return tB - tA;
-        });
-
-        ordersList = rawOrders.slice(0, 15);
-      }
+      const { data: ordersList, error } = await supabaseAdmin
+        .from("orders")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(15);
+      
+      if (error) throw error;
       res.json({ success: true, count: ordersList.length, orders: ordersList });
     } catch (e: any) {
       console.error("[DEBUG] Error fetching orders debug data:", e.message);
@@ -678,7 +277,7 @@ async function startServer() {
       const secret = sS.data()?.razorpayKeySecret;
       const hmac = crypto.createHmac("sha256", secret).update(req.body.razorpay_order_id + "|" + req.body.razorpay_payment_id).digest("hex");
       if (hmac === req.body.razorpay_signature) {
-        await adjustUserBalanceSafe(req.body.userId, Number(req.body.amount));
+        await adjustUserBalanceSafe(req.body.user_id || req.body.userId, Number(req.body.amount));
         await addDocSafe("deposits", { ...req.body, status: "approved", createdAt: new Date() });
         res.json({ success: true });
       } else res.status(400).json({ error: "Invalid sig" });
@@ -688,51 +287,46 @@ async function startServer() {
   // Manual Deposit
   app.post("/api/deposits/submit-manual", async (req, res) => {
     const { amount, utr, screenshotUrl, userId, userEmail } = req.body;
-    console.log(`[DEPOSIT] Attempting submission: UTR=${utr}, User=${userId}`);
+    const user_id = userId;
+    const user_email = userEmail;
+    console.log(`[DEPOSIT] Attempting submission: UTR=${utr}, User=${user_id}`);
     
     const cleanUtr = String(utr).replace(/\D/g, "");
     if (cleanUtr.length !== 12) return res.status(400).json({ error: "Invalid UTR format. Must be 12 digits." });
     
     try {
-      const lockSnap = await getDocSafe("utr_locks", cleanUtr);
-      if (lockSnap.exists) {
+      const { data: existingDep } = await supabaseAdmin.from("transactions").select("id").eq("utr", cleanUtr).maybeSingle();
+      if (existingDep) {
         return res.status(400).json({ error: "This UTR number has already been used." });
       }
-      
-      await setDocSafe("utr_locks", cleanUtr, {
-        createdAt: new Date(),
-        userId,
-        amount: Number(amount)
-      });
 
       // Check if Admin has enabled Auto-Approve Deposits
       const sS = await getDocSafe("settings", "payment");
       const paymentSettings = sS.exists ? sS.data() : {};
-      const autoApprove = paymentSettings.autoApproveDeposits === true;
+      const autoApprove = paymentSettings.auto_approve_deposits === true;
 
       if (autoApprove) {
         // Create an already-approved deposit entry
-        const depId = await addDocSafe("deposits", {
-          userId, 
-          userEmail: userEmail || "not-provided", 
+        const depId = await addDocSafe("transactions", {
+          user_id, 
+          user_email: user_email || "not-provided", 
           amount: Number(amount), 
           utr: cleanUtr, 
-          screenshotUrl: screenshotUrl || "", 
+          screenshot_url: screenshotUrl || "", 
           status: "approved", 
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          processedBy: "instant-auto-approval",
-          source: "rest-safe-manual-instant"
+          type: "deposit",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
         });
 
         if (depId) {
           // Immediately adjust user balance
-          const balanceAdjusted = await adjustUserBalanceSafe(userId, Number(amount));
+          const balanceAdjusted = await adjustUserBalanceSafe(user_id, Number(amount));
           if (balanceAdjusted) {
-            console.log(`[DEPOSIT] Instant auto-approved & balance adjusted for User=${userId} by ₹${amount}`);
+            console.log(`[DEPOSIT] Instant auto-approved & balance adjusted for User=${user_id} by ₹${amount}`);
             res.json({ success: true, isAutoApproved: true });
           } else {
-            console.error(`[DEPOSIT] Instant auto-approval wrote deposit ${depId} but failed to adjust balance for User=${userId}!`);
+            console.error(`[DEPOSIT] Instant auto-approval wrote deposit ${depId} but failed to adjust balance for User=${user_id}!`);
             res.json({ success: true, isAutoApproved: true, warning: "Balance update delayed" });
           }
         } else {
@@ -740,15 +334,15 @@ async function startServer() {
         }
       } else {
         // Fallback to standard pending deposit
-        const depId = await addDocSafe("deposits", {
-          userId, 
-          userEmail: userEmail || "not-provided", 
+        const depId = await addDocSafe("transactions", {
+          user_id, 
+          user_email: user_email || "not-provided", 
           amount: Number(amount), 
           utr: cleanUtr, 
-          screenshotUrl: screenshotUrl || "", 
+          screenshot_url: screenshotUrl || "", 
           status: "pending", 
-          createdAt: new Date(),
-          source: "rest-safe-manual"
+          type: "deposit",
+          created_at: new Date().toISOString()
         });
 
         if (depId) {
@@ -813,68 +407,31 @@ async function startServer() {
       const parsedAmount = amountMatch ? parseFloat(amountMatch[1]) : null;
       console.log(`[SMS-WEBHOOK] Extracted amount: ${parsedAmount}`);
 
-      // 3. Find matching pending manual deposit in Firestore
+      // 3. Find matching pending manual deposit in Supabase
       let depData: any = null;
       let depositId: string = "";
       let matchedUtr: string = "";
 
-      // Loop through all candidate UTRs to find a match in Firestore
+      // Loop through all candidate UTRs to find a match in Supabase
       for (const candidateUtr of candidateUtrs) {
         try {
-          const depositsRef = db.collection("deposits");
-          const querySnap = await depositsRef.where("utr", "==", candidateUtr).where("status", "==", "pending").get();
-          if (!querySnap.empty) {
-            const depDoc = querySnap.docs[0];
-            depData = depDoc.data();
-            depositId = depDoc.id;
+          const { data, error } = await supabaseAdmin
+            .from("deposits")
+            .select("*")
+            .eq("utr", candidateUtr)
+            .eq("status", "pending")
+            .maybeSingle();
+
+          if (error) throw error;
+          
+          if (data) {
+            depData = data;
+            depositId = data.id;
             matchedUtr = candidateUtr;
             break; // Found matching pending deposit!
           }
-        } catch (sdkErr: any) {
-          console.warn(`[SMS-WEBHOOK] SDK Query failed for UTR ${candidateUtr}, trying REST fallback: ${sdkErr.message}`);
-          try {
-            const tidyDb = (!databaseId || databaseId === "(default)") ? "(default)" : databaseId;
-            const runQueryUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${tidyDb}/documents:runQuery?key=${FIREBASE_API_KEY}`;
-            
-            const queryPayload = {
-              structuredQuery: {
-                from: [{ collectionId: "deposits" }],
-                where: {
-                  compositeFilter: {
-                    op: "AND",
-                    filters: [
-                      {
-                        fieldFilter: {
-                          field: { fieldPath: "utr" },
-                          op: "EQUAL",
-                          value: { stringValue: candidateUtr }
-                        }
-                      },
-                      {
-                        fieldFilter: {
-                          field: { fieldPath: "status" },
-                          op: "EQUAL",
-                          value: { stringValue: "pending" }
-                        }
-                      }
-                    ]
-                  }
-                }
-              }
-            };
-
-            const response = await axios.post(runQueryUrl, queryPayload, { timeout: 10000 });
-            if (response.data && Array.isArray(response.data) && response.data.length > 0 && response.data[0].document) {
-              const doc = response.data[0].document;
-              const nameParts = doc.name.split("/");
-              depositId = nameParts[nameParts.length - 1];
-              depData = unwrapRestFields(doc.fields || {});
-              matchedUtr = candidateUtr;
-              break; // Found matching pending deposit!
-            }
-          } catch (restErr: any) {
-            console.error(`[SMS-WEBHOOK] REST fallback query failed for UTR ${candidateUtr}:`, restErr.message);
-          }
+        } catch (err: any) {
+          console.warn(`[SMS-WEBHOOK] Supabase Query failed for UTR ${candidateUtr}: ${err.message}`);
         }
       }
 
@@ -890,57 +447,27 @@ async function startServer() {
 
       const utr = matchedUtr;
       const originalAmount = Number(depData.amount || 0);
-      console.log(`[SMS-WEBHOOK] Found matching pending deposit ${depositId} of amount ₹${originalAmount} for userId: ${depData.userId} using matched UTR: ${utr}`);
+      console.log(`[SMS-WEBHOOK] Found matching pending deposit ${depositId} of amount ₹${originalAmount} for userId: ${depData.user_id} using matched UTR: ${utr}`);
 
-      // 4. Update the user balance & deposit status in a robust transaction
+      // 4. Update the user balance & deposit status
       let updateSuccess = false;
-      try {
-        await db.runTransaction(async (transaction: any) => {
-          const userRef = db.collection("users").doc(depData.userId);
-          const userSnap = await transaction.get(userRef);
-          if (!userSnap.exists) throw new Error("User profile not found in system.");
-
-          const currentBalance = Number(userSnap.data().balance || 0);
-          
-          // Update user balance
-          transaction.update(userRef, { 
-            balance: currentBalance + originalAmount, 
-            updatedAt: new Date() 
-          });
-
-          // Approve the deposit
-          const depositRef = db.collection("deposits").doc(depositId);
-          transaction.update(depositRef, { 
-            status: "approved", 
-            updatedAt: new Date(),
-            processedBy: "automatic-sms-gateway",
-            actualSmsAmount: parsedAmount
-          });
+      const adjusted = await adjustUserBalanceSafe(depData.user_id, originalAmount);
+      if (adjusted) {
+        // approve deposit
+        const approved = await updateDocSafe("deposits", depositId, {
+          status: "approved",
+          updated_at: new Date(),
+          processed_by: "automatic-sms-gateway",
+          actual_sms_amount: parsedAmount
         });
-        updateSuccess = true;
-        console.log(`[SMS-WEBHOOK] Approved deposit via SDK Transaction`);
-      } catch (txnErr: any) {
-        console.warn(`[SMS-WEBHOOK] SDK Transaction failed (${txnErr.message}). Falling back to separate REST operations...`);
-        
-        // adjust user balance safely using REST
-        const adjusted = await adjustUserBalanceSafe(depData.userId, originalAmount);
-        if (adjusted) {
-          // approve deposit using REST
-          const approved = await updateDocSafe("deposits", depositId, {
-            status: "approved",
-            updatedAt: new Date(),
-            processedBy: "automatic-sms-gateway-rest-fallback",
-            actualSmsAmount: parsedAmount
-          });
-          if (approved) {
-            updateSuccess = true;
-            console.log(`[SMS-WEBHOOK] Approved deposit via REST Safe Operations`);
-          } else {
-            console.error(`[SMS-WEBHOOK] ❌ SYSTEM INCONSISTENCY: Balance was adjusted for user ${depData.userId} by ₹${originalAmount}, but we failed to update deposit ${depositId} status!`);
-          }
+        if (approved) {
+          updateSuccess = true;
+          console.log(`[SMS-WEBHOOK] Approved deposit successfully`);
         } else {
-          console.error(`[SMS-WEBHOOK] ❌ REST balance adjustment failed for user ${depData.userId}`);
+          console.error(`[SMS-WEBHOOK] ❌ SYSTEM INCONSISTENCY: Balance was adjusted for user ${depData.user_id} by ₹${originalAmount}, but we failed to update deposit ${depositId} status!`);
         }
+      } else {
+        console.error(`[SMS-WEBHOOK] ❌ Balance adjustment failed for user ${depData.user_id}`);
       }
 
       if (updateSuccess) {
@@ -977,39 +504,39 @@ async function startServer() {
     console.log(`[TRANSMIT] Locking & processing orderId: ${orderId}`);
 
     try {
-      // 0. Resolve orderData or fallback to Firestore fetch to avoid redundant DB reads
+      // 0. Resolve orderData or fallback to Supabase fetch to avoid redundant DB reads
       let currentOrderData = orderData;
-      if (!currentOrderData || !currentOrderData.userId || !currentOrderData.courseId) {
-        console.log(`[TRANSMIT] Fetching order document ${orderId} from Firestore (slow path fallback)`);
+      if (!currentOrderData || !currentOrderData.user_id || !currentOrderData.service_id) {
+        console.log(`[TRANSMIT] Fetching order document ${orderId} from Supabase (slow path fallback)`);
         const snapObj = await getDocSafe("orders", orderId);
         if (!snapObj.exists) throw new Error("Order not found");
         currentOrderData = snapObj.data() || {};
         
-        if (currentOrderData.providerOrderId) {
-          console.log(`[TRANSMIT] Order ${orderId} already has providerOrderId registered: ${currentOrderData.providerOrderId}`);
-          return { success: true, providerOrderId: currentOrderData.providerOrderId };
+        if (currentOrderData.provider_order_id) {
+          console.log(`[TRANSMIT] Order ${orderId} already has provider_order_id registered: ${currentOrderData.provider_order_id}`);
+          return { success: true, provider_order_id: currentOrderData.provider_order_id };
         }
-        if (currentOrderData.providerTransmissionStatus === "completed") {
+        if (currentOrderData.provider_transmission_status === "completed") {
           console.log(`[TRANSMIT] Order ${orderId} transmission was already completed.`);
-          return { success: true, providerOrderId: currentOrderData.providerOrderId || "SENT" };
+          return { success: true, provider_order_id: currentOrderData.provider_order_id || "SENT" };
         }
       }
 
-      const orderAmount = Number(currentOrderData.totalPrice || 0);
-      const courseId = currentOrderData.courseId;
-      const userId = currentOrderData.userId;
-      const targetLink = currentOrderData.targetLink || "";
+      const orderAmount = Number(currentOrderData.total_price || 0);
+      const serviceId = currentOrderData.service_id;
+      const userId = currentOrderData.user_id;
+      const targetLink = currentOrderData.target_link || "";
       const quantity = currentOrderData.quantity;
 
-      if (!courseId) {
-        throw new Error("Missing required field: courseId");
+      if (!serviceId) {
+        throw new Error("Missing required field: service_id");
       }
 
-      // 1. Fetch User, Course details, and general Payment Settings IN PARALLEL (FAST PATH)
-      console.log(`[TRANSMIT] Retrieving User, Course, and Settings in parallel for order ${orderId}`);
+      // 1. Fetch User, Service details, and general Payment Settings IN PARALLEL (FAST PATH)
+      console.log(`[TRANSMIT] Retrieving User, Service, and Settings in parallel for order ${orderId}`);
       const [userSnap, cS, sS] = await Promise.all([
         getDocSafe("users", userId),
-        getDocSafe("courses", courseId),
+        getDocSafe("services", serviceId),
         getDocSafe("settings", "payment")
       ]);
 
@@ -1028,18 +555,18 @@ async function startServer() {
       const s = sS.exists ? (sS.data() || {}) : {};
 
       // 3. Resolve API credentials
-      let pUrl = (s.providerApiUrl || "").trim();
-      let pKey = (s.providerApiKey || "").trim();
+      let pUrl = (s.api_url || "").trim();
+      let pKey = (s.api_key || "").trim();
 
-      if (c.providerId && c.providerId !== "global") {
-        console.log(`[TRANSMIT] Course ${courseId} is using a custom provider: ${c.providerId}`);
-        const pS = await getDocSafe("providers", c.providerId);
+      if (c.provider_id && c.provider_id !== "global") {
+        console.log(`[TRANSMIT] Course ${courseId} is using a custom provider: ${c.provider_id}`);
+        const pS = await getDocSafe("providers", c.provider_id);
         if (pS && pS.exists) {
           const pData = pS.data() || {};
-          pUrl = (pData.apiUrl || "").trim();
-          pKey = (pData.apiKey || "").trim();
+          pUrl = (pData.api_url || "").trim();
+          pKey = (pData.api_key || "").trim();
         } else {
-          console.warn(`[TRANSMIT] Custom provider ${c.providerId} not found. Falling back to global settings.`);
+          console.warn(`[TRANSMIT] Custom provider ${c.provider_id} not found. Falling back to global settings.`);
         }
       }
 
@@ -1051,7 +578,7 @@ async function startServer() {
         pUrl = "https://" + pUrl;
       }
 
-      if (!c.providerServiceId || String(c.providerServiceId) === "0") {
+      if (!c.provider_service_id || String(c.provider_service_id) === "0") {
         throw new Error(`Service ID for course "${c.title}" is missing or mapped poorly.`);
       }
 
@@ -1222,7 +749,7 @@ async function startServer() {
       if (providerOrderId || isStatusSuccess) {
         const oId = providerOrderId ? String(providerOrderId) : "SENT_NO_ID";
         console.log(`[TRANSMIT] Successfully ordered from SMM panel. Provider Order ID: ${oId}`);
-        await logToDb("PROXY_PROVIDER_SUCCESS", { providerOrderId: oId, isStatusSuccess, resData, orderId });
+        await logToDb("PROXY_PROVIDER_SUCCESS", { provider_order_id: oId, isStatusSuccess, resData, orderId });
 
         // DEDUCT BALANCE NOW - Order was successful with provider
         try {
@@ -1234,36 +761,36 @@ async function startServer() {
             const needsDeduction = ["Pending", "Processing", "Failed", "Refunded", "Awaiting-Validation"].includes(currentData.status);
             
             if (needsDeduction) {
-              const price = currentData.totalPrice || 0;
-              const deductionSuccess = await adjustUserBalanceSafe(currentData.userId, -price);
+              const price = currentData.total_price || 0;
+              const deductionSuccess = await adjustUserBalanceSafe(currentData.user_id, -price);
               if (deductionSuccess) {
-                console.log(`[DEDUCTION] Deducted ₹${price} from User ${currentData.userId} after successful provider response.`);
+                console.log(`[DEDUCTION] Deducted ₹${price} from User ${currentData.user_id} after successful provider response.`);
               } else {
-                console.error(`[DEDUCTION-FAIL] Could not deduct balance for user ${currentData.userId} despite provider success!`);
+                console.error(`[DEDUCTION-FAIL] Could not deduct balance for user ${currentData.user_id} despite provider success!`);
               }
             }
           }
 
           await updateDocSafe("orders", orderId, {
             status: "Completed",
-            providerOrderId: oId,
+            provider_order_id: oId,
             needsProviderTransmission: false,
-            providerTransmissionStatus: "completed",
+            provider_transmission_status: "completed",
             error: null,
-            updatedAt: new Date(),
-            providerRawResponse: JSON.stringify(resData).substring(0, 800)
+            updated_at: new Date().toISOString(),
+            provider_raw_response: JSON.stringify(resData).substring(0, 800)
           });
         } catch (updateErr: any) {
-          console.warn(`[TRANSMIT] Could not update Firestore snapshot but was definitely ordered: ${updateErr.message}`);
+          console.warn(`[TRANSMIT] Could not update database snapshot but was definitely ordered: ${updateErr.message}`);
           await updateDocSafe("orders", orderId, {
             status: "Completed",
-            providerOrderId: oId,
+            provider_order_id: oId,
             needsProviderTransmission: false,
-            providerTransmissionStatus: "completed",
-            updatedAt: new Date()
+            provider_transmission_status: "completed",
+            updated_at: new Date().toISOString()
           });
         }
-        return { success: true, providerOrderId: oId };
+        return { success: true, provider_order_id: oId };
       } else {
         // Collect rejection errors
         const rawError = resData?.error || resData?.message || resData?.msg || resData?.errors || resData?.ERR || resData?.status || resData?.reason || resData?.error_message || resData?.msg_error;
@@ -1298,9 +825,9 @@ async function startServer() {
         await updateDocSafe("orders", orderId, {
           status: "Failed",
           needsProviderTransmission: false,
-          providerTransmissionStatus: "failed",
+          provider_transmission_status: "failed",
           error: `Provider Rejected Order (${finalErrorStr.substring(0, 400)})`,
-          updatedAt: new Date()
+          updated_at: new Date().toISOString()
         });
 
         return { success: false, error: finalErrorStr };
@@ -1335,7 +862,8 @@ async function startServer() {
                 op: "EQUAL",
                 value: { booleanValue: true }
               }
-            }
+            },
+            limit: 3
           }
         };
 
@@ -1389,15 +917,15 @@ async function startServer() {
       } catch (err: any) {
         console.error(`[BACKGROUND-PROCESSOR] [REST-POLL] Polling loop query failed: ${err.message}`);
       }
-    }, 300000); // Check every 300 seconds (5 minutes). Primary listener uses direct HTTP api POST, so backup can be extremely lightweight and save reads!
+    }, 1800000); // Check every 30 minutes. Primary listener uses direct HTTP api POST, so backup can be extremely lightweight and save reads!
   }
 
   // Background Live Snapshot Listener (Optimized for Spark Free tier - Deactivated real-time SDK listener to prevent permission-denied retry loop reads spam)
   function startBackgroundOrderListener(dbInstance: any) {
     console.log("[BACKGROUND-PROCESSOR] Initializing lightweight order manager background scheduler...");
     
-    // REST Polling Backup loop activated as a solid, database-optimized failsafe (Runs once every 5 minutes)
-    startRESTBackupPollingLoop();
+    // Background REST polling loop disabled completely to prevent periodic query/read quota consumption.
+    // All orders are dispatched synchronously and status updates triggered manually or on-demand.
 
     console.log("[BACKGROUND-PROCESSOR] In-memory orders scheduler active. SDK onSnapshot stream remains disabled to prevent credential block retries.");
   }
@@ -1407,37 +935,51 @@ async function startServer() {
     try {
       const { 
         userId, 
+        user_id: bodyUserId,
         userEmail, 
+        user_email: bodyUserEmail,
         courseId, 
+        service_id: bodyServiceId,
         courseTitle, 
+        title: bodyTitle,
         category, 
         quantity, 
         targetLink, 
+        target_link: bodyTargetLink,
         totalPrice,
+        total_price: bodyTotalPrice,
         orderId: passedOrderId
       } = req.body;
+
+      const final_user_id = bodyUserId || userId;
+      const final_user_email = bodyUserEmail || userEmail || "";
+      const final_service_id = bodyServiceId || courseId;
+      const final_title = bodyTitle || courseTitle || "";
+      const final_target_link = bodyTargetLink || targetLink || "";
+      const final_total_price = bodyTotalPrice !== undefined ? bodyTotalPrice : totalPrice;
 
       let orderId = passedOrderId;
 
       // Check if this is a DIRECT Synchronous order creation request (contains userId & totalPrice)
-      if (userId && totalPrice !== undefined) {
-        orderId = "ord_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
-        console.log(`[HTTP Direct Order] Creating synchronous order ${orderId} for user ${userId} and course ${courseId}`);
+      if (final_user_id && final_total_price !== undefined) {
+        if (!orderId) {
+          orderId = "ord_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
+        }
+        console.log(`[HTTP Direct Order] Creating order document ${orderId} in database`);
 
         // 1. Create order document first so transit methods can read/update it
         const orderData = {
-          userId,
-          userEmail: userEmail || "",
-          courseId,
-          courseTitle: courseTitle || "",
+          user_id: final_user_id,
+          user_email: final_user_email,
+          service_id: final_service_id,
+          title: final_title,
           category: category || "Other",
           quantity: Number(quantity),
-          targetLink: targetLink.trim(),
-          totalPrice: Number(totalPrice),
+          target_link: final_target_link.trim(),
+          total_price: Number(final_total_price),
           status: "Pending",
-          createdAt: new Date(),
-          needsProviderTransmission: false,
-          providerTransmissionStatus: "pending"
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
         };
 
         const createSuccess = await setDocSafe("orders", orderId, orderData);
@@ -1452,19 +994,29 @@ async function startServer() {
 
       console.log(`[HTTP Proxy] Order transmission call received for order: ${orderId}`);
       const payloadData = {
-        userId,
-        userEmail: userEmail || "",
-        courseId,
-        courseTitle: courseTitle || "",
+        user_id: final_user_id,
+        user_email: final_user_email,
+        service_id: final_service_id,
+        title: final_title,
         category: category || "Other",
         quantity: Number(quantity),
-        targetLink: targetLink?.trim() || "",
-        totalPrice: Number(totalPrice),
+        target_link: final_target_link?.trim() || "",
+        total_price: Number(final_total_price),
         status: "Pending"
       };
+
+      if (req.body.isAsync) {
+        console.log(`[HTTP Proxy] Dispatching asynchronous background order transit for order: ${orderId}`);
+        // Run background transmittal immediately and return milliseconds response to client
+        transmitOrderToProviderDirect(orderId, payloadData).catch(err => {
+          console.error(`[ASYNC-TRANSMIT-ERROR] Background transmission exception for ${orderId}:`, err.message);
+        });
+        return res.json({ success: true, isAsync: true, provider_order_id: "PENDING", orderId });
+      }
+
       const result = await transmitOrderToProviderDirect(orderId, payloadData);
       if (result.success) {
-        return res.json({ success: true, providerOrderId: result.providerOrderId, orderId });
+        return res.json({ success: true, provider_order_id: result.provider_order_id, orderId });
       } else {
         return res.status(400).json({ success: false, error: result.alreadyProcessing ? "Processing in-progress..." : result.error, orderId });
       }
@@ -1484,15 +1036,15 @@ async function startServer() {
       if (providerId) {
         const pS = await getDocSafe("providers", providerId);
         if (pS.exists) {
-          pUrl = pS.data()?.apiUrl;
-          pKey = pS.data()?.apiKey;
+          pUrl = pS.data()?.api_url;
+          pKey = pS.data()?.api_key;
         } else {
           return res.status(404).json({ error: "Provider not found" });
         }
       } else {
         const sS = await getDocSafe("settings", "payment");
-        pUrl = sS.data()?.providerApiUrl;
-        pKey = sS.data()?.providerApiKey;
+        pUrl = sS.data()?.api_url;
+        pKey = sS.data()?.api_key;
       }
 
       if (!pUrl || !pKey) return res.status(400).json({ error: "API URL or Key missing" });
@@ -1546,7 +1098,7 @@ async function startServer() {
         return res.json({ success: true, status: currentStatus, upToDate: true });
       }
 
-      if (!order.providerOrderId) {
+      if (!order.provider_order_id) {
         return res.json({ success: true, status: currentStatus, message: "No provider ID yet" });
       }
 
@@ -1555,19 +1107,19 @@ async function startServer() {
       let pKey = "";
       const sS = await getDocSafe("settings", "payment");
       const sData = sS.data() || {};
-      pUrl = sData.providerApiUrl || "";
-      pKey = sData.providerApiKey || "";
+      pUrl = sData.api_url || "";
+      pKey = sData.api_key || "";
 
-      if (order.courseId) {
-        const cS = await getDocSafe("courses", order.courseId);
+      if (order.service_id) {
+        const cS = await getDocSafe("services", order.service_id);
         if (cS.exists) {
           const cData = cS.data();
-          if (cData.providerId && cData.providerId !== "global") {
-            const pS = await getDocSafe("providers", cData.providerId);
+          if (cData.provider_id && cData.provider_id !== "global") {
+            const pS = await getDocSafe("providers", cData.provider_id);
             if (pS.exists) {
               const pData = pS.data();
-              pUrl = pData.apiUrl || "";
-              pKey = pData.apiKey || "";
+              pUrl = pData.api_url || "";
+              pKey = pData.api_key || "";
             }
           }
         }
@@ -1578,7 +1130,7 @@ async function startServer() {
       const params = new URLSearchParams();
       params.append("key", pKey);
       params.append("action", "status");
-      params.append("order", String(order.providerOrderId));
+      params.append("order", String(order.provider_order_id));
 
       const response = await axios.post(pUrl.startsWith("http") ? pUrl : `https://${pUrl}`, params.toString(), {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
