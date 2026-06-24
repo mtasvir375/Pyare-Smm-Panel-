@@ -71,7 +71,7 @@ const getYoutubeEmbedUrl = (url: string) => {
 };
 
 export default function Profile() {
-  const { user, profile, isAdmin, isPaymentAdmin, signOut } = useAuth();
+  const { user, userProfile: profile, loading: authLoading, isAdmin, isPaymentAdmin, signOut } = useAuth() as any;
   const navigate = useNavigate();
   const [isAddFundsOpen, setIsAddFundsOpen] = useState(false);
   const [amount, setAmount] = useState("");
@@ -80,6 +80,8 @@ export default function Profile() {
   const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isRazorpayLoading, setIsRazorpayLoading] = useState(false);
+  const [isPhonePeLoading, setIsPhonePeLoading] = useState(false);
+  const [isPaytmLoading, setIsPaytmLoading] = useState(false);
   const [paymentSettings, setPaymentSettings] = useState<{
     upiId: string;
     merchantName: string;
@@ -88,6 +90,8 @@ export default function Profile() {
     guideVideoUrl?: string;
     razorpayEnabled?: boolean;
     razorpayKeyId?: string;
+    phonepeEnabled?: boolean;
+    paytmEnabled?: boolean;
   } | null>(null);
 
   useEffect(() => {
@@ -112,7 +116,7 @@ export default function Profile() {
     try {
       const response = await axios.post("/api/razorpay/create-order", {
         amount: Number(amount),
-        userId: user?.id,
+        userId: user?.uid,
       });
 
       const { order } = response.data;
@@ -128,7 +132,7 @@ export default function Profile() {
           const verifyRes = await axios.post("/api/razorpay/verify", {
             ...response,
             amount: Number(amount),
-            userId: user?.id,
+            userId: user?.uid,
             userEmail: user?.email,
           });
 
@@ -155,6 +159,86 @@ export default function Profile() {
     }
   };
 
+  const handlePhonePePayment = async () => {
+    if (!amount || Number(amount) < 1) {
+      toast.error("Minimum amount is ₹1");
+      return;
+    }
+
+    setIsPhonePeLoading(true);
+    try {
+      const response = await axios.post("/api/phonepe/create-order", {
+        amount: Number(amount),
+        userId: user?.uid,
+        userEmail: user?.email,
+      });
+
+      if (response.data.success && response.data.redirectUrl) {
+        toast.loading("Redirecting to PhonePe Gateway...");
+        window.location.href = response.data.redirectUrl;
+      } else {
+        throw new Error(response.data.error || "Failed to initiate payment");
+      }
+    } catch (error: any) {
+      console.error("[PHONEPE-CLIENT-ERROR]", error);
+      toast.error(error.response?.data?.error || error.message || "Failed to initiate PhonePe payment");
+    } finally {
+      setIsPhonePeLoading(false);
+    }
+  };
+
+  const handlePaytmPayment = async () => {
+    if (!amount || Number(amount) < 1) {
+      toast.error("Minimum amount is ₹1");
+      return;
+    }
+
+    setIsPaytmLoading(true);
+    try {
+      const response = await axios.post("/api/paytm/create-order", {
+        amount: Number(amount),
+        userId: user?.uid,
+        userEmail: user?.email,
+      });
+
+      if (response.data.success && response.data.txnToken) {
+        toast.loading("Redirecting to Paytm Gateway...");
+        const form = document.createElement("form");
+        form.method = "POST";
+        form.action = response.data.checkoutPageUrl;
+        form.name = "paytmForm";
+
+        const midInput = document.createElement("input");
+        midInput.type = "hidden";
+        midInput.name = "mid";
+        midInput.value = response.data.mid;
+        form.appendChild(midInput);
+
+        const orderIdInput = document.createElement("input");
+        orderIdInput.type = "hidden";
+        orderIdInput.name = "orderId";
+        orderIdInput.value = response.data.orderId;
+        form.appendChild(orderIdInput);
+
+        const txnTokenInput = document.createElement("input");
+        txnTokenInput.type = "hidden";
+        txnTokenInput.name = "txnToken";
+        txnTokenInput.value = response.data.txnToken;
+        form.appendChild(txnTokenInput);
+
+        document.body.appendChild(form);
+        form.submit();
+      } else {
+        throw new Error(response.data.error || "Failed to initiate payment");
+      }
+    } catch (error: any) {
+      console.error("[PAYTM-CLIENT-ERROR]", error);
+      toast.error(error.response?.data?.error || error.message || "Failed to initiate Paytm payment");
+    } finally {
+      setIsPaytmLoading(false);
+    }
+  };
+
   useEffect(() => {
     const fetchSettings = async () => {
       try {
@@ -172,11 +256,17 @@ export default function Profile() {
 
   const handleLogout = async () => {
     try {
+      console.log("[LOGOUT] Attempting sign out...");
       await signOut();
       toast.success("Logged out successfully");
-      navigate("/login");
-    } catch (error) {
-      toast.error("Failed to logout");
+      navigate("/login", { replace: true });
+    } catch (error: any) {
+      console.error("[LOGOUT] Error during sign out:", error);
+      toast.error(`Failed to logout: ${error.message || 'Unknown error'}`);
+      // Hard fallback if soft navigate fails
+      if (error.message?.includes("navigate")) {
+        window.location.href = "/login";
+      }
     }
   };
 
@@ -240,8 +330,8 @@ export default function Profile() {
         amount: numAmount,
         utr: cleanUtr,
         screenshotUrl: screenshotPreview,
-        userId: user.id,
-        userEmail: user.email
+        userId: user?.uid,
+        userEmail: user?.email
       });
 
       if (response.data.success) {
@@ -266,11 +356,11 @@ export default function Profile() {
 
         const depositId = "dep_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
         await dbClient.submitManualDeposit(depositId, {
-          user_id: user.id,
-          user_email: user.email,
+          userId: user.uid,
+          userEmail: user.email,
           amount: Number(amount),
           utr: cleanUtr,
-          screenshot_url: screenshotPreview || ""
+          screenshotUrl: screenshotPreview || ""
         });
 
         toast.success("Request submitted successfully!");
@@ -317,6 +407,15 @@ export default function Profile() {
     { icon: Shield, label: "Privacy & Security", color: "text-purple-500" },
   ];
 
+  if (authLoading) {
+    return (
+      <div className="w-full max-w-xl mx-auto py-20 flex flex-col items-center justify-center space-y-4">
+        <RefreshCw className="w-10 h-10 text-primary animate-spin" />
+        <p className="text-gray-500 font-medium">Loading profile...</p>
+      </div>
+    );
+  }
+
   if (!user) {
     return (
       <div className="w-full max-w-xl mx-auto py-20 text-center space-y-4">
@@ -332,20 +431,23 @@ export default function Profile() {
     );
   }
 
+  const displayName = profile?.displayName || user.displayName || user.email?.split("@")[0] || "User";
+  const photoURL = user.photoURL || "";
+
   return (
     <div className="w-full max-w-xl mx-auto space-y-3">
       <div className="flex items-center gap-4 bg-white p-4 rounded-3xl shadow-sm border border-gray-50">
         <div className="relative shrink-0">
           <Avatar className="w-16 h-16 border-2 border-white shadow-md">
-            <AvatarImage src={user.photoURL || ""} />
-            <AvatarFallback>{user.displayName?.charAt(0) || "U"}</AvatarFallback>
+            <AvatarImage src={photoURL} />
+            <AvatarFallback>{displayName.charAt(0)}</AvatarFallback>
           </Avatar>
           <Button size="icon" variant="secondary" className="absolute -bottom-1 -right-1 rounded-full w-6 h-6 shadow-sm">
             <PlusCircle className="w-3 h-3" />
           </Button>
         </div>
         <div className="flex-1 min-w-0">
-          <h1 className="text-xl font-bold truncate">{user.displayName || "User"}</h1>
+          <h1 className="text-xl font-bold truncate">{displayName}</h1>
           <p className="text-sm text-gray-500 truncate">{user.email}</p>
           <div className="mt-1 flex items-center gap-2">
             <span className="text-[10px] font-bold uppercase tracking-widest bg-primary/10 text-primary px-2 py-0.5 rounded-full">
@@ -401,27 +503,65 @@ export default function Profile() {
               />
             </div>
 
-            {paymentSettings?.razorpayEnabled && amount && Number(amount) > 0 && (
+            {((paymentSettings?.razorpayEnabled || paymentSettings?.phonepeEnabled || paymentSettings?.paytmEnabled) && amount && Number(amount) > 0) && (
               <div className="space-y-2 pt-2 animate-in fade-in slide-in-from-top-2">
                 <div className="relative flex items-center py-2">
                   <div className="flex-grow border-t border-gray-100"></div>
                   <span className="flex-shrink mx-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Automatic Payment</span>
                   <div className="flex-grow border-t border-gray-100"></div>
                 </div>
-                <Button 
-                  onClick={handleRazorpayPayment}
-                  disabled={isRazorpayLoading}
-                  className="w-full h-12 rounded-2xl bg-[#3395FF] hover:bg-[#2085ee] text-white font-bold flex items-center justify-center gap-2"
-                >
-                  {isRazorpayLoading ? (
-                    <RefreshCw className="w-5 h-5 animate-spin" />
-                  ) : (
-                    <>
-                      <Wallet className="w-5 h-5" />
-                      Pay with Razorpay (Instant)
-                    </>
-                  )}
-                </Button>
+
+                {paymentSettings?.razorpayEnabled && (
+                  <Button 
+                    onClick={handleRazorpayPayment}
+                    disabled={isRazorpayLoading}
+                    className="w-full h-12 rounded-2xl bg-[#3395FF] hover:bg-[#2085ee] text-white font-bold flex items-center justify-center gap-2 mb-2"
+                  >
+                    {isRazorpayLoading ? (
+                      <RefreshCw className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <>
+                        <Wallet className="w-5 h-5" />
+                        Pay with Razorpay (Instant)
+                      </>
+                    )}
+                  </Button>
+                )}
+
+                {paymentSettings?.phonepeEnabled && (
+                  <Button 
+                    onClick={handlePhonePePayment}
+                    disabled={isPhonePeLoading}
+                    className="w-full h-12 rounded-2xl bg-[#5f259f] hover:bg-[#4d1d82] text-white font-bold flex items-center justify-center gap-2 mb-2"
+                  >
+                    {isPhonePeLoading ? (
+                      <RefreshCw className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <>
+                        <Wallet className="w-5 h-5" />
+                        Pay with PhonePe (Instant)
+                      </>
+                    )}
+                  </Button>
+                )}
+
+                {paymentSettings?.paytmEnabled && (
+                  <Button 
+                    onClick={handlePaytmPayment}
+                    disabled={isPaytmLoading}
+                    className="w-full h-12 rounded-2xl bg-[#00b9f5] hover:bg-[#009cd0] text-white font-bold flex items-center justify-center gap-2 mb-2"
+                  >
+                    {isPaytmLoading ? (
+                      <RefreshCw className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <>
+                        <Wallet className="w-5 h-5" />
+                        Pay with Paytm (Instant)
+                      </>
+                    )}
+                  </Button>
+                )}
+
                 <div className="relative flex items-center py-2">
                   <div className="flex-grow border-t border-gray-100"></div>
                   <span className="flex-shrink mx-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest">OR Manual QR</span>

@@ -28,14 +28,14 @@ import { QRCodeSVG } from "qrcode.react";
 const CATEGORIES = ["All", "Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Other"];
 
 export default function Courses() {
-  const { user, profile } = useAuth();
+  const { user, userProfile: profile, updateUserProfileLocal } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [courses, setCourses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
   // New Order Form State
-  const [selectedCategory, setSelectedCategory] = useState("Instagram");
+  const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedCourseId, setSelectedCourseId] = useState("");
   const [targetLink, setTargetLink] = useState("");
   const [quantity, setQuantity] = useState<string>("");
@@ -71,15 +71,28 @@ export default function Courses() {
         setCourses(coursesData);
         setLoading(false);
         
-        if (coursesData.length > 0 && !selectedCategory) {
-          setSelectedCategory(coursesData[0].category || "Other");
+        if (coursesData.length > 0) {
+          // Priority to previous selection, then query param, then first available
+          const queryCategory = searchParams.get("category");
+          if (queryCategory) {
+            const match = coursesData.find(c => c.category && c.category.toLowerCase() === queryCategory.toLowerCase());
+            if (match) {
+              setSelectedCategory(match.category);
+              return;
+            }
+          }
+          
+          if (!selectedCategory) {
+            setSelectedCategory(coursesData[0].category || "Other");
+          }
         }
       } catch (error) {
         console.error(error);
+        setLoading(false);
       }
     };
     fetchCourses();
-  }, []);
+  }, [searchParams]);
 
   useEffect(() => {
     const fetchSettings = async () => {
@@ -94,44 +107,31 @@ export default function Courses() {
     fetchSettings();
   }, []);
 
-  // Sync category state dynamically from SEO dynamic URL queries
-  useEffect(() => {
-    const queryCategory = searchParams.get("category");
-    if (queryCategory) {
-      const match = CATEGORIES.find(c => c.toLowerCase() === queryCategory.toLowerCase());
-      if (match) {
-        setSelectedCategory(match);
-      } else {
-        const foundData = courses.find(c => c.category && c.category.toLowerCase() === queryCategory.toLowerCase());
-        if (foundData) {
-          setSelectedCategory(foundData.category);
-        }
-      }
-    }
-  }, [searchParams, courses]);
-
   useEffect(() => {
     const services = courses.filter(c => c.category === selectedCategory);
     if (services.length > 0) {
-      setSelectedCourseId(services[0].id);
+      if (!selectedCourseId || !services.find(s => s.id === selectedCourseId)) {
+        setSelectedCourseId(services[0].id);
+      }
     } else {
       setSelectedCourseId("");
     }
-  }, [selectedCategory, courses]);
+  }, [selectedCategory, courses, selectedCourseId]);
 
   useEffect(() => {
     if (selectedCourse) {
-      if (selectedCourse.isPackage) {
-        setQuantity(String(selectedCourse.packageQuantity || 1000));
+      const isPkg = selectedCourse.isPackage || selectedCourse.is_package;
+      if (isPkg) {
+        setQuantity(String(selectedCourse.packageQuantity || selectedCourse.package_quantity || 1000));
       } else {
-        setQuantity(String(selectedCourse.minLimit || 1000));
+        setQuantity(String(selectedCourse.minLimit || selectedCourse.min_limit || 1000));
       }
     }
   }, [selectedCourseId]);
 
   const totalPrice = selectedCourse 
-    ? (selectedCourse.is_package 
-        ? Number(selectedCourse.package_price || 0) 
+    ? ((selectedCourse.isPackage || selectedCourse.is_package)
+        ? Number(selectedCourse.packagePrice || selectedCourse.package_price || 0) 
         : (Number(quantity) * (selectedCourse.price || 0)) / 1000) 
     : 0;
 
@@ -169,20 +169,22 @@ export default function Courses() {
 
   const handleSubmitOrder = async () => {
     if (!selectedCourse || !user) {
-      toast.error("Please select a service and login");
+      toast.error("Please login to place an order");
       return;
     }
     if (!targetLink || targetLink.trim().length < 2) {
       toast.error("Please provide a valid target link, profile, or username");
       return;
     }
-    if (!selectedCourse.provider_service_id || selectedCourse.provider_service_id === "0") {
+    const providerServiceId = selectedCourse.providerServiceId || selectedCourse.provider_service_id;
+    if (!providerServiceId || providerServiceId === "0") {
       toast.error("This service is not currently available (missing configuration).");
       return;
     }
     const qtyNum = Number(quantity);
-    if (!quantity || qtyNum < selectedCourse.min_limit) {
-      toast.error(`Minimum quantity is ${selectedCourse.min_limit}`);
+    const minLimit = Number(selectedCourse.minLimit || selectedCourse.min_limit || 0);
+    if (!quantity || qtyNum < minLimit) {
+      toast.error(`Minimum quantity is ${minLimit}`);
       return;
     }
     if ((profile?.balance || 0) < totalPrice) {
@@ -193,8 +195,8 @@ export default function Courses() {
     setSubmitting(true);
     try {
       // Check for duplicate link if required
-      if (selectedCourse.preventDuplicateLink) {
-        const isDuplicate = await dbClient.checkDuplicateOrder(user.id, selectedCourse.id, targetLink);
+      if (selectedCourse.prevent_duplicate_link) {
+        const isDuplicate = await dbClient.checkDuplicateOrder(user.uid, selectedCourse.id, targetLink);
         if (isDuplicate) {
           toast.error("Please wait 10 minutes before placing another order with the same link for this service.");
           setSubmitting(false);
@@ -206,129 +208,94 @@ export default function Courses() {
       const sendingToastId = toast.loading("Processing your service order instantly...");
 
       try {
-        // 2. Clear pre-existing order state and prepare new ID
+        // 2. Prepare random order ID on demand
         setLastOrder(null);
         const orderId = "ord_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
 
-        console.log(`[Instant Order] Creating order document ${orderId} in database...`);
-        await dbClient.createOrder(orderId, {
-          userId: user.id,
-          userEmail: user.email || "",
+        // 3. Trigger synchronous proxy transmit with skipStoreCompleted flag
+        console.log(`[API Proxy Submit] Sending order ${orderId} synchronously to panel`);
+        const response = await axios.post("/api/proxy-provider", {
+          orderId: orderId,
+          userId: user?.uid,
+          userEmail: user?.email || "",
           serviceId: selectedCourse.id,
           title: selectedCourse.title,
           category: selectedCourse.category || "Other",
           quantity: Number(quantity),
           targetLink: targetLink.trim(),
-          totalPrice: Number(totalPrice),
-          status: "Pending"
+          totalPrice: totalPrice,
+          isAsync: false,
+          skipStoreCompleted: true
         });
 
-        // 3. Register real-time snapshot observer to handle fast UI state update
-        let solved = false;
-        const unsubscribe = dbClient.observeOrder(orderId, async (data) => {
-          if (!data) return;
+        const pId = response.data?.providerOrderId || "SENT";
+        toast.dismiss(sendingToastId);
 
-          if (data.status === "Completed") {
-            solved = true;
-            unsubscribe();
-            toast.dismiss(sendingToastId);
-
-            const pId = data.provider_order_id || "SENT";
-            
-            // Increment statistics counters via quiet updates
-            try {
-              await dbClient.updateUserProfile(user.id, { last_ordered_at: new Date().toISOString() });
-            } catch (se) {
-              console.warn("[SYNC-ORDER] Secondary stats update failed:", se);
-            }
-
-            setLastOrder({
-              user_id: user.id,
-              user_email: user.email,
-              service_id: selectedCourse.id,
-              title: selectedCourse.title,
-              category: selectedCourse.category || "Other",
-              quantity: Number(quantity),
-              target_link: targetLink.trim(),
-              total_price: totalPrice,
-              status: "Completed",
-              provider_order_id: pId,
-              created_at: new Date().toISOString()
-            });
-
-            setIsOrderSuccessOpen(true);
-            toast.success(`Success! Order ID: ${pId}`);
-
-            setTargetLink("");
-            setQuantity(String(selectedCourse.minLimit));
-            setSubmitting(false);
-
-          } else if (data.status === "Failed") {
-            solved = true;
-            unsubscribe();
-            toast.dismiss(sendingToastId);
-
-            const dbErrorMsg = data.error || "Order dispatch rejected by provider";
-            toast.error(`Order Failed: ${dbErrorMsg}`, { duration: 10000 });
-
-            setLastOrder({
-              user_id: user.id,
-              user_email: user.email,
-              service_id: selectedCourse.id,
-              title: selectedCourse.title,
-              category: selectedCourse.category || "Other",
-              quantity: Number(quantity),
-              target_link: targetLink.trim(),
-              total_price: totalPrice,
-              status: "Failed",
-              error: dbErrorMsg,
-              created_at: new Date().toISOString()
-            });
-            setSubmitting(false);
-          }
-        });
-
-        // 4. Trigger un-awaited HTTP Proxy Transmit call with async flag
-        try {
-          console.log(`[API Proxy Submit] Alerting backend server to process order ${orderId} in the background`);
-          await axios.post("/api/proxy-provider", {
-            orderId: orderId,
-            user_id: user.id,
-            user_email: user.email || "",
-            service_id: selectedCourse.id,
-            title: selectedCourse.title,
-            category: selectedCourse.category || "Other",
-            quantity: Number(quantity),
-            target_link: targetLink.trim(),
-            total_price: totalPrice,
-            isAsync: true
-          });
-        } catch (proxyError: any) {
-          const failErr = (proxyError.response?.data ? formatErrorMessage(proxyError.response.data) : null) || formatErrorMessage(proxyError) || "";
-          
-          if (!solved) {
-            // Real bad request error (e.g. invalid course fields or server crash)
-            solved = true;
-            unsubscribe();
-            toast.dismiss(sendingToastId);
-            toast.error(`Order Placement Error: ${failErr || proxyError.message}`, { duration: 8000 });
-            setSubmitting(false);
-          }
+        // Deduct balance instantly in local UI state without any extra Firebase reads/writes
+        if (updateUserProfileLocal) {
+          const currentBal = Number(profile?.balance || 0);
+          updateUserProfileLocal({ balance: Math.max(0, currentBal - totalPrice) });
         }
 
-        // 5. Hard Timeout backup (30 seconds) to avoid freezing UI
-        setTimeout(() => {
-          if (!solved) {
-            unsubscribe();
-            toast.dismiss(sendingToastId);
-            toast.error("The background network queue is processing your request. Please check the Dashboard page in a moment for final outcome status.", { duration: 8000 });
-            setSubmitting(false);
+        // Increment statistics counters via quiet updates
+        try {
+          if (user?.uid) {
+            await dbClient.updateUserProfile(user.uid, { last_ordered_at: new Date().toISOString() });
           }
-        }, 30000);
+        } catch (se) {
+          console.warn("[SYNC-ORDER] Secondary stats update failed:", se);
+        }
 
-      } catch (outerError: any) {
+        const localOrder = {
+          userId: user?.uid,
+          userEmail: user?.email,
+          serviceId: selectedCourse.id,
+          title: selectedCourse.title,
+          category: selectedCourse.category || "Other",
+          quantity: Number(quantity),
+          targetLink: targetLink.trim(),
+          totalPrice: totalPrice,
+          status: "Completed",
+          providerOrderId: pId,
+          createdAt: new Date().toISOString()
+        };
+
+        // Cache order in localStorage so it appears in Dashboard/My Orders lists without Firebase reads
+        try {
+          const localOrdersKey = `local_orders_${user.uid}`;
+          const existingLocal = JSON.parse(localStorage.getItem(localOrdersKey) || "[]");
+          existingLocal.unshift(localOrder);
+          localStorage.setItem(localOrdersKey, JSON.stringify(existingLocal.slice(0, 50)));
+        } catch (localErr) {
+          console.warn("[LOCAL-CACHE-ERR] Failed to cache successfully transmitted order:", localErr);
+        }
+
+        setLastOrder(localOrder);
+        setIsOrderSuccessOpen(true);
+        toast.success(`Success! Order ID: ${pId}`);
+
+        setTargetLink("");
+        setQuantity(String(selectedCourse.minLimit || 1000));
+        setSubmitting(false);
+
+      } catch (proxyError: any) {
         toast.dismiss(sendingToastId);
-        toast.error(outerError?.message || "Failed to place order");
+        const failErr = (proxyError.response?.data?.error ? proxyError.response.data.error : null) || proxyError?.message || "Order dispatch rejected by provider";
+        toast.error(`Order Failed: ${failErr}`, { duration: 10000 });
+
+        setLastOrder({
+          userId: user?.uid,
+          userEmail: user?.email,
+          serviceId: selectedCourse.id,
+          title: selectedCourse.title,
+          category: selectedCourse.category || "Other",
+          quantity: Number(quantity),
+          targetLink: targetLink.trim(),
+          totalPrice: totalPrice,
+          status: "Failed",
+          error: failErr,
+          createdAt: new Date().toISOString()
+        });
         setSubmitting(false);
       }
     } catch (outerError: any) {
@@ -382,7 +349,7 @@ export default function Courses() {
         amount: Number(depositAmount),
         utr: cleanUtr,
         screenshotUrl: screenshotPreview,
-        userId: user.id,
+        userId: user.uid,
         userEmail: user.email
       });
 
@@ -410,7 +377,7 @@ export default function Courses() {
 
         const depositId = "dep_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
         await dbClient.submitManualDeposit(depositId, {
-          userId: user.id,
+          userId: user.uid,
           userEmail: user.email || "not-provided",
           amount: Number(depositAmount),
           utr: cleanUtr,
@@ -514,7 +481,7 @@ export default function Courses() {
                 <div className="absolute left-3.5 top-1/2 -translate-y-1/2">
                   <CategoryIcon 
                     category={selectedCategory} 
-                    iconUrl={courses.find(c => c.category === selectedCategory)?.iconUrl}
+                    iconUrl={courses.find(c => c.category === selectedCategory)?.iconUrl || courses.find(c => c.category === selectedCategory)?.icon_url}
                     className="w-5 h-5" 
                   />
                 </div>
@@ -546,7 +513,7 @@ export default function Courses() {
                       >
                         <CategoryIcon 
                         category={cat} 
-                        iconUrl={courses.find(c => c.category === cat)?.iconUrl}
+                        iconUrl={courses.find(c => c.category === cat)?.iconUrl || courses.find(c => c.category === cat)?.icon_url}
                         className="w-4 h-4" 
                       />
                         {cat}
@@ -569,21 +536,21 @@ export default function Courses() {
                 <div className="absolute left-3.5 top-1/2 -translate-y-1/2">
                   <CategoryIcon 
                     category={selectedCategory} 
-                    iconUrl={selectedCourse?.iconUrl || courses.find(c => c.category === selectedCategory)?.iconUrl}
+                    iconUrl={selectedCourse?.iconUrl || selectedCourse?.icon_url || courses.find(c => c.category === selectedCategory)?.iconUrl || courses.find(c => c.category === selectedCategory)?.icon_url}
                     className="w-5 h-5" 
                   />
                 </div>
                 <span className="font-semibold flex-1 leading-tight whitespace-normal break-words py-1 pr-1 flex items-center gap-1.5 flex-wrap">
                   {selectedCourse ? (
                     <>
-                      {selectedCourse.isPackage && (
+                      {(selectedCourse.isPackage || selectedCourse.is_package) && (
                         <Badge className="bg-primary/20 text-primary border-none text-[8px] h-3.5 px-1.5 font-bold uppercase shrink-0">
                           Package
                         </Badge>
                       )}
-                      {selectedCourse.isPackage 
+                      {(selectedCourse.isPackage || selectedCourse.is_package)
                         ? selectedCourse.title 
-                        : `${selectedCourse.title} - ₹${selectedCourse.pricePerThousand}/1k`
+                        : `${selectedCourse.title} - ₹${selectedCourse.price}/1k`
                       }
                     </>
                   ) : (
@@ -617,21 +584,21 @@ export default function Courses() {
                       >
                         <CategoryIcon 
                         category={selectedCategory} 
-                        iconUrl={service.iconUrl}
+                        iconUrl={service.iconUrl || service.icon_url}
                         className="w-4 h-4 shrink-0" 
                       />
                         <div className="min-w-0 pr-2 flex-1">
                           <p className="whitespace-normal leading-tight break-words flex items-center gap-1.5 flex-wrap">
                             {service.title}
-                            {service.isPackage && (
+                            {(service.isPackage || service.is_package) && (
                               <Badge className="bg-primary/15 text-primary border-none text-[8px] h-3.5 px-1 font-bold shrink-0">
                                 PKG
                               </Badge>
                             )}
                           </p>
-                          {!service.isPackage && (
+                          {!(service.isPackage || service.is_package) && (
                             <p className="text-[10px] text-gray-400 font-bold mt-0.5">
-                              ₹{service.pricePerThousand} per 1000
+                              ₹{service.price} per 1000
                             </p>
                           )}
                         </div>
@@ -718,26 +685,26 @@ export default function Courses() {
                 <span className="text-xs text-gray-500">Service ID</span>
                 <span className="text-xs font-bold">#{selectedCourse.id.slice(0, 8)}</span>
               </div>
-              {selectedCourse.isPackage ? (
+              {(selectedCourse.isPackage || selectedCourse.is_package) ? (
                 <>
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-gray-500">Package Quantity</span>
-                    <span className="text-xs font-bold text-primary">{selectedCourse.packageQuantity}</span>
+                    <span className="text-xs font-bold text-primary">{selectedCourse.packageQuantity || selectedCourse.package_quantity}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-gray-500">Package Offer Price</span>
-                    <span className="text-xs font-bold text-primary">₹{selectedCourse.packagePrice}</span>
+                    <span className="text-xs font-bold text-primary">₹{selectedCourse.packagePrice || selectedCourse.package_price}</span>
                   </div>
                 </>
               ) : (
                 <>
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-gray-500">Rate per 1000</span>
-                    <span className="text-xs font-bold text-primary">₹{selectedCourse.pricePerThousand}</span>
+                    <span className="text-xs font-bold text-primary">₹{selectedCourse.price}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-gray-500">Minimum Order</span>
-                    <span className="text-xs font-bold">{selectedCourse.minLimit}</span>
+                    <span className="text-xs font-bold">{selectedCourse.minLimit || selectedCourse.min_limit}</span>
                   </div>
                 </>
               )}

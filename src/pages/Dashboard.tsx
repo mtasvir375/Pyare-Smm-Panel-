@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 import axios from "axios";
 
 export default function Dashboard() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [checkingStatus, setCheckingStatus] = useState(false);
@@ -28,31 +28,56 @@ export default function Dashboard() {
     
     const fetchOrders = async () => {
       // 1. Check Session Storage Cache
-      const cacheKey = `orders_${user.id}`;
+      const cacheKey = `orders_${user.uid}`;
       const cachedData = sessionStorage.getItem(cacheKey);
       const cacheTime = sessionStorage.getItem(`${cacheKey}_time`);
       const now = Date.now();
 
+      let dbOrders: any[] = [];
+
       if (cachedData && cacheTime && (now - parseInt(cacheTime) < 5 * 60 * 1000)) { // 5 minutes cache
         console.log("[DASHBOARD] ✅ Using session cache for orders");
-        setOrders(JSON.parse(cachedData));
-        setLoading(false);
-        return;
+        dbOrders = JSON.parse(cachedData);
+      } else {
+        try {
+          dbOrders = await dbClient.getUserOrders(user.uid, renderLimit);
+          sessionStorage.setItem(cacheKey, JSON.stringify(dbOrders));
+          sessionStorage.setItem(`${cacheKey}_time`, now.toString());
+        } catch (error) {
+          console.error("Error fetching orders from DB:", error);
+        }
       }
 
+      // 2. Fetch locally cached completed orders from device memory
+      let localOrders: any[] = [];
       try {
-        const ordersData = await dbClient.getUserOrders(user.id, renderLimit);
-        if (!isMounted) return;
-        
-        // Update State and Cache
-        setOrders(ordersData);
-        sessionStorage.setItem(cacheKey, JSON.stringify(ordersData));
-        sessionStorage.setItem(`${cacheKey}_time`, now.toString());
-        
+        const localOrdersKey = `local_orders_${user.uid}`;
+        localOrders = JSON.parse(localStorage.getItem(localOrdersKey) || "[]");
+      } catch (e) {
+        console.warn("[DASHBOARD] Failed to read device-cached successful orders:", e);
+      }
+
+      // 3. Merge both collections and remove any duplicates by order ID
+      const mergedMap = new Map();
+      [...localOrders, ...dbOrders].forEach(order => {
+        if (order) {
+          const key = order.id || order.createdAt || Math.random().toString();
+          mergedMap.set(key, order);
+        }
+      });
+
+      const mergedOrders = Array.from(mergedMap.values());
+
+      // 4. Sort order history by creation date descending
+      mergedOrders.sort((a, b) => {
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return timeB - timeA;
+      });
+
+      if (isMounted) {
+        setOrders(mergedOrders.slice(0, 3));
         setLoading(false);
-      } catch (error) {
-        console.error("Error fetching orders:", error);
-        if (isMounted) setLoading(false);
       }
     };
     
@@ -79,8 +104,8 @@ export default function Dashboard() {
       for (const order of ordersToProcess) {
         const currentStatus = (order.status || '').toLowerCase();
         
-        // Only check status for orders that have a provider_order_id and are not in a final state
-        if (order.provider_order_id && !['completed', 'canceled', 'refunded', 'partial'].includes(currentStatus)) {
+        // Only check status for orders that have a providerOrderId and are not in a final state
+        if (order.providerOrderId && !['completed', 'canceled', 'refunded', 'partial'].includes(currentStatus)) {
           try {
             await axios.post("/api/sync-order-status", {
               orderId: order.id
@@ -102,6 +127,15 @@ export default function Dashboard() {
   useEffect(() => {
     // Component initialization logic only
   }, []);
+
+  if (authLoading) {
+    return (
+      <div className="w-full max-w-xl mx-auto py-20 flex flex-col items-center justify-center space-y-4">
+        <RefreshCw className="w-10 h-10 text-primary animate-spin" />
+        <p className="text-gray-500 font-medium">Loading your orders...</p>
+      </div>
+    );
+  }
 
   if (!user) {
     return (
@@ -217,19 +251,19 @@ export default function Dashboard() {
                   <div className="grid grid-cols-2 gap-4 text-[10px]">
                     <div className="space-y-1">
                       <p className="text-gray-400 uppercase font-bold">Order Details</p>
-                      <p className="font-medium">Qty: {order.quantity} | ₹{order.total_price}</p>
+                      <p className="font-medium">Qty: {order.quantity} | ₹{order.totalPrice || order.total_price}</p>
                     </div>
                     <div className="space-y-1 text-right">
                       <p className="text-gray-400 uppercase font-bold">Date & Time</p>
-                      <p className="font-medium">{new Date(order.created_at).toLocaleString()}</p>
+                      <p className="font-medium">{new Date(order.createdAt || order.created_at).toLocaleString()}</p>
                     </div>
                   </div>
 
                   <div className="p-2 bg-gray-50 rounded-lg border border-gray-100">
                     <p className="text-[9px] font-bold text-gray-400 uppercase mb-1">Target Link</p>
-                    <a href={order.target_link} target="_blank" rel="noreferrer" className="text-[10px] text-primary hover:underline break-all flex items-center gap-1">
+                    <a href={order.targetLink || order.target_link} target="_blank" rel="noreferrer" className="text-[10px] text-primary hover:underline break-all flex items-center gap-1">
                       <ExternalLink className="w-3 h-3" />
-                      {order.target_link}
+                      {order.targetLink || order.target_link}
                     </a>
                   </div>
 

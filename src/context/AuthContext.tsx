@@ -1,119 +1,112 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
-import { User, Session } from "@supabase/supabase-js";
-import { supabase } from "@/lib/supabaseClient";
-import { dbClient } from "@/lib/dbClient";
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { 
+  onAuthStateChanged, 
+  User as FirebaseUser,
+  signOut as firebaseSignOut
+} from 'firebase/auth';
+import { auth } from '@/lib/firebase';
+import { dbClient, UserProfile } from '@/lib/dbClient';
 
 interface AuthContextType {
-  user: User | null;
-  profile: any | null;
+  user: FirebaseUser | null;
+  userProfile: UserProfile | null;
   loading: boolean;
   isAdmin: boolean;
   isPaymentAdmin: boolean;
-  isInstructor: boolean;
   signOut: () => Promise<void>;
-  refreshProfile: () => Promise<void>;
+  updateUserProfileLocal?: (updatedFields: Partial<UserProfile>) => void;
 }
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
-  profile: null,
+  userProfile: null,
   loading: true,
   isAdmin: false,
   isPaymentAdmin: false,
-  isInstructor: false,
   signOut: async () => {},
-  refreshProfile: async () => {},
+  updateUserProfileLocal: () => {},
 });
 
 export const useAuth = () => useContext(AuthContext);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<any | null>(null);
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const signOut = async () => {
-    await supabase.auth.signOut();
-  };
-
-  const refreshProfile = async () => {
-    if (user) {
-      const p = await dbClient.getUserProfile(user.id);
-      if (p) setProfile(p);
-    }
-  };
-
   useEffect(() => {
-    // 1. Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      handleUserChange(session);
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      setUser(firebaseUser);
+      
+      if (firebaseUser) {
+        try {
+          // Fetch user profile from Firestore
+          let profile = await dbClient.getUserProfile(firebaseUser.uid);
+          
+          if (!profile) {
+            // Create profile if it doesn't exist
+            const newProfile: any = {
+              uid: firebaseUser.uid,
+              email: firebaseUser.email || '',
+              displayName: firebaseUser.displayName || 'User',
+              photoURL: firebaseUser.photoURL || '',
+              role: 'student', // Default role
+              balance: 0,
+            };
+            await dbClient.createUserProfile(firebaseUser.uid, newProfile);
+            profile = await dbClient.getUserProfile(firebaseUser.uid);
+          }
+          
+          setUserProfile(profile);
+        } catch (error) {
+          console.error("Error fetching/creating user profile:", error);
+        }
+      } else {
+        setUserProfile(null);
+      }
+      
+      setLoading(false);
     });
 
-    // 2. Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      handleUserChange(session);
-    });
-
-    return () => {
-      subscription.unsubscribe();
-    };
+    return () => unsubscribe();
   }, []);
 
-  const handleUserChange = async (session: Session | null) => {
-    const sbUser = session?.user || null;
-    setUser(sbUser);
-    
-    if (!sbUser) {
-      setProfile(null);
-      setLoading(false);
-      return;
-    }
-
+  const signOut = async () => {
     try {
-      // Fetch or create profile
-      let userProfile = await dbClient.getUserProfile(sbUser.id);
-      
-      if (!userProfile) {
-        // Create new profile if it doesn't exist
-        const role = sbUser.email === "mtasvir375@gmail.com" ? "admin" : "student";
-        userProfile = {
-          id: sbUser.id,
-          email: sbUser.email,
-          display_name: sbUser.user_metadata?.full_name || sbUser.email?.split('@')[0],
-          role: role,
-          balance: 0,
-        };
-        await dbClient.createUserProfile(sbUser.id, userProfile);
-      } else if (sbUser.email === "mtasvir375@gmail.com" && userProfile.role !== "admin") {
-        // Ensure main admin email always has admin role in database
-        await dbClient.updateUserProfile(sbUser.id, { role: "admin" });
-        userProfile.role = "admin";
-      }
-
-      setProfile(userProfile);
-
-      // Subscribe to profile updates
-      dbClient.observeUserProfile(sbUser.id, (data) => {
-        if (data) setProfile(data);
-      });
-
-    } catch (err) {
-      console.error("Supabase Auth profile init error:", err);
-    } finally {
-      setLoading(false);
+      console.log("[AUTH_CONTEXT] Clearing local state and signing out...");
+      setUserProfile(null);
+      setUser(null);
+      await firebaseSignOut(auth);
+      console.log("[AUTH_CONTEXT] Sign out successful.");
+    } catch (error) {
+      console.error("Error signing out:", error);
+      throw error;
     }
   };
 
-  const value = React.useMemo(() => ({
-    user,
-    profile,
-    loading,
-    isAdmin: profile?.role === "admin" || user?.email === "mtasvir375@gmail.com",
-    isPaymentAdmin: profile?.role === "payment_admin",
-    isInstructor: profile?.role === "instructor" || profile?.role === "admin" || user?.email === "mtasvir375@gmail.com",
-    signOut,
-    refreshProfile
-  }), [user, profile, loading]);
+  const updateUserProfileLocal = (updatedFields: Partial<UserProfile>) => {
+    setUserProfile((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        ...updatedFields,
+      };
+    });
+  };
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  const value = {
+    user,
+    userProfile,
+    loading,
+    isAdmin: userProfile?.role === 'admin' || user?.email === 'mtasvir375@gmail.com',
+    isPaymentAdmin: userProfile?.role === 'payment_admin' || user?.email === 'mtasvir375@gmail.com' || user?.email === 'mdsaudalam621@gmail.com',
+    signOut,
+    updateUserProfileLocal
+  };
+
+  return (
+    <AuthContext.Provider value={value}>
+      {!loading && children}
+    </AuthContext.Provider>
+  );
 };

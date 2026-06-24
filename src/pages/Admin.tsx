@@ -36,7 +36,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { dbClient } from "@/lib/dbClient";
-import { supabase } from "@/lib/supabaseClient";
+import { where, limit, orderBy } from "firebase/firestore";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -53,7 +53,7 @@ import {
 } from "@/components/ui/dialog";
 
 export default function Admin() {
-  const { user, isAdmin, isPaymentAdmin, loading: authLoading } = useAuth();
+  const { user, userProfile: profile, isAdmin, isPaymentAdmin, loading: authLoading } = useAuth() as any;
   const navigate = useNavigate();
   const [courses, setCourses] = useState<any[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
@@ -62,14 +62,17 @@ export default function Admin() {
   const [totalUserCount, setTotalUserCount] = useState<number>(0);
   const [totalOrdersCount, setTotalOrdersCount] = useState<number>(0);
   const [withdrawals, setWithdrawals] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [activeTab, setActiveTab] = useState(isPaymentAdmin && !isAdmin ? "deposits" : "courses");
   const [fetchedTabs, setFetchedTabs] = useState<Set<string>>(new Set());
+  const [courseSearch, setCourseSearch] = useState("");
+  const [courseCategoryFilter, setCourseCategoryFilter] = useState("All");
+  const [totalActiveServices, setTotalActiveServices] = useState<number>(0);
 
   const handleSyncStats = async () => {
-    if (!user || isSyncing) return;
+    if (!user?.uid || isSyncing) return;
 
     // QUOTA GUARD: Cooldown to prevent spamming server counts
     const lastSync = localStorage.getItem('last_admin_sync');
@@ -91,7 +94,7 @@ export default function Admin() {
       await dbClient.saveDoc("stats", "counters", { 
         totalUsers: uCount, 
         totalOrders: oCount,
-        updated_at: new Date().toISOString()
+        updatedAt: new Date().toISOString()
       });
 
       setTotalUserCount(uCount);
@@ -127,7 +130,15 @@ export default function Admin() {
   const [razorpayEnabled, setRazorpayEnabled] = useState(false);
   const [razorpayKeyId, setRazorpayKeyId] = useState("");
   const [razorpayKeySecret, setRazorpayKeySecret] = useState("");
-  const [autoApproveDeposits, setAutoApproveDeposits] = useState(false);
+  const [phonepeEnabled, setPhonepeEnabled] = useState(false);
+  const [phonepeMerchantId, setPhonepeMerchantId] = useState("");
+  const [phonepeSaltKey, setPhonepeSaltKey] = useState("");
+  const [phonepeSaltIndex, setPhonepeSaltIndex] = useState("1");
+  const [phonepeEnv, setPhonepeEnv] = useState("sandbox");
+  const [paytmEnabled, setPaytmEnabled] = useState(false);
+  const [paytmMid, setPaytmMid] = useState("");
+  const [paytmMerchantKey, setPaytmMerchantKey] = useState("");
+  const [paytmEnv, setPaytmEnv] = useState("sandbox");
   const [providers, setProviders] = useState<any[]>([]);
   const [newProviderName, setNewProviderName] = useState("");
   const [newProviderApiUrl, setNewProviderApiUrl] = useState("");
@@ -163,16 +174,13 @@ export default function Admin() {
     try {
       let updatedCount = 0;
       // Filter strictly for tasks that need check
-      const { data: ordersToProcess, error } = await supabase
-        .from("orders")
-        .select("*")
-        .in("status", ["processing", "pending", "in progress"])
-        .limit(5);
-      
-      if (error) throw error;
+      const ordersToProcess = await dbClient.getDocs("orders", [
+        where("status", "in", ["processing", "pending", "in progress"]),
+        limit(5)
+      ]);
 
       for (const order of ordersToProcess || []) {
-        if (order.provider_order_id) {
+        if (order.providerOrderId || order.provider_order_id) {
           try {
             // Use the optimized sync endpoint
             const response = await axios.post("/api/sync-order-status", {
@@ -213,9 +221,34 @@ export default function Admin() {
     if (!force && fetchedTabs.has(tab)) return;
 
     setIsRefreshing(true);
+    setLoading(true);
     try {
       if (tab === "courses") {
-        const coursesList = await dbClient.getCourses();
+        try {
+          const count = await dbClient.getTableCount("courses");
+          setTotalActiveServices(count);
+        } catch (cErr) {
+          console.error("Error getting courses count:", cErr);
+        }
+
+        const constraints: any[] = [];
+        if (courseCategoryFilter && courseCategoryFilter !== "All") {
+          constraints.push(where("category", "==", courseCategoryFilter));
+        }
+        constraints.push(orderBy("createdAt", "desc"));
+        constraints.push(limit(40)); // Strict limit to prevent reading 7,000+ courses
+
+        let coursesList = await dbClient.getDocs("courses", constraints);
+
+        if (courseSearch.trim()) {
+          const sTerm = courseSearch.toLowerCase();
+          coursesList = coursesList.filter((c: any) => 
+            (c.title || "").toLowerCase().includes(sTerm) || 
+            (c.category || "").toLowerCase().includes(sTerm) ||
+            (c.id || "").toLowerCase().includes(sTerm)
+          );
+        }
+
         setCourses(coursesList);
         const providersList = await dbClient.getProviders();
         setProviders(providersList);
@@ -233,20 +266,28 @@ export default function Admin() {
       } else if (tab === "settings" && isAdmin) {
         const settingsData = await dbClient.getDoc("settings", "payment");
         if (settingsData) {
-          setQrUrl(settingsData.payment_qr_url || "");
-          setUpiId(settingsData.upi_id || "");
-          setMerchantName(settingsData.merchant_name || "");
-          setProviderApiUrl(settingsData.provider_api_url || "");
-          setProviderApiKey(settingsData.provider_api_key || "");
-          setWhatsappLink(settingsData.whatsapp_link || "");
-          setWhatsappChatNumber(settingsData.whatsapp_chat_number || "");
-          setGuideVideoUrl(settingsData.guide_video_url || "");
-          setRazorpayEnabled(settingsData.razorpay_enabled || false);
-          setRazorpayKeyId(settingsData.razorpay_key_id || "");
-          setRazorpayKeySecret(settingsData.razorpay_key_secret || "");
-          setAutoApproveDeposits(settingsData.auto_approve_deposits || false);
+          setQrUrl(settingsData.paymentQrUrl || "");
+          setUpiId(settingsData.upiId || "");
+          setMerchantName(settingsData.merchantName || "");
+          setProviderApiUrl(settingsData.providerApiUrl || "");
+          setProviderApiKey(settingsData.providerApiKey || "");
+          setWhatsappLink(settingsData.whatsappLink || "");
+          setWhatsappChatNumber(settingsData.whatsappChatNumber || "");
+          setGuideVideoUrl(settingsData.guideVideoUrl || "");
+          setRazorpayEnabled(settingsData.razorpayEnabled || false);
+          setRazorpayKeyId(settingsData.razorpayKeyId || "");
+          setRazorpayKeySecret(settingsData.razorpayKeySecret || "");
+          setPhonepeEnabled(settingsData.phonepeEnabled || false);
+          setPhonepeMerchantId(settingsData.phonepeMerchantId || "");
+          setPhonepeSaltKey(settingsData.phonepeSaltKey || "");
+          setPhonepeSaltIndex(settingsData.phonepeSaltIndex || "1");
+          setPhonepeEnv(settingsData.phonepeEnv || "sandbox");
+          setPaytmEnabled(settingsData.paytmEnabled || false);
+          setPaytmMid(settingsData.paytmMid || "");
+          setPaytmMerchantKey(settingsData.paytmMerchantKey || "");
+          setPaytmEnv(settingsData.paytmEnv || "sandbox");
           
-          const savedBackendUrl = settingsData.backend_api_url || "";
+          const savedBackendUrl = settingsData.backendApiUrl || "";
           const activeBackendUrl = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
           if (!savedBackendUrl || savedBackendUrl.includes("ais-dev-")) {
             setBackendApiUrl(activeBackendUrl);
@@ -280,15 +321,34 @@ export default function Admin() {
     }
   }, [user, isAdmin, isPaymentAdmin, authLoading]);
 
-  useEffect(() => {
-    if (!authLoading && user && (isAdmin || isPaymentAdmin)) {
-      // Avoid re-fetching the same tab unless it's the first time
-      if (!fetchedTabs.has(activeTab)) {
-        console.log(`[QUOTA] Initial load for tab: ${activeTab}`);
-        fetchTabData(activeTab);
-      }
-    }
-  }, [user?.id, isAdmin, isPaymentAdmin, authLoading, activeTab]);
+  // Automatic data fetching has been disabled to protect Firebase Read limits.
+  // The admin must manually click 'Load Data' on each tab to fetch data on-demand.
+  const renderTabPlaceholder = (tabName: string, label: string) => {
+    return (
+      <div className="flex justify-center items-center py-12 px-4">
+        <Card className="border border-dashed border-gray-200 bg-gray-50/50 rounded-2xl p-8 text-center max-w-md w-full shadow-sm">
+          <CardContent className="space-y-4 pt-6">
+            <div className="mx-auto w-12 h-12 bg-amber-50 rounded-full flex items-center justify-center text-amber-500 mb-2">
+              <AlertCircle className="w-6 h-6" />
+            </div>
+            <h3 className="text-base font-bold text-gray-800">डेटा सुरक्षित मोड (Data Safe Mode)</h3>
+            <p className="text-xs text-gray-500 leading-relaxed">
+              आपका Firebase रीड्स (Reads) कोटा बचाने के लिए {label} डेटा ऑटोमैटिक लोड नहीं किया गया है। 
+              जब आपको ज़रूरत हो, तभी नीचे दिए बटन पर क्लिक करके लोड करें।
+            </p>
+            <Button 
+              onClick={() => fetchTabData(tabName, true)}
+              disabled={isRefreshing}
+              className="w-full bg-primary hover:bg-primary/90 text-white rounded-xl py-2 font-medium text-xs flex items-center justify-center gap-2 mt-4"
+            >
+              <RefreshCw className={cn("w-4 h-4", isRefreshing && "animate-spin")} />
+              डेटा लोड करें (Load {label})
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  };
 
   useEffect(() => {
     // We removed auto-sync on mount to save significant Read/Write quota.
@@ -367,19 +427,28 @@ export default function Admin() {
       }
 
       await dbClient.saveDoc("settings", "payment", {
-        payment_qr_url: base64,
-        upi_id: upiId.trim(),
-        merchant_name: merchantName.trim(),
-        provider_api_url: cleanUrl,
-        provider_api_key: cleanKey,
-        backend_api_url: cleanBackend,
-        whatsapp_link: whatsappLink.trim(),
-        whatsapp_chat_number: whatsappChatNumber.trim(),
-        guide_video_url: guideVideoUrl.trim(),
-        razorpay_enabled: razorpayEnabled,
-        razorpay_key_id: razorpayKeyId.trim(),
-        razorpay_key_secret: razorpayKeySecret.trim(),
-        auto_approve_deposits: autoApproveDeposits,
+        paymentQrUrl: base64,
+        upiId: upiId.trim(),
+        merchantName: merchantName.trim(),
+        providerApiUrl: cleanUrl,
+        providerApiKey: cleanKey,
+        backendApiUrl: cleanBackend,
+        whatsappLink: whatsappLink.trim(),
+        whatsappChatNumber: whatsappChatNumber.trim(),
+        guideVideoUrl: guideVideoUrl.trim(),
+        razorpayEnabled: razorpayEnabled,
+        razorpayKeyId: razorpayKeyId.trim(),
+        razorpayKeySecret: razorpayKeySecret.trim(),
+        phonepeEnabled: phonepeEnabled,
+        phonepeMerchantId: phonepeMerchantId.trim(),
+        phonepeSaltKey: phonepeSaltKey.trim(),
+        phonepeSaltIndex: phonepeSaltIndex.trim(),
+        phonepeEnv: phonepeEnv,
+        paytmEnabled: paytmEnabled,
+        paytmMid: paytmMid.trim(),
+        paytmMerchantKey: paytmMerchantKey.trim(),
+        paytmEnv: paytmEnv,
+        updatedAt: new Date().toISOString()
       });
       setQrUrl(base64);
       setProviderApiUrl(cleanUrl);
@@ -388,8 +457,8 @@ export default function Admin() {
       setQrFile(null);
       import("@/lib/cache").then(mod => mod.clearCache());
       toast.success("Global Settings updated!");
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, "settings/payment");
+    } catch (error: any) {
+      toast.error(`Error saving settings: ${error.message}`);
     } finally {
       setSavingQr(false);
     }
@@ -411,23 +480,18 @@ export default function Admin() {
     try {
       if (!userSearch) {
         // Simple query for latest users
-        const { data: recentUsers, error } = await supabase
-          .from("users")
-          .select("*")
-          .order("created_at", { ascending: false })
-          .limit(15);
-        
-        if (error) throw error;
+        const recentUsers = await dbClient.getDocs("users", [
+          orderBy("createdAt", "desc"),
+          limit(15)
+        ]);
         setAllUsers(recentUsers || []);
       } else {
         const searchTerm = userSearch.toLowerCase().trim();
-        const { data: searchResults, error } = await supabase
-          .from("users")
-          .select("*")
-          .or(`email.ilike.%${searchTerm}%,display_name.ilike.%${searchTerm}%`)
-          .limit(20);
-
-        if (error) throw error;
+        const searchResults = await dbClient.getDocs("users", [
+          where("email", ">=", searchTerm),
+          where("email", "<=", searchTerm + "\uf8ff"),
+          limit(20)
+        ]);
         if (searchResults && searchResults.length === 0) {
           toast.error("No users found matching that term");
         } else if (searchResults) {
@@ -449,18 +513,19 @@ export default function Admin() {
 
     try {
       if (status === 'cancelled') {
-        const userProfile = await dbClient.getUserProfile(order.user_id);
+        const uId = order.userId || order.user_id;
+        const userProfile = await dbClient.getUserProfile(uId);
         if (userProfile) {
           const currentBalance = Number(userProfile.balance) || 0;
-          await dbClient.updateUserProfile(order.user_id, {
-            balance: currentBalance + Number(order.total_price)
+          await dbClient.updateUserProfile(uId, {
+            balance: currentBalance + Number(order.totalPrice || order.total_price)
           });
         }
       }
 
       await dbClient.updateDoc("orders", order.id, { 
         status, 
-        updated_at: new Date().toISOString() 
+        updatedAt: new Date().toISOString() 
       });
       setOrders(prev => prev.filter(o => o.id !== order.id));
       toast.success(`Order ${status}!`);
@@ -518,8 +583,8 @@ export default function Admin() {
       try {
         const response = await axios.post("/api/proxy-provider", {
           orderId: order.id,
-          courseId: order.service_id,
-          targetLink: order.target_link,
+          courseId: order.serviceId || order.service_id,
+          targetLink: order.targetLink || order.target_link,
           quantity: order.quantity
         });
 
@@ -540,9 +605,10 @@ export default function Admin() {
         console.log("[ADMIN-RETRY] Proxy request blocked. Attempting direct CORS-friendly admin retry...");
         
         // 1. Fetch Course details
-        const c = await dbClient.getDoc("services", order.service_id);
+        const sId = order.serviceId || order.service_id;
+        const c = await dbClient.getDoc("courses", sId);
         if (!c) {
-          throw new Error(`Service configuration with ID "${order.service_id}" does not exist in the database.`);
+          throw new Error(`Service configuration with ID "${sId}" does not exist in the database.`);
         }
 
         // 2. Fetch Settings
@@ -568,7 +634,7 @@ export default function Admin() {
         params.append("key", pKey);
         params.append("action", "add");
         params.append("service", String(c.providerServiceId).trim());
-        params.append("link", String(order.target_link).trim());
+        params.append("link", String(order.targetLink || order.target_link).trim());
         params.append("quantity", String(order.quantity).trim());
 
         let directRes;
@@ -609,11 +675,11 @@ export default function Admin() {
           orderProcessed = true;
           
       await dbClient.updateDoc("orders", order.id, {
-        provider_order_id: pId,
+        providerOrderId: pId,
         status: "Completed",
         error: null,
-        provider_raw_response: JSON.stringify(resData).substring(0, 800),
-        updated_at: new Date().toISOString()
+        providerRawResponse: JSON.stringify(resData).substring(0, 800),
+        updatedAt: new Date().toISOString()
       });
         } else {
           // Put the order into wait-queue for background listener to re-process securely
@@ -623,7 +689,7 @@ export default function Admin() {
             providerTransmissionStatus: "pending",
             providerOrderId: null,
             error: null,
-            updatedAt: serverTimestamp()
+            updatedAt: new Date().toISOString()
           });
           
           // Show successful fallback retry queue toast
@@ -633,11 +699,11 @@ export default function Admin() {
       }
 
       if (orderProcessed) {
-        await updateDoc(doc(db, "orders", order.id), {
+        await dbClient.updateDoc("orders", order.id, {
           providerOrderId: pId,
           status: "Completed",
           error: null,
-          updatedAt: serverTimestamp()
+          updated_at: new Date().toISOString()
         });
         toast.dismiss();
         toast.success(`Order successfully sent to provider! ID: ${pId}`);
@@ -653,10 +719,10 @@ export default function Admin() {
       }
       
       try {
-        await updateDoc(doc(db, "orders", order.id), {
+        await dbClient.updateDoc("orders", order.id, {
           error: errorMessage,
           providerRawResponse: rawRes,
-          updatedAt: serverTimestamp()
+          updatedAt: new Date().toISOString()
         });
       } catch (err) {}
       
@@ -670,46 +736,35 @@ export default function Admin() {
 
     try {
       if (status === 'approved') {
-        await runTransaction(db, async (transaction) => {
-          const depositRef = doc(db, "deposits", deposit.id);
-          const depositDoc = await transaction.get(depositRef);
-          
-          if (!depositDoc.exists()) throw new Error("Deposit not found");
-          const depositData = depositDoc.data();
-          if (depositData.status !== 'pending') throw new Error("Deposit already processed");
+        const uId = deposit.userId || deposit.user_id;
+        const depositAmount = Number(deposit.amount);
 
-          const userRef = doc(db, "users", deposit.userId);
-          const userDoc = await transaction.get(userRef);
-          if (!userDoc.exists()) throw new Error("User not found");
+        // Fetch current user profile first
+        const userProfile = await dbClient.getUserProfile(uId);
+        if (!userProfile) throw new Error("User not found");
 
-          const currentBalance = userDoc.data().balance || 0;
-          transaction.update(userRef, { 
-            balance: currentBalance + deposit.amount,
-            updatedAt: serverTimestamp() // Add timestamp for safety
-          });
+        const newBalance = Number(userProfile.balance || 0) + depositAmount;
 
-          transaction.update(depositRef, { 
-            status: 'approved', 
-            updatedAt: serverTimestamp(),
-            processedBy: user?.email // Track who approved
-          });
+        // Perform updates (sequentially is okay here for simplicity in admin panel)
+        await dbClient.updateUserProfile(uId, { balance: newBalance });
+        await dbClient.updateDoc("deposits", deposit.id, {
+          status: 'approved',
+          updatedAt: new Date().toISOString(),
+          processedBy: user?.email
         });
       } else {
         await dbClient.updateDoc("deposits", deposit.id, { 
           status: 'cancelled',
-          updatedAt: serverTimestamp(),
+          updatedAt: new Date().toISOString(),
           processedBy: user?.email
         });
       }
 
-      // DO NOT RE-FETCH LIST. Just remove from current state local state.
-      // This saves another batch of reads.
       setDeposits(prev => prev.filter(d => d.id !== deposit.id));
       toast.success(`Deposit ${status}!`);
     } catch (error: any) {
       console.error("Deposit Error:", error);
       toast.error(`Error: ${error.message}`);
-      handleFirestoreError(error, OperationType.UPDATE, `deposits/${deposit.id}`);
     } finally {
       setProcessingActions(prev => {
         const next = new Set(prev);
@@ -732,7 +787,6 @@ export default function Admin() {
       setNewBalance("");
     } catch (error: any) {
       toast.error(`Error updating user: ${error.message}`);
-      handleFirestoreError(error, OperationType.UPDATE, `users/${editingUser.id}`);
     }
   };
 
@@ -749,15 +803,15 @@ export default function Admin() {
         name: newProviderName.trim(),
         apiUrl: cleanUrl,
         apiKey: cleanKey,
-        createdAt: serverTimestamp()
+        createdAt: new Date().toISOString()
       });
       toast.success("Provider added successfully!");
       setNewProviderName("");
       setNewProviderApiUrl("");
       setNewProviderApiKey("");
       fetchTabData(activeTab, true);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, "providers");
+    } catch (error: any) {
+      toast.error(`Error adding provider: ${error.message}`);
     }
   };
 
@@ -767,8 +821,8 @@ export default function Admin() {
       await dbClient.deleteDoc("providers", providerToDelete.id);
       toast.success("Provider deleted!");
       fetchTabData(activeTab, true);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `providers/${providerToDelete.id}`);
+    } catch (error: any) {
+      toast.error(`Error deleting provider: ${error.message}`);
     } finally {
       setProviderToDelete(null);
     }
@@ -818,25 +872,25 @@ export default function Admin() {
         ? Number(((pkgPrice / pkgQty) * 1000).toFixed(4)) 
         : Number(newCoursePrice);
 
-      await dbClient.saveDoc("services", {
+      await dbClient.addDoc("courses", {
         title: newCourseTitle,
         category: newCourseCategory,
-        price: computedPricePerThousand,
-        min_limit: newCourseIsPackage ? pkgQty : Number(newCourseMinLimit),
-        service_type: newCourseType,
-        provider_id: newCourseProviderId,
-        provider_service_id: newCourseProviderServiceId,
-        prevent_duplicate_link: preventDuplicateLink,
-        icon_url: newCourseIcon || null,
+        pricePerThousand: computedPricePerThousand,
+        minLimit: newCourseIsPackage ? pkgQty : Number(newCourseMinLimit),
+        serviceType: newCourseType,
+        providerId: newCourseProviderId,
+        providerServiceId: newCourseProviderServiceId,
+        preventDuplicateLink: preventDuplicateLink,
+        iconUrl: newCourseIcon || null,
         status: "published",
         description: newCourseIsPackage 
           ? `Offer Price: ₹${newCoursePackagePrice} for ${newCoursePackageQuantity} fixed quantity` 
           : `High quality ${newCourseType} service`,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        is_package: newCourseIsPackage,
-        package_price: newCourseIsPackage ? pkgPrice : null,
-        package_quantity: newCourseIsPackage ? pkgQty : null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        isPackage: newCourseIsPackage,
+        packagePrice: newCourseIsPackage ? pkgPrice : null,
+        packageQuantity: newCourseIsPackage ? pkgQty : null,
       });
       import("@/lib/cache").then(mod => mod.clearCache());
       toast.success("Service added successfully!");
@@ -849,8 +903,8 @@ export default function Admin() {
       setNewCourseIsPackage(false);
       setNewCoursePackagePrice("");
       setNewCoursePackageQuantity("1000");
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, "courses");
+    } catch (error: any) {
+      toast.error(`Error adding course: ${error.message}`);
     }
   };
 
@@ -870,16 +924,16 @@ export default function Admin() {
   const startEditCourse = (course: any) => {
     setEditingCourse(course);
     setEditTitle(course.title);
-    setEditPrice(String(course.pricePerThousand || ""));
-    setEditMinLimit(String(course.minLimit || ""));
-    setEditProviderId(course.providerId || "");
-    setEditServiceId(course.providerServiceId || "");
+    setEditPrice(String(course.pricePerThousand || course.price || ""));
+    setEditMinLimit(String(course.minLimit || course.min_limit || ""));
+    setEditProviderId(course.providerId || course.provider_id || "");
+    setEditServiceId(course.providerServiceId || course.provider_service_id || "");
     setEditCategory(course.category || "Other");
-    setEditType(course.serviceType || "likes");
-    setEditPreventDuplicate(!!course.preventDuplicateLink);
-    setEditIsPackage(!!course.isPackage);
-    setEditPackagePrice(course.packagePrice ? String(course.packagePrice) : "");
-    setEditPackageQuantity(course.packageQuantity ? String(course.packageQuantity) : "");
+    setEditType(course.serviceType || course.service_type || "likes");
+    setEditPreventDuplicate(!!(course.preventDuplicateLink || course.prevent_duplicate_link));
+    setEditIsPackage(!!(course.isPackage || course.is_package));
+    setEditPackagePrice(course.packagePrice ? String(course.packagePrice) : (course.package_price ? String(course.package_price) : ""));
+    setEditPackageQuantity(course.packageQuantity ? String(course.packageQuantity) : (course.package_quantity ? String(course.package_quantity) : ""));
   };
 
   const handleUpdateCourse = async () => {
@@ -891,53 +945,53 @@ export default function Admin() {
         ? Number(((pkgPrice / pkgQty) * 1000).toFixed(4)) 
         : Number(editPrice);
 
-      await dbClient.updateDoc("services", editingCourse.id, {
+      await dbClient.updateDoc("courses", editingCourse.id, {
         title: editTitle,
-        price: computedPricePerThousand,
-        min_limit: editIsPackage ? pkgQty : Number(editMinLimit),
-        provider_id: editProviderId,
-        provider_service_id: editServiceId,
+        pricePerThousand: computedPricePerThousand,
+        minLimit: editIsPackage ? pkgQty : Number(editMinLimit),
+        providerId: editProviderId,
+        providerServiceId: editServiceId,
         category: editCategory,
-        service_type: editType,
-        prevent_duplicate_link: editPreventDuplicate,
-        is_package: editIsPackage,
-        package_price: editIsPackage ? pkgPrice : null,
-        package_quantity: editIsPackage ? pkgQty : null,
-        updated_at: new Date().toISOString()
+        serviceType: editType,
+        preventDuplicateLink: editPreventDuplicate,
+        isPackage: editIsPackage,
+        packagePrice: editIsPackage ? pkgPrice : null,
+        packageQuantity: editIsPackage ? pkgQty : null,
+        updatedAt: new Date().toISOString()
       });
       import("@/lib/cache").then(mod => mod.clearCache());
       toast.success("Service updated successfully!");
       setEditingCourse(null);
       fetchTabData(activeTab, true);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `courses/${editingCourse.id}`);
+    } catch (error: any) {
+      toast.error(`Error updating course: ${error.message}`);
     }
   };
 
   const handleDeleteCourse = async (courseId: string) => {
     if (!window.confirm("Are you sure you want to delete this service?")) return;
     try {
-      await dbClient.deleteDoc("services", courseId);
+      await dbClient.deleteDoc("courses", courseId);
       toast.success("Service deleted!");
       fetchTabData(activeTab, true);
       import("@/lib/cache").then(mod => mod.clearCache());
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `courses/${courseId}`);
+    } catch (error: any) {
+      toast.error(`Error deleting course: ${error.message}`);
     }
   };
 
-  if (authLoading && !isAdmin && !isPaymentAdmin) {
+  if (authLoading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh] bg-gray-50/50 rounded-3xl">
         <div className="flex flex-col items-center gap-4">
-          <RefreshCw className="w-10 h-10 text-primary animate-spin opacity-20" />
+          <RefreshCw className="w-10 h-10 text-primary animate-spin opacity-40" />
           <p className="text-gray-400 font-bold text-sm uppercase tracking-widest animate-pulse">Verifying Access</p>
         </div>
       </div>
     );
   }
 
-  if (!authLoading && !isAdmin && !isPaymentAdmin) {
+  if (!user || (!isAdmin && !isPaymentAdmin)) {
     return null; // Will be handled by the redirect useEffect
   }
 
@@ -949,15 +1003,6 @@ export default function Admin() {
           <p className="text-sm text-gray-500">Manage your services and orders</p>
         </div>
         <div className="flex gap-2">
-          <Button 
-            onClick={handleSyncStats} 
-            disabled={isSyncing}
-            variant="outline"
-            className="gap-2 shrink-0 bg-white border-primary/20 text-primary hover:bg-primary/5"
-          >
-            <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
-            Sync Counts
-          </Button>
           <Button 
             onClick={() => fetchTabData(activeTab, true)} 
             disabled={isRefreshing}
@@ -979,9 +1024,6 @@ export default function Admin() {
           {(!isPaymentAdmin || isAdmin) && (
             <TabsTrigger value="courses" className="rounded-xl px-6">Services</TabsTrigger>
           )}
-          {isAdmin && (
-            <TabsTrigger value="orders" className="rounded-xl px-6">Orders</TabsTrigger>
-          )}
           {(isAdmin || isPaymentAdmin) && (
             <>
               <TabsTrigger value="deposits" className="rounded-xl px-6">Deposits</TabsTrigger>
@@ -997,22 +1039,66 @@ export default function Admin() {
         </TabsList>
 
         <TabsContent value="courses" className="space-y-8">
-          <div className="grid gap-4 md:grid-cols-1">
+          {!fetchedTabs.has("courses") ? (
+            renderTabPlaceholder("courses", "Services")
+          ) : (
+            <>
+              <div className="grid gap-4 md:grid-cols-1">
             <Card className="border-none shadow-sm bg-purple-50">
               <CardContent className="p-6 flex items-center gap-4">
                 <div className="p-3 bg-purple-500 rounded-2xl">
                   <BarChart3 className="w-6 h-6 text-white" />
                 </div>
                 <div>
-                  <p className="text-sm text-purple-600 font-medium">Active Services</p>
-                  <h3 className="text-2xl font-bold text-purple-900">{courses.length}</h3>
+                  <p className="text-sm text-purple-600 font-medium">Active Services (कुल सर्विसेज)</p>
+                  <h3 className="text-2xl font-bold text-purple-900">{totalActiveServices || courses.length}</h3>
                 </div>
               </CardContent>
             </Card>
           </div>
 
           <div className="space-y-4">
-            <h2 className="text-lg font-bold">Manage Services</h2>
+            <div className="flex flex-col md:flex-row gap-3 items-start md:items-center justify-between pb-2 border-b border-gray-100">
+              <div>
+                <h2 className="text-lg font-bold">Manage Services</h2>
+                <p className="text-xs text-gray-500 mt-0.5">कोटा बचाने के लिए शुरुआत में सिर्फ 30 सेवाएं लोड की गई हैं। अन्य ढूँढ़ने के लिए नीचे सर्च या फ़िल्टर करें।</p>
+              </div>
+              <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto items-center">
+                <div className="relative w-full sm:w-64">
+                  <Input 
+                    type="text" 
+                    placeholder="सर्च करें (जैसे: Instagram Likes, ID)..." 
+                    className="pl-8 bg-white border-gray-200 text-xs h-9 rounded-xl focus-visible:ring-primary focus-visible:ring-offset-0"
+                    value={courseSearch}
+                    onChange={(e) => setCourseSearch(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && fetchTabData("courses", true)}
+                  />
+                  <Search className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-3" />
+                </div>
+                <select 
+                  className="w-full sm:w-40 h-9 rounded-xl border border-gray-200 bg-white text-xs px-2.5 focus:outline-none focus:ring-1 focus:ring-primary"
+                  value={courseCategoryFilter}
+                  onChange={(e) => setCourseCategoryFilter(e.target.value)}
+                >
+                  <option value="All">All Categories</option>
+                  <option value="Instagram">Instagram</option>
+                  <option value="Facebook">Facebook</option>
+                  <option value="YouTube">YouTube</option>
+                  <option value="Telegram">Telegram</option>
+                  <option value="Twitter">Twitter</option>
+                  <option value="TikTok">TikTok</option>
+                  <option value="Other">Other</option>
+                </select>
+                <Button 
+                  className="w-full sm:w-auto h-9 px-4 rounded-xl text-xs flex items-center gap-1 bg-gray-900 text-white hover:bg-gray-800 border-none shadow-sm"
+                  onClick={() => fetchTabData("courses", true)}
+                  disabled={isRefreshing}
+                >
+                  <RefreshCw className={cn("w-3 h-3", isRefreshing && "animate-spin")} />
+                  Search
+                </Button>
+              </div>
+            </div>
             <div className="space-y-3">
               {loading ? (
                 <p className="text-gray-500 italic">Loading services...</p>
@@ -1024,14 +1110,14 @@ export default function Admin() {
                         <div className="w-10 h-10 bg-gray-50 rounded-xl flex items-center justify-center">
                           <CategoryIcon 
                             category={course.category} 
-                            iconUrl={course.iconUrl}
+                            iconUrl={course.iconUrl || course.icon_url}
                             className="w-5 h-5" 
                           />
                         </div>
                         <div>
                           <h3 className="font-bold text-sm leading-tight whitespace-normal flex items-center gap-1.5 flex-wrap">
                             {course.title}
-                            {course.isPackage && (
+                            {(course.isPackage || course.is_package) && (
                               <Badge className="bg-primary/15 text-primary hover:bg-primary/20 border-none text-[9px] h-4 px-1.5 font-bold">
                                 Package
                               </Badge>
@@ -1040,13 +1126,13 @@ export default function Admin() {
                           <div className="flex items-center gap-3 mt-0.5">
                             <span className="text-xs text-gray-500 font-medium">{course.category || 'Other'}</span>
                             <span className="text-xs text-gray-500 font-medium">•</span>
-                            {course.isPackage ? (
-                              <span className="text-xs text-gray-500 font-medium">₹{course.packagePrice} / {course.packageQuantity} qty</span>
+                            {(course.isPackage || course.is_package) ? (
+                              <span className="text-xs text-gray-500 font-medium">₹{course.packagePrice || course.package_price} / {course.packageQuantity || course.package_quantity} qty</span>
                             ) : (
                               <>
-                                <span className="text-xs text-gray-500 font-medium">₹{course.pricePerThousand}/1k</span>
+                                <span className="text-xs text-gray-500 font-medium">₹{course.price}/1k</span>
                                 <span className="text-xs text-gray-500 font-medium">•</span>
-                                <span className="text-xs text-gray-500 font-medium">Min: {course.minLimit}</span>
+                                <span className="text-xs text-gray-500 font-medium">Min: {course.minLimit || course.min_limit}</span>
                               </>
                             )}
                           </div>
@@ -1257,10 +1343,16 @@ export default function Admin() {
               </Button>
             </CardContent>
           </Card>
+            </>
+          )}
         </TabsContent>
 
         <TabsContent value="providers" className="space-y-8">
-          <div className="space-y-4">
+          {!fetchedTabs.has("providers") ? (
+            renderTabPlaceholder("providers", "Providers")
+          ) : (
+            <>
+              <div className="space-y-4">
             <h2 className="text-lg font-bold">Manage Providers</h2>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {providers.map((p) => (
@@ -1347,132 +1439,18 @@ export default function Admin() {
               </Button>
             </CardContent>
           </Card>
+            </>
+          )}
         </TabsContent>
-
-        {isAdmin && (
-          <TabsContent value="orders" className="space-y-4">
-              <div className="bg-blue-50 border border-blue-100 p-3 rounded-xl flex items-center gap-3">
-                <AlertCircle className="w-4 h-4 text-blue-600 shrink-0" />
-                <p className="text-[11px] text-blue-800 leading-tight">
-                  <b>कोटा सुरक्षा:</b> यहाँ केवल अंतिम 10 ऑर्डर्स दिखाए जा रहे हैं ताकि आपका डेली सर्वर लिमिट (Reads) सुरक्षित रहे।
-                </p>
-              </div>
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-bold">Orders Management</h2>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  className="text-xs font-bold"
-                  onClick={() => checkOrdersStatus(true)}
-                  disabled={checkingStatus}
-                >
-                  <RefreshCw className={cn("w-3 h-3 mr-2", checkingStatus && "animate-spin")} />
-                  {checkingStatus ? "Checking..." : "Sync Provider Status"}
-                </Button>
-              </div>
-              <div className="space-y-4">
-                {orders.length > 0 ? (
-                  orders.map((order) => (
-                    <Card key={order.id} className="border-none shadow-sm overflow-hidden">
-                      <CardContent className="p-4 space-y-4">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-gray-50 rounded-xl flex items-center justify-center shrink-0">
-                              <CategoryIcon category={order.category} className="w-5 h-5" />
-                            </div>
-                            <div>
-                              <p className="font-bold text-sm">{order.userEmail}</p>
-                              <p className="text-xs text-gray-500">Service: {order.title}</p>
-                              <p className="text-[10px] text-gray-400 font-medium">
-                                {order.created_at ? new Date(order.created_at).toLocaleString() : "Date N/A"}
-                              </p>
-                              <p className="text-xs font-bold text-primary">Qty: {order.quantity} | Total: ₹{order.total_price}</p>
-                            </div>
-                          </div>
-                          <div className="text-right space-y-1">
-                            <Badge className={cn(
-                              "border-none",
-                              (order.status === 'pending' || order.status === 'Pending') ? "bg-orange-100 text-orange-700" :
-                              order.status === 'Completed' ? "bg-green-100 text-green-700" :
-                              (order.status === 'Processing' || order.status === 'processing') ? "bg-blue-100 text-blue-700" :
-                              (order.status === 'In progress' || order.status === 'in progress') ? "bg-indigo-100 text-indigo-700" :
-                              "bg-gray-100 text-gray-700"
-                            )}>
-                              {order.status}
-                            </Badge>
-                            {order.provider_order_id && (
-                              <p className="text-[9px] text-gray-400 font-mono">ID: {order.provider_order_id}</p>
-                            )}
-                          </div>
-                        </div>
-
-                        {order.error && (
-                          <div className="p-2 bg-red-50 border border-red-100 rounded-lg">
-                            <p className="text-[10px] text-red-600 font-bold uppercase flex items-center gap-1">
-                              <AlertCircle className="w-3 h-3" /> Provider Error
-                            </p>
-                            <p className="text-xs text-red-700 mt-0.5">{formatErrorMessage(order.error)}</p>
-                            {order.providerRawResponse && (
-                              <details className="mt-1">
-                                <summary className="text-[9px] text-gray-400 cursor-pointer hover:text-gray-600 uppercase font-bold">Show Raw Message</summary>
-                                <pre className="text-[9px] text-gray-500 overflow-x-auto whitespace-pre-wrap p-1 bg-gray-100 rounded mt-1 max-h-32">
-                                  {order.providerRawResponse}
-                                </pre>
-                              </details>
-                            )}
-                          </div>
-                        )}
-
-                        <div className="grid grid-cols-1 gap-4">
-                          <div className="space-y-1">
-                            <p className="text-[10px] font-bold text-gray-400 uppercase">Target Link</p>
-                            <a 
-                              href={order.target_link} 
-                              target="_blank" 
-                              rel="noreferrer"
-                              className="flex items-center gap-2 text-xs text-pink-600 hover:underline break-all"
-                            >
-                              <Share2 className="w-4 h-4" />
-                              {order.target_link}
-                            </a>
-                          </div>
-                        </div>
-
-                        {(order.status === 'pending' || order.status === 'Pending' || order.status === 'Processing' || order.status === 'processing') && (
-                          <div className="flex gap-2 pt-2">
-                            <Button 
-                              className="flex-1 h-9 text-xs bg-blue-600 hover:bg-blue-700"
-                              onClick={() => handleRetryProvider(order)}
-                              disabled={processingActions.has(order.id)}
-                            >
-                              <CheckCircle2 className={cn("w-4 h-4 mr-2", processingActions.has(order.id) && "animate-spin")} />
-                              {processingActions.has(order.id) ? "Processing..." : "Retry Provider API"}
-                            </Button>
-                            <Button 
-                              variant="outline"
-                              className="flex-1 h-9 text-xs text-red-600 border-red-200 hover:bg-red-50"
-                              onClick={() => handleOrderAction(order, 'cancelled')}
-                              disabled={processingActions.has(order.id)}
-                            >
-                              <XCircle className="w-4 h-4 mr-2" />
-                              Cancel & Refund
-                            </Button>
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-                  ))
-                ) : (
-                  <p className="text-gray-500 italic text-center py-12">No orders found.</p>
-                )}
-              </div>
-            </TabsContent>
-        )}
 
         {(isAdmin || isPaymentAdmin) && (
           <>
           <TabsContent value="deposits" className="space-y-4">
-              <div className="bg-orange-50 border border-orange-100 p-3 rounded-xl flex items-center gap-3">
+            {!fetchedTabs.has("deposits") ? (
+              renderTabPlaceholder("deposits", "Deposits")
+            ) : (
+              <>
+                <div className="bg-orange-50 border border-orange-100 p-3 rounded-xl flex items-center gap-3">
                 <AlertCircle className="w-4 h-4 text-orange-600 shrink-0" />
                 <p className="text-[11px] text-orange-800 leading-tight">
                   <b>कोटा सुरक्षा:</b> केवल 5 सबसे नए पेंडिंग डिपॉजिट्स दिखाए जा रहे हैं। पुराने डिपॉजिट्स ऑटो-हाइड कर दिए गए हैं।
@@ -1555,6 +1533,8 @@ export default function Admin() {
                   <p className="text-gray-500 italic text-center py-12">No pending deposits found.</p>
                 )}
               </div>
+              </>
+            )}
             </TabsContent>
           </>
         )}
@@ -1562,7 +1542,11 @@ export default function Admin() {
         {isAdmin && (
           <>
             <TabsContent value="users" className="space-y-4">
-              <div className="bg-purple-50 border border-purple-100 p-3 rounded-xl flex items-center gap-3">
+              {!fetchedTabs.has("users") ? (
+                renderTabPlaceholder("users", "Users")
+              ) : (
+                <>
+                  <div className="bg-purple-50 border border-purple-100 p-3 rounded-xl flex items-center gap-3">
                 <AlertCircle className="w-4 h-4 text-purple-600 shrink-0" />
                 <p className="text-[11px] text-purple-800 leading-tight">
                   <b>कोटा सुरक्षा:</b> सभी यूजर्स को एक साथ लोड करने से आपका कोटा खत्म हो सकता है। कृपया किसी भी यूजर को खोजने के लिए [Search] का उपयोग करें।
@@ -1626,10 +1610,16 @@ export default function Admin() {
                     </Card>
                   ))}
               </div>
+              </>
+            )}
             </TabsContent>
 
             <TabsContent value="settings" className="space-y-6">
-              <Card className="border-none shadow-sm">
+              {!fetchedTabs.has("settings") ? (
+                renderTabPlaceholder("settings", "Settings")
+              ) : (
+                <>
+                  <Card className="border-none shadow-sm">
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
                     <QrCode className="w-5 h-5 text-primary" />
@@ -1784,84 +1774,6 @@ export default function Admin() {
                         <p className="text-[10px] text-gray-500">YouTube video to show on the Profile page as a guide.</p>
                       </div>
                     </div>
-
-                    <div className="border-t pt-6 mt-6 space-y-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <div>
-                          <h3 className="font-bold text-sm text-amber-500 flex items-center gap-1.5">
-                            ⚠️ Instant Auto-Approve on UTR entry (बिना वेरिफिकेशन पेमेंट जोड़ें)
-                          </h3>
-                          <p className="text-[11px] text-gray-500 font-medium">
-                            खतरनाक (Not Secure): इसे चालू करने पर ग्राहक द्वारा कोई भी फर्जी 12-अंकों का UTR नंबर डालते ही पेमेंट तुरंत आटोमेटिक जुड़ जायेगी!
-                          </p>
-                        </div>
-                        <div 
-                          className={cn(
-                            "w-12 h-6 rounded-full p-1 cursor-pointer transition-colors duration-200 shrink-0",
-                            autoApproveDeposits ? "bg-amber-500" : "bg-gray-200"
-                          )}
-                          onClick={() => setAutoApproveDeposits(!autoApproveDeposits)}
-                        >
-                          <div className={cn(
-                            "w-4 h-4 bg-white rounded-full transition-transform duration-200",
-                            autoApproveDeposits ? "translate-x-6" : "translate-x-0"
-                          )} />
-                        </div>
-                      </div>
-                      
-                      {autoApproveDeposits && (
-                        <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 space-y-2">
-                          <p className="text-amber-500 font-bold text-[11px] uppercase tracking-wider">
-                            ⚠️ चेतावनी (Warning!)
-                          </p>
-                          <p className="text-xs text-gray-400 leading-relaxed">
-                            अगर आप इसे चालू रखते हैं, तो कोई भी व्यक्ति <strong>गलत या नकली (Fake) UTR</strong> डालकर वेबसाइट पर बैलेंस पा सकेगा। हम आपको इसे बंद रखने और नीचे दिए गए <strong>SMS Automatic Webhook</strong> का उपयोग करने की सलाह देते हैं जो 100% सुरक्षित और असली आटोमेटिक है।
-                          </p>
-                        </div>
-                      )}
-
-                      <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 space-y-3">
-                        <h4 className="font-bold text-xs text-primary uppercase tracking-wider flex items-center gap-1">
-                          📱 100% सुरक्षित ऑटो-पेमेंट (SMS gateway configuration)
-                        </h4>
-                        <p className="text-xs text-gray-400 leading-relaxed">
-                          यदि आप चाहते हैं कि जब ग्राहक पेमेंट करे, सिर्फ तभी उसका पेमेंट ऑटो-वेरीफाई हो (बिना किसी फेक UTR के), तो अपने उस एंड्रॉइड फ़ोन पर <strong>SMS Forwarder</strong> (जैसे <em>"SMS to Webhook" / "SMS Gateway"</em>) एप्प डालें जिसमें आपके UPI बैंक का SMS आता है।
-                        </p>
-                        
-                        <div className="space-y-2 text-xs font-mono bg-zinc-900 border p-3 rounded-xl overflow-x-auto text-[11px]">
-                          <div>
-                            <span className="text-gray-500">// Configure your SMS Forwarder App with:</span>
-                          </div>
-                          <div>
-                            <span className="text-primary-light">Webhook URL:</span>{" "}
-                            <span className="text-green-500 select-all">
-                              {(backendApiUrl || "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app").replace(/\/$/, "")}/api/webhooks/sms-gateway
-                            </span>
-                          </div>
-                          <div>
-                            <span className="text-primary-light">Query Parameter URL (Safe):</span>{" "}
-                            <span className="text-green-500 select-all">
-                              {(backendApiUrl || "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app").replace(/\/$/, "")}/api/webhooks/sms-gateway?secret=secure_sms_gateway_pwd_2026
-                            </span>
-                          </div>
-                          <div>
-                            <span className="text-primary-light">Content-Type:</span> <span className="text-zinc-400">application/json</span>
-                          </div>
-                          <div>
-                            <span className="text-primary-light">POST Parameter Body keys:</span> <span className="text-zinc-400">text, secret</span>
-                          </div>
-                          <div>
-                            <span className="text-primary-light">Secret Key Value:</span>{" "}
-                            <span className="text-green-500 select-all font-bold">secure_sms_gateway_pwd_2026</span>
-                          </div>
-                        </div>
-
-                        <p className="text-[11px] text-gray-500">
-                          <strong>यह कैसे काम करता है:</strong> ग्राहक QR कोड स्कैन करके पेमेंट करने के बाद अपनी UPI app से 12 डिजिट का UTR नंबर कॉपी करके वेबसाइट में डालेगा। उसकी रिक्वेस्ट "Pending" रहेगी। जैसे ही आपके उस फ़ोन पर बैंक का "Rs. Credited" वाला SMS आएगा, वह ऑटो-फॉरवर्ड होकर इस सर्वर पर आ जायेगा। सर्वर तुरंत UTR मैच करके उसे 1 सेकंड में 100% सही और ऑटो-अपुर्व कर देगा!
-                        </p>
-                      </div>
-                    </div>
-
                     <div className="border-t pt-6 mt-6">
                       <div className="flex items-center justify-between mb-4">
                         <div>
@@ -1908,6 +1820,125 @@ export default function Admin() {
                           Note: Manual QR payment will still stay visible as backup on the Profile page.
                         </p>
                       )}
+                    </div>
+
+                    {/* PhonePe Section */}
+                    <div className="border-t pt-6 mt-6">
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <h3 className="font-bold text-sm">PhonePe Payment Gateway</h3>
+                          <p className="text-[10px] text-gray-500">Enable automatic payments via PhonePe Merchant PG</p>
+                        </div>
+                        <div 
+                          className={cn(
+                            "w-12 h-6 rounded-full p-1 cursor-pointer transition-colors duration-200",
+                            phonepeEnabled ? "bg-primary" : "bg-gray-200"
+                          )}
+                          onClick={() => setPhonepeEnabled(!phonepeEnabled)}
+                        >
+                          <div className={cn(
+                            "w-4 h-4 bg-white rounded-full transition-transform duration-200",
+                            phonepeEnabled ? "translate-x-6" : "translate-x-0"
+                          )} />
+                        </div>
+                      </div>
+
+                      <div className={cn("grid gap-4 md:grid-cols-2", !phonepeEnabled && "opacity-50 pointer-events-none")}>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase tracking-wider text-gray-400">PhonePe Merchant ID</label>
+                          <Input 
+                            placeholder="M123456789" 
+                            value={phonepeMerchantId}
+                            onChange={(e) => setPhonepeMerchantId(e.target.value)}
+                            className="rounded-xl h-12"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase tracking-wider text-gray-400">PhonePe Salt Key</label>
+                          <Input 
+                            placeholder="Salt Key (ApiKey)" 
+                            type="password"
+                            value={phonepeSaltKey}
+                            onChange={(e) => setPhonepeSaltKey(e.target.value)}
+                            className="rounded-xl h-12"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase tracking-wider text-gray-400">PhonePe Salt Key Index</label>
+                          <Input 
+                            placeholder="e.g. 1" 
+                            value={phonepeSaltIndex}
+                            onChange={(e) => setPhonepeSaltIndex(e.target.value)}
+                            className="rounded-xl h-12"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Environment</label>
+                          <select 
+                            value={phonepeEnv}
+                            onChange={(e) => setPhonepeEnv(e.target.value)}
+                            className="w-full rounded-xl h-12 border border-gray-200 bg-white px-3 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                          >
+                            <option value="sandbox">Sandbox (Test / UAT Mode)</option>
+                            <option value="production">Production (Live Mode)</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Paytm Section */}
+                    <div className="border-t pt-6 mt-6">
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <h3 className="font-bold text-sm">Paytm Payment Gateway</h3>
+                          <p className="text-[10px] text-gray-500">Enable automatic payments via Paytm Merchant Web Checkout</p>
+                        </div>
+                        <div 
+                          className={cn(
+                            "w-12 h-6 rounded-full p-1 cursor-pointer transition-colors duration-200",
+                            paytmEnabled ? "bg-primary" : "bg-gray-200"
+                          )}
+                          onClick={() => setPaytmEnabled(!paytmEnabled)}
+                        >
+                          <div className={cn(
+                            "w-4 h-4 bg-white rounded-full transition-transform duration-200",
+                            paytmEnabled ? "translate-x-6" : "translate-x-0"
+                          )} />
+                        </div>
+                      </div>
+
+                      <div className={cn("grid gap-4 md:grid-cols-2", !paytmEnabled && "opacity-50 pointer-events-none")}>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Paytm Merchant ID (MID)</label>
+                          <Input 
+                            placeholder="Paytm MID" 
+                            value={paytmMid}
+                            onChange={(e) => setPaytmMid(e.target.value)}
+                            className="rounded-xl h-12"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Paytm Merchant Key</label>
+                          <Input 
+                            placeholder="Paytm Merchant Key" 
+                            type="password"
+                            value={paytmMerchantKey}
+                            onChange={(e) => setPaytmMerchantKey(e.target.value)}
+                            className="rounded-xl h-12"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Environment</label>
+                          <select 
+                            value={paytmEnv}
+                            onChange={(e) => setPaytmEnv(e.target.value)}
+                            className="w-full rounded-xl h-12 border border-gray-200 bg-white px-3 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                          >
+                            <option value="sandbox">Sandbox (Stage Mode)</option>
+                            <option value="production">Production (Live Mode)</option>
+                          </select>
+                        </div>
+                      </div>
                     </div>
 
                   <div className="grid gap-4 md:grid-cols-2">
@@ -1958,6 +1989,8 @@ export default function Admin() {
                   </Button>
                 </CardContent>
               </Card>
+                </>
+              )}
             </TabsContent>
           </>
         )}

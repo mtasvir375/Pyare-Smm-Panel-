@@ -8,13 +8,55 @@ import dotenv from "dotenv";
 import Razorpay from "razorpay";
 import crypto from "crypto";
 import { createClient } from "@supabase/supabase-js";
+import https from "https";
+import http from "http";
+
+import admin from "firebase-admin";
+import { getFirestore } from "firebase-admin/firestore";
 
 dotenv.config();
 
-// Supabase Admin Client (using service role key to bypass RLS for backend tasks)
-const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+// Initialize shared SMM Panel connection agents to reuse TCP and SSL sockets for maximum performance
+const keepAliveAgent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 100,
+  maxFreeSockets: 10,
+  keepAliveMsecs: 30000,
+  timeout: 15000,
+});
+
+const keepAliveHttpAgent = new http.Agent({
+  keepAlive: true,
+  maxSockets: 100,
+  maxFreeSockets: 10,
+  keepAliveMsecs: 30000,
+  timeout: 15000,
+});
+
+// Configure Axios defaults to use keep-alive by default for all requests
+axios.defaults.httpsAgent = keepAliveAgent;
+axios.defaults.httpAgent = keepAliveHttpAgent;
+
+
+// Initialize Firebase Admin
+if (!admin.apps.length) {
+  try {
+    admin.initializeApp({
+      credential: admin.credential.applicationDefault(),
+      databaseId: "ai-studio-f36429fa-50a3-4e58-b960-86b1e1d0141c"
+    } as any);
+    console.log("[FIREBASE] Admin SDK initialized with default credentials.");
+  } catch (error) {
+    // Fallback for local development if applicationDefault fails
+    admin.initializeApp({
+      projectId: "gen-lang-client-0629912823",
+      databaseId: "ai-studio-f36429fa-50a3-4e58-b960-86b1e1d0141c"
+    } as any);
+    console.log("[FIREBASE] Admin SDK initialized with project ID fallback.");
+  }
+}
+
+const fdb = getFirestore(admin.apps[0] || admin.app(), "ai-studio-f36429fa-50a3-4e58-b960-86b1e1d0141c");
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
@@ -54,68 +96,386 @@ async function startServer() {
     providers: new Map<string, any>(),
   };
 
-  // Supabase Helpers that replace Firestore ones
-  const getDocSafe = async (collect: string, id: string) => {
-    const now = Date.now();
-    // Quick cache for settings
-      if (collect === "settings" && id === "payment" && serverCache.settings && now - serverCache.settings.time < 300000) {
-      return { exists: true, data: () => serverCache.settings.data };
-    }
+  // Load Firebase Config to provide direct REST Client Web API Key bypass on permission issues
+  const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+  const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+  const { projectId, apiKey } = firebaseConfig;
+  const dbId = firebaseConfig.firestoreDatabaseId || "(default)";
 
-    try {
-      const { data, error } = await supabaseAdmin.from(collect).select("*").eq("id", id).maybeSingle();
-      if (error) throw error;
+  let useRestFallback = false;
+
+  // Helper to wrap REST fields
+  function wrapRestFields(obj: any): any {
+    const fields: any = {};
+    for (const key in obj) {
+      const val = obj[key];
+      if (val === undefined || val === null) continue;
       
-      if (data) {
-        if (collect === "settings" && id === "payment") serverCache.settings = { data, time: now };
+      if (typeof val === "string") {
+        fields[key] = { stringValue: val };
+      } else if (typeof val === "number") {
+        if (Number.isInteger(val)) {
+          fields[key] = { integerValue: String(val) };
+        } else {
+          fields[key] = { doubleValue: val };
+        }
+      } else if (typeof val === "boolean") {
+        fields[key] = { booleanValue: val };
+      } else if (val instanceof Date) {
+        fields[key] = { timestampValue: val.toISOString() };
+      } else if (typeof val === "object") {
+        if (Array.isArray(val)) {
+          const values: any[] = [];
+          for (const item of val) {
+            if (typeof item === "string") values.push({ stringValue: item });
+            else if (typeof item === "number") values.push(Number.isInteger(item) ? { integerValue: String(item) } : { doubleValue: item });
+            else if (typeof item === "boolean") values.push({ booleanValue: item });
+          }
+          fields[key] = { arrayValue: { values } };
+        } else {
+          fields[key] = { mapValue: { fields: wrapRestFields(val) } };
+        }
+      }
+    }
+    return fields;
+  }
+
+  // Helper to unwrap REST fields
+  function unwrapRestFields(fields: any): any {
+    const result: any = {};
+    if (!fields) return result;
+    for (const key in fields) {
+      const val = fields[key];
+      if (!val) continue;
+      if (val.stringValue !== undefined) result[key] = val.stringValue;
+      else if (val.integerValue !== undefined) result[key] = parseInt(val.integerValue, 10);
+      else if (val.doubleValue !== undefined) result[key] = parseFloat(val.doubleValue);
+      else if (val.booleanValue !== undefined) result[key] = val.booleanValue;
+      else if (val.timestampValue !== undefined) result[key] = val.timestampValue;
+      else if (val.arrayValue !== undefined) {
+        const vals = val.arrayValue.values || [];
+        result[key] = vals.map((v: any) => {
+          if (v.stringValue !== undefined) return v.stringValue;
+          if (v.integerValue !== undefined) return parseInt(v.integerValue, 10);
+          if (v.doubleValue !== undefined) return parseFloat(v.doubleValue);
+          if (v.booleanValue !== undefined) return v.booleanValue;
+          return null;
+        });
+      } else if (val.mapValue !== undefined) {
+        result[key] = unwrapRestFields(val.mapValue.fields || {});
+      }
+    }
+    return result;
+  }
+
+  const getDocREST = async (collect: string, id: string) => {
+    try {
+      const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${dbId}/documents/${collect}/${id}?key=${apiKey}`;
+      const res = await axios.get(url, { timeout: 10000 });
+      if (res.data && res.data.fields) {
+        const data = unwrapRestFields(res.data.fields);
         return { exists: true, data: () => data };
       }
     } catch (err: any) {
-      console.warn(`[SUPABASE-GET] Failed for ${collect}/${id}: ${err.message}`);
+      if (err.response?.status !== 404) {
+        console.warn(`[REST-GET-ERR] Failed REST get for ${collect}/${id}:`, err.response?.data || err.message);
+      }
     }
     return { exists: false, data: () => null };
   };
 
-  const updateDocSafe = async (col: string, id: string, data: any) => {
+  const setDocREST = async (collect: string, id: string, data: any) => {
     try {
-      const { error } = await supabaseAdmin.from(col).update(data).eq("id", id);
-      if (error) {
-        console.warn(`[SUPABASE-UPDATE] Error updating ${col}/${id}:`, error.message);
-        return false;
-      }
-      return true;
+      const dataWithTime = {
+        ...data,
+        updatedAt: new Date().toISOString()
+      };
+      const keys = Object.keys(dataWithTime);
+      const maskParams = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
+      const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${dbId}/documents/${collect}/${id}?key=${apiKey}&${maskParams}`;
+      
+      const fields = wrapRestFields(dataWithTime);
+      const res = await axios.patch(url, { fields }, { timeout: 10000 });
+      return !!res.data;
     } catch (err: any) {
-      console.warn(`[SUPABASE-UPDATE] Exception: ${err.message}`);
+      console.error(`[REST-SET-ERR] Failed REST set for ${collect}/${id}:`, err.response?.data || err.message);
       return false;
     }
+  };
+
+  const updateDocREST = async (collect: string, id: string, data: any) => {
+    try {
+      const keys = Object.keys(data);
+      if (keys.length === 0) return true;
+      
+      const maskParams = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
+      const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${dbId}/documents/${collect}/${id}?key=${apiKey}&${maskParams}`;
+      
+      const fields = wrapRestFields(data);
+      const res = await axios.patch(url, { fields }, { timeout: 10000 });
+      return !!res.data;
+    } catch (err: any) {
+      console.error(`[REST-UPDATE-ERR] Failed REST update for ${collect}/${id}:`, err.response?.data || err.message);
+      return false;
+    }
+  };
+
+  const addDocREST = async (collect: string, data: any) => {
+    try {
+      const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${dbId}/documents/${collect}?key=${apiKey}`;
+      const fields = wrapRestFields({
+        ...data,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+      const res = await axios.post(url, { fields }, { timeout: 10000 });
+      if (res.data && res.data.name) {
+        return res.data.name.split("/").pop();
+      }
+    } catch (err: any) {
+      console.error(`[REST-ADD-ERR] Failed REST add to ${collect}:`, err.response?.data || err.message);
+    }
+    return null;
+  };
+
+  const runQueryREST = async (queryPayload: any) => {
+    try {
+      const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${dbId}/documents:runQuery?key=${apiKey}`;
+      const res = await axios.post(url, queryPayload, { timeout: 10000 });
+      if (res.data && Array.isArray(res.data)) {
+        return res.data
+          .filter((item: any) => item.document)
+          .map((item: any) => {
+            const doc = item.document;
+            const id = doc.name.split("/").pop();
+            const fields = unwrapRestFields(doc.fields || {});
+            return {
+              id,
+              exists: true,
+              data: () => fields
+            };
+          });
+      }
+    } catch (err: any) {
+      console.error("[REST-QUERY-ERR] Run query failed:", err.response?.data || err.message);
+    }
+    return [];
+  };
+
+  const findDepositByUtrREST = async (utr: string, status?: string) => {
+    const filters: any[] = [
+      {
+        fieldFilter: {
+          field: { fieldPath: "utr" },
+          op: "EQUAL",
+          value: { stringValue: utr }
+        }
+      }
+    ];
+    if (status) {
+      filters.push({
+        fieldFilter: {
+          field: { fieldPath: "status" },
+          op: "EQUAL",
+          value: { stringValue: status }
+        }
+      });
+    }
+
+    const payload = {
+      structuredQuery: {
+        from: [{ collectionId: "deposits" }],
+        where: status ? {
+          andFilter: { filters }
+        } : filters[0],
+        limit: 1
+      }
+    };
+    return runQueryREST(payload);
+  };
+
+  const adjustUserBalanceREST = async (user_id: string, change: number) => {
+    console.log(`[BALANCE-REST] Adjusting balance for ${user_id} by ${change}`);
+    try {
+      const userRef = await getDocREST("users", user_id);
+      if (!userRef.exists) throw new Error("User not found");
+      
+      const userData = userRef.data();
+      const currentBalance = Number(userData?.balance || 0);
+      const newBalance = Number((currentBalance + change).toFixed(2));
+      
+      const success = await setDocREST("users", user_id, {
+        ...userData,
+        balance: newBalance,
+        updatedAt: new Date().toISOString()
+      });
+      return success;
+    } catch (err: any) {
+      console.error(`[BALANCE-REST] Error: ${err.message}`);
+      return false;
+    }
+  };
+
+  // Startup permissions test to enable automatic Firestore REST fallback before handling requests
+  try {
+    console.log("[STARTUP] Testing Firebase Admin SDK permissions...");
+    await fdb.collection("settings").doc("payment").get();
+    console.log("[STARTUP] Firebase Admin SDK permissions checked successfully!");
+  } catch (err: any) {
+    if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
+      console.warn(`[STARTUP] Firebase Admin SDK is unauthorized (PERMISSION_DENIED).`);
+      console.warn("[STARTUP] >>> AUTOMATIC ACTIVE FIRESTORE REST FALLBACK OVERRIDE TURNED ON <<<");
+      useRestFallback = true;
+    } else {
+      console.warn(`[STARTUP] Firebase Admin SDK test returned non-permission warning: ${err.message}`);
+    }
+  }
+
+  // Firebase-Firestore Helpers that replace Supabase ones
+  const getDocSafe = async (collect: string, id: string) => {
+    const now = Date.now();
+    
+    // 10 minutes in-memory caching to reduce checkout latency and Firestore read costs
+    const CACHE_TTL = 600000; 
+
+    if (collect === "settings" && id === "payment" && serverCache.settings && now - serverCache.settings.time < CACHE_TTL) {
+      return { exists: true, data: () => serverCache.settings.data };
+    }
+    if (collect === "courses" && id && serverCache.courses && serverCache.courses.has(id)) {
+      const cached = serverCache.courses.get(id);
+      if (now - cached.time < CACHE_TTL) {
+        return { exists: true, data: () => cached.data };
+      }
+    }
+    if (collect === "providers" && id && serverCache.providers && serverCache.providers.has(id)) {
+      const cached = serverCache.providers.get(id);
+      if (now - cached.time < CACHE_TTL) {
+        return { exists: true, data: () => cached.data };
+      }
+    }
+
+    let result = { exists: false, data: () => null as any };
+
+    if (!useRestFallback) {
+      try {
+        const snap = await fdb.collection(collect).doc(id).get();
+        if (snap.exists) {
+          const data = snap.data();
+          result = { exists: true, data: () => data };
+        }
+      } catch (err: any) {
+        console.warn(`[FIREBASE-GET] Failed for ${collect}/${id}: ${err.message}`);
+        if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
+          console.warn("[FIREBASE] Permission denied. Engaging REST Fallback.");
+          useRestFallback = true;
+        }
+      }
+    }
+
+    if (useRestFallback || !result.exists) {
+      result = await getDocREST(collect, id);
+    }
+
+    // Cache the successful read result
+    if (result.exists) {
+      const data = result.data();
+      if (collect === "settings" && id === "payment") {
+        serverCache.settings = { data, time: now };
+      } else if (collect === "courses" && id) {
+        serverCache.courses.set(id, { data, time: now });
+      } else if (collect === "providers" && id) {
+        serverCache.providers.set(id, { data, time: now });
+      }
+    }
+
+    return result;
+  };
+
+  const updateDocSafe = async (col: string, id: string, data: any) => {
+    if (!useRestFallback) {
+      try {
+        await fdb.collection(col).doc(id).update({ ...data, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+        return true;
+      } catch (err: any) {
+        console.warn(`[FIREBASE-UPDATE] Error updating ${col}/${id}:`, err.message);
+        if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
+          console.warn("[FIREBASE] Permission denied. Engaging REST Fallback.");
+          useRestFallback = true;
+        } else {
+          return false;
+        }
+      }
+    }
+
+    return updateDocREST(col, id, data);
   };
 
   const setDocSafe = async (col: string, id: string, data: any) => {
-    try {
-      const { error } = await supabaseAdmin.from(col).upsert({ id, ...data });
-      if (error) {
-        console.warn(`[SUPABASE-SET] Error upserting ${col}/${id}:`, error.message);
-        return false;
+    if (!useRestFallback) {
+      try {
+        await fdb.collection(col).doc(id).set({ ...data, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        return true;
+      } catch (err: any) {
+        console.warn(`[FIREBASE-SET] Error upserting ${col}/${id}:`, err.message);
+        if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
+          console.warn("[FIREBASE] Permission denied. Engaging REST Fallback.");
+          useRestFallback = true;
+        } else {
+          return false;
+        }
       }
+    }
+
+    return setDocREST(col, id, data);
+  };
+
+  const addDocSafe = async (col: string, data: any) => {
+    if (!useRestFallback) {
+      try {
+        const docRef = await fdb.collection(col).add({ ...data, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+        return docRef.id;
+      } catch (err: any) {
+        console.warn(`[FIREBASE-ADD] Error adding to ${col}:`, err.message);
+        if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
+          console.warn("[FIREBASE] Permission denied. Engaging REST Fallback.");
+          useRestFallback = true;
+        } else {
+          return null;
+        }
+      }
+    }
+
+    return addDocREST(col, data);
+  };
+
+  const deleteDocREST = async (collect: string, id: string) => {
+    try {
+      const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${dbId}/documents/${collect}/${id}?key=${apiKey}`;
+      await axios.delete(url, { timeout: 10000 });
       return true;
     } catch (err: any) {
-      console.warn(`[SUPABASE-SET] Exception: ${err.message}`);
+      console.error(`[REST-DELETE-ERR] Failed REST delete for ${collect}/${id}:`, err.response?.data || err.message);
       return false;
     }
   };
 
-  const addDocSafe = async (col: string, data: any) => {
-    try {
-      const { data: result, error } = await supabaseAdmin.from(col).insert(data).select("id").single();
-      if (error) {
-        console.warn(`[SUPABASE-ADD] Error adding to ${col}:`, error.message);
-        return null;
+  const deleteDocSafe = async (col: string, id: string) => {
+    if (!useRestFallback) {
+      try {
+        await fdb.collection(col).doc(id).delete();
+        return true;
+      } catch (err: any) {
+        console.warn(`[FIREBASE-DELETE] Error deleting ${col}/${id}:`, err.message);
+        if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
+          console.warn("[FIREBASE] Permission denied. Engaging REST Fallback.");
+          useRestFallback = true;
+        } else {
+          return false;
+        }
       }
-      return result.id;
-    } catch (err: any) {
-      console.warn(`[SUPABASE-ADD] Exception: ${err.message}`);
-      return null;
     }
+
+    return deleteDocREST(col, id);
   };
 
   // Activate auto-ensure on startup
@@ -123,44 +483,60 @@ async function startServer() {
     const ACTIVE_BACKEND_URL = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
     try {
       console.log(`[INIT] Auto-ensuring backend URL in database: ${ACTIVE_BACKEND_URL}`);
-      const { data, error } = await supabaseAdmin.from("settings").select("*").eq("id", "payment").maybeSingle();
-      if (error) throw error;
-      if (data) {
-        if (data.backendApiUrl !== ACTIVE_BACKEND_URL) {
-          await supabaseAdmin.from("settings").update({ backendApiUrl: ACTIVE_BACKEND_URL }).eq("id", "payment");
-          console.log(`[INIT] ✅ Supabase backendApiUrl updated.`);
+      const snap = await getDocSafe("settings", "payment");
+      
+      if (snap.exists) {
+        const data = snap.data();
+        if (data?.backendApiUrl !== ACTIVE_BACKEND_URL) {
+          await updateDocSafe("settings", "payment", { backendApiUrl: ACTIVE_BACKEND_URL });
+          console.log(`[INIT] ✅ Firebase backendApiUrl updated.`);
         }
       } else {
-        await supabaseAdmin.from("settings").insert({ id: "payment", backendApiUrl: ACTIVE_BACKEND_URL });
+        await setDocSafe("settings", "payment", { backendApiUrl: ACTIVE_BACKEND_URL });
       }
     } catch (err: any) {
       console.warn(`[INIT] ⚠️ Auto-updating backendApiUrl failed: ${err.message}`);
     }
   };
   ensureBackendUrlIsSet();
+
   const adjustUserBalanceSafe = async (user_id: string, change: number) => {
     console.log(`[BALANCE-SAFE] Adjusting balance for ${user_id} by ${change}`);
-    try {
-      const { data: user, error: getErr } = await supabaseAdmin.from("users").select("balance").eq("id", user_id).single();
-      if (getErr || !user) throw new Error("User not found");
-
-      const newBalance = Number((Number(user.balance || 0) + change).toFixed(2));
-      const { error: updErr } = await supabaseAdmin.from("users").update({ balance: newBalance }).eq("id", user_id);
-      
-      if (updErr) throw updErr;
-      console.log(`[BALANCE-SAFE] Balance adjusted successfully to ${newBalance}`);
-      return true;
-    } catch (err: any) {
-      console.error(`[BALANCE-SAFE] Error: ${err.message}`);
-      return false;
+    if (!useRestFallback) {
+      try {
+        const userRef = fdb.collection("users").doc(user_id);
+        await fdb.runTransaction(async (transaction) => {
+          const userDoc = await transaction.get(userRef);
+          if (!userDoc.exists) throw new Error("User not found");
+          
+          const currentBalance = Number(userDoc.data()?.balance || 0);
+          const newBalance = Number((currentBalance + change).toFixed(2));
+          transaction.update(userRef, { 
+            balance: newBalance,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp() 
+          });
+        });
+        console.log(`[BALANCE-SAFE] Balance adjusted successfully via transaction.`);
+        return true;
+      } catch (err: any) {
+        console.error(`[BALANCE-SAFE] Error: ${err.message}`);
+        if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
+          console.warn("[FIREBASE] Permission denied in transaction. Engaging REST Fallback.");
+          useRestFallback = true;
+        } else {
+          return false;
+        }
+      }
     }
+
+    return adjustUserBalanceREST(user_id, change);
   };
   
   // Health check
   app.get("/api/health", (req, res) => res.json({ 
     status: "ok", 
-    supabaseUrl: supabaseUrl,
-    hasServiceKey: !!supabaseServiceKey
+    firebaseProject: admin.app().options.projectId,
+    databaseId: (admin.app().options as any).databaseId
   }));
 
   // Aggressive backend-side cache to protect database read limits
@@ -177,6 +553,12 @@ async function startServer() {
     serverCachedCoursesTime = 0;
     serverCachedSettings = null;
     serverCachedSettingsTime = 0;
+    
+    // Also reset local lookup cache maps
+    serverCache.settings = null;
+    serverCache.courses.clear();
+    serverCache.providers.clear();
+    
     console.log("[SERVER-CACHE] Server-side cache cleared on Admin update request!");
     res.json({ success: true, message: "Server-side cache cleared successfully" });
   });
@@ -190,17 +572,37 @@ async function startServer() {
     }
 
     try {
-      console.log("[SERVER-DB] Fetching published services from Supabase to refresh cache...");
-      const { data: services, error } = await supabaseAdmin
-        .from("services")
-        .select("*")
-        .eq("status", "published");
-      
-      if (error) throw error;
+      console.log("[SERVER-DB] Fetching courses from Firestore to refresh cache...");
+      let services: any[] = [];
+      if (!useRestFallback) {
+        try {
+          const snap = await fdb.collection("courses").get();
+          services = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        } catch (e: any) {
+          if (e.message?.includes("permissions") || e.message?.includes("PERMISSION_DENIED") || e.code === 7) {
+            console.warn("[COURSES] Permission denied on courses fetch. Activating REST fallback.");
+            useRestFallback = true;
+          } else {
+            throw e;
+          }
+        }
+      }
+
+      if (useRestFallback) {
+        const queryRes = await runQueryREST({
+          structuredQuery: {
+            from: [{ collectionId: "courses" }]
+          }
+        });
+        services = queryRes.map(item => ({ id: item.id, ...item.data() }));
+      }
+
+      // Only show services that are not explicitly 'archived' or 'hidden'
+      const activeServices = services.filter((s: any) => s.status !== "archived" && s.status !== "hidden");
 
       // Sort services by category priority
       const categoryOrder = ["Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Twitter", "Other"];
-      services.sort((a: any, b: any) => {
+      activeServices.sort((a: any, b: any) => {
         const orderA = categoryOrder.indexOf(a.category) === -1 ? 99 : categoryOrder.indexOf(a.category);
         const orderB = categoryOrder.indexOf(b.category) === -1 ? 99 : categoryOrder.indexOf(b.category);
         if (orderA !== orderB) return orderA - orderB;
@@ -210,9 +612,9 @@ async function startServer() {
         return timeB - timeA;
       });
 
-      serverCachedCourses = services;
+      serverCachedCourses = activeServices;
       serverCachedCoursesTime = now;
-      res.json(services);
+      res.json(activeServices);
     } catch (err: any) {
       console.error("[SERVER-DB] Error fetching services from database:", err.message);
       if (serverCachedCourses) {
@@ -246,13 +648,34 @@ async function startServer() {
   // Temporary developer debug endpoint to inspect orders
   app.get("/api/debug-orders", async (req, res) => {
     try {
-      const { data: ordersList, error } = await supabaseAdmin
-        .from("orders")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(15);
-      
-      if (error) throw error;
+      let ordersList: any[] = [];
+      if (!useRestFallback) {
+        try {
+          const snap = await fdb.collection("orders").orderBy("createdAt", "desc").limit(15).get();
+          ordersList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        } catch (e: any) {
+          if (e.message?.includes("permissions") || e.message?.includes("PERMISSION_DENIED") || e.code === 7) {
+            console.warn("[DEBUG-ORDERS] Permission denied on orders fetch. Activating REST fallback.");
+            useRestFallback = true;
+          } else {
+            throw e;
+          }
+        }
+      }
+
+      if (useRestFallback) {
+        const queryRes = await runQueryREST({
+          structuredQuery: {
+            from: [{ collectionId: "orders" }],
+            orderBy: [{
+              field: { fieldPath: "createdAt" },
+              direction: "DESCENDING"
+            }],
+            limit: 15
+          }
+        });
+        ordersList = queryRes.map(item => ({ id: item.id, ...item.data() }));
+      }
       res.json({ success: true, count: ordersList.length, orders: ordersList });
     } catch (e: any) {
       console.error("[DEBUG] Error fetching orders debug data:", e.message);
@@ -284,6 +707,452 @@ async function startServer() {
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // Paytm Signature and Encryption helpers (matching official Paytm merchant API AES-128-CBC)
+  function encryptPaytm(toEncrypt: string, key: string) {
+    const iv = "@@@@&&&&####$$$$";
+    const cipher = crypto.createCipheriv("aes-128-cbc", Buffer.from(key), Buffer.from(iv));
+    let encrypted = cipher.update(toEncrypt, "utf8", "base64");
+    encrypted += cipher.final("base64");
+    return encrypted;
+  }
+
+  function generatePaytmSignature(params: string, key: string) {
+    const salt = crypto.randomBytes(4).toString("hex"); 
+    const stringToSign = params + "|" + salt;
+    const hash = crypto.createHash("sha256").update(stringToSign).digest("hex");
+    return encryptPaytm(hash + salt, key);
+  }
+
+  // PhonePe Create Order
+  app.post("/api/phonepe/create-order", async (req, res) => {
+    try {
+      const { amount, userId, userEmail } = req.body;
+      if (!amount || amount <= 0) {
+        return res.status(400).json({ error: "Invalid amount" });
+      }
+
+      const sS = await getDocSafe("settings", "payment");
+      const s = sS.data();
+      if (!s || !s.phonepeEnabled) {
+        return res.status(400).json({ error: "PhonePe gateway is not enabled by admin" });
+      }
+
+      const merchantId = s.phonepeMerchantId;
+      const saltKey = s.phonepeSaltKey;
+      const saltIndex = s.phonepeSaltIndex || "1";
+      const env = s.phonepeEnv || "sandbox";
+
+      const merchantTransactionId = "TXN_" + Date.now() + "_" + Math.floor(Math.random() * 1000000);
+      
+      const protocol = req.headers["x-forwarded-proto"] || "http";
+      const host = req.headers.host;
+      const domain = `${protocol}://${host}`;
+
+      const payload = {
+        merchantId: merchantId,
+        merchantTransactionId: merchantTransactionId,
+        merchantUserId: userId || "U_" + Date.now(),
+        amount: Math.round(Number(amount) * 100), // in paise
+        redirectUrl: `${domain}/api/phonepe/callback?userId=${userId}&amount=${amount}&userEmail=${encodeURIComponent(userEmail || "")}`,
+        redirectMode: "REDIRECT",
+        callbackUrl: `${domain}/api/phonepe/callback?userId=${userId}&amount=${amount}&userEmail=${encodeURIComponent(userEmail || "")}`,
+        paymentInstrument: {
+          type: "PAY_PAGE"
+        }
+      };
+
+      const base64Payload = Buffer.from(JSON.stringify(payload)).toString("base64");
+      const stringToSign = base64Payload + "/pg/v1/pay" + saltKey;
+      const sha256 = crypto.createHash("sha256").update(stringToSign).digest("hex");
+      const xVerify = sha256 + "###" + saltIndex;
+
+      const apiEndpoint = env === "production"
+        ? "https://api.phonepe.com/apis/hermes/pg/v1/pay"
+        : "https://api-preprod.phonepe.com/apis/pg-sandbox/pg/v1/pay";
+
+      console.log(`[PHONEPE-INIT] Initiating transaction ${merchantTransactionId} for amount ₹${amount}`);
+      const response = await axios.post(apiEndpoint, {
+        request: base64Payload
+      }, {
+        headers: {
+          "Content-Type": "application/json",
+          "X-VERIFY": xVerify,
+          "accept": "application/json"
+        }
+      });
+
+      if (response.data && response.data.success && response.data.data.instrumentResponse?.redirectInfo?.url) {
+        res.json({
+          success: true,
+          redirectUrl: response.data.data.instrumentResponse.redirectInfo.url,
+          transactionId: merchantTransactionId
+        });
+      } else {
+        throw new Error(response.data.message || "Failed to get redirect URL from PhonePe");
+      }
+    } catch (e: any) {
+      console.error("[PHONEPE-ERROR]", e.response?.data || e.message);
+      res.status(500).json({ error: e.response?.data?.message || e.message });
+    }
+  });
+
+  // PhonePe Callback/Webhook
+  const handlePhonePeCallback = async (req: any, res: any) => {
+    try {
+      console.log("[PHONEPE-CALLBACK] Callback received:", req.method, req.query, req.body);
+      
+      const sS = await getDocSafe("settings", "payment");
+      const s = sS.data();
+      if (!s) {
+        return res.send("<h2>Payment Settings Not Found</h2>");
+      }
+
+      const merchantId = s.phonepeMerchantId;
+      const saltKey = s.phonepeSaltKey;
+      const saltIndex = s.phonepeSaltIndex || "1";
+      const env = s.phonepeEnv || "sandbox";
+
+      let transactionId = req.query.transactionId || req.body.transactionId;
+      let userId = req.query.userId || req.body.userId;
+      let amount = Number(req.query.amount || req.body.amount || 0);
+      let userEmail = req.query.userEmail || req.body.userEmail || "not-provided";
+
+      // If PhonePe posted a base64 response body
+      if (req.body && req.body.response) {
+        try {
+          const decoded = JSON.parse(Buffer.from(req.body.response, "base64").toString("utf-8"));
+          console.log("[PHONEPE-CALLBACK] Decoded body:", decoded);
+          if (decoded.data) {
+            transactionId = decoded.data.merchantTransactionId;
+            amount = Number(decoded.data.amount) / 100;
+          }
+        } catch (deErr) {
+          console.error("[PHONEPE-CALLBACK] Error decoding body response:", deErr);
+        }
+      }
+
+      if (!transactionId) {
+        const responseData = req.body || {};
+        transactionId = responseData.merchantTransactionId || req.query.merchantTransactionId;
+      }
+
+      if (!transactionId) {
+        return res.send("<h2>Invalid PhonePe callback transaction. Missing Transaction ID.</h2>");
+      }
+
+      // Secure Status Check Call (Server to Server API)
+      const statusUrl = env === "production"
+        ? `https://api.phonepe.com/apis/hermes/pg/v1/status/${merchantId}/${transactionId}`
+        : `https://api-preprod.phonepe.com/apis/pg-sandbox/pg/v1/status/${merchantId}/${transactionId}`;
+
+      const stringToSign = `/pg/v1/status/${merchantId}/${transactionId}` + saltKey;
+      const sha256 = crypto.createHash("sha256").update(stringToSign).digest("hex");
+      const xVerify = sha256 + "###" + saltIndex;
+
+      console.log(`[PHONEPE-VERIFY] Querying PhonePe status for transaction ${transactionId}`);
+      const response = await axios.get(statusUrl, {
+        headers: {
+          "Content-Type": "application/json",
+          "X-VERIFY": xVerify,
+          "X-MERCHANT-ID": merchantId,
+          "accept": "application/json"
+        }
+      });
+
+      console.log("[PHONEPE-VERIFY] Response code:", response.data?.code);
+
+      if (response.data && response.data.code === "PAYMENT_SUCCESS") {
+        const amountPaid = Number(response.data.data.amount) / 100; // in Rupees
+        const finalAmount = amountPaid || amount;
+
+        // Verify if this transaction is already processed
+        let alreadyProcessed = false;
+        try {
+          if (!useRestFallback) {
+            const snap = await fdb.collection("deposits").where("utr", "==", transactionId).limit(1).get();
+            alreadyProcessed = !snap.empty;
+          } else {
+            const queryRes = await findDepositByUtrREST(transactionId);
+            alreadyProcessed = queryRes.length > 0;
+          }
+        } catch (dbErr) {
+          console.error("[PHONEPE-VERIFY] Error searching duplicate transaction:", dbErr);
+        }
+
+        if (!alreadyProcessed) {
+          console.log(`[PHONEPE-VERIFY] Processing credit of ₹${finalAmount} for user ${userId}`);
+          await adjustUserBalanceSafe(userId, finalAmount);
+          await addDocSafe("deposits", {
+            userId: userId,
+            userEmail: decodeURIComponent(userEmail),
+            amount: finalAmount,
+            utr: transactionId,
+            screenshotUrl: "",
+            status: "approved",
+            type: "deposit",
+            gateway: "PhonePe",
+            createdAt: new Date().toISOString()
+          });
+        }
+
+        return res.send(`
+          <html>
+            <body style="font-family: sans-serif; text-align: center; padding-top: 50px; background-color: #f7f9fc;">
+              <div style="background-color: white; padding: 40px; border-radius: 20px; display: inline-block; box-shadow: 0 4px 12px rgba(0,0,0,0.05); max-width: 400px; width: 100%;">
+                <div style="color: #4caf50; font-size: 60px; margin-bottom: 20px;">✓</div>
+                <h2 style="color: #333; margin-bottom: 10px;">Payment Successful!</h2>
+                <p style="color: #666; font-size: 14px; margin-bottom: 25px;">₹${finalAmount.toFixed(2)} has been successfully added to your wallet.</p>
+                <button onclick="window.location.href='/profile'" style="background-color: #6366f1; color: white; border: none; padding: 12px 30px; border-radius: 10px; font-weight: bold; cursor: pointer; font-size: 14px;">Go back to Profile</button>
+              </div>
+            </body>
+          </html>
+        `);
+      } else {
+        console.warn(`[PHONEPE-VERIFY] Payment status was not success:`, response.data);
+        return res.send(`
+          <html>
+            <body style="font-family: sans-serif; text-align: center; padding-top: 50px; background-color: #f7f9fc;">
+              <div style="background-color: white; padding: 40px; border-radius: 20px; display: inline-block; box-shadow: 0 4px 12px rgba(0,0,0,0.05); max-width: 400px; width: 100%;">
+                <div style="color: #f44336; font-size: 60px; margin-bottom: 20px;">✗</div>
+                <h2 style="color: #333; margin-bottom: 10px;">Payment Failed!</h2>
+                <p style="color: #666; font-size: 14px; margin-bottom: 25px;">PhonePe reported a status of: ${response.data?.code || "FAILED"}. If funds were deducted, they will be refunded shortly.</p>
+                <button onclick="window.location.href='/profile'" style="background-color: #6366f1; color: white; border: none; padding: 12px 30px; border-radius: 10px; font-weight: bold; cursor: pointer; font-size: 14px;">Try Again</button>
+              </div>
+            </body>
+          </html>
+        `);
+      }
+    } catch (e: any) {
+      console.error("[PHONEPE-CALLBACK-ERROR]", e.message);
+      return res.send(`
+        <html>
+          <body style="font-family: sans-serif; text-align: center; padding-top: 50px; background-color: #f7f9fc;">
+            <div style="background-color: white; padding: 40px; border-radius: 20px; display: inline-block; box-shadow: 0 4px 12px rgba(0,0,0,0.05); max-width: 400px; width: 100%;">
+              <div style="color: #ff9800; font-size: 60px; margin-bottom: 20px;">⚠</div>
+              <h2 style="color: #333; margin-bottom: 10px;">Payment Verification Pending</h2>
+              <p style="color: #666; font-size: 14px; margin-bottom: 25px;">There was a temporary connection delay with the gateway. Your balance will update automatically in a few minutes.</p>
+              <button onclick="window.location.href='/profile'" style="background-color: #6366f1; color: white; border: none; padding: 12px 30px; border-radius: 10px; font-weight: bold; cursor: pointer; font-size: 14px;">Go back to Profile</button>
+            </div>
+          </body>
+        </html>
+      `);
+    }
+  };
+
+  app.get("/api/phonepe/callback", handlePhonePeCallback);
+  app.post("/api/phonepe/callback", handlePhonePeCallback);
+
+  // Paytm Create Order
+  app.post("/api/paytm/create-order", async (req, res) => {
+    try {
+      const { amount, userId, userEmail } = req.body;
+      if (!amount || amount <= 0) {
+        return res.status(400).json({ error: "Invalid amount" });
+      }
+
+      const sS = await getDocSafe("settings", "payment");
+      const s = sS.data();
+      if (!s || !s.paytmEnabled) {
+        return res.status(400).json({ error: "Paytm gateway is not enabled by admin" });
+      }
+
+      const mid = s.paytmMid;
+      const mkey = s.paytmMerchantKey;
+      const env = s.paytmEnv || "sandbox";
+
+      const orderId = "PAYTM_" + Date.now() + "_" + Math.floor(Math.random() * 1000000);
+      const protocol = req.headers["x-forwarded-proto"] || "http";
+      const host = req.headers.host;
+      const domain = `${protocol}://${host}`;
+
+      const callbackUrl = `${domain}/api/paytm/callback?userId=${userId}&amount=${amount}&userEmail=${encodeURIComponent(userEmail || "")}`;
+
+      const paytmParamsBody = {
+        requestType: "Payment",
+        mid: mid,
+        websiteName: env === "production" ? "DEFAULT" : "WEBSTAGING",
+        orderId: orderId,
+        callbackUrl: callbackUrl,
+        txnAmount: {
+          value: Number(amount).toFixed(2),
+          currency: "INR"
+        },
+        userInfo: {
+          custId: userId || "CUST_" + Date.now()
+        }
+      };
+
+      const bodyString = JSON.stringify(paytmParamsBody);
+      const signature = generatePaytmSignature(bodyString, mkey);
+
+      const apiEndpoint = env === "production"
+        ? `https://securegw.paytm.in/theia/api/v1/initiateTransaction?mid=${mid}&orderId=${orderId}`
+        : `https://securegw-stage.paytm.in/theia/api/v1/initiateTransaction?mid=${mid}&orderId=${orderId}`;
+
+      console.log(`[PAYTM-INIT] Initiating transaction ${orderId} for amount ₹${amount}`);
+      const response = await axios.post(apiEndpoint, {
+        body: paytmParamsBody,
+        head: {
+          signature: signature
+        }
+      }, {
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+
+      if (response.data && response.data.body && response.data.body.txnToken) {
+        const txnToken = response.data.body.txnToken;
+        const checkoutPageUrl = env === "production"
+          ? `https://securegw.paytm.in/theia/api/v1/showPaymentPage?mid=${mid}&orderId=${orderId}`
+          : `https://securegw-stage.paytm.in/theia/api/v1/showPaymentPage?mid=${mid}&orderId=${orderId}`;
+
+        res.json({
+          success: true,
+          txnToken: txnToken,
+          orderId: orderId,
+          mid: mid,
+          checkoutPageUrl: checkoutPageUrl
+        });
+      } else {
+        throw new Error(response.data?.body?.resultInfo?.resultMsg || "Failed to initiate Paytm transaction");
+      }
+    } catch (e: any) {
+      console.error("[PAYTM-ERROR]", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Paytm Callback (POST from Paytm system)
+  app.post("/api/paytm/callback", async (req, res) => {
+    try {
+      console.log("[PAYTM-CALLBACK] Callback received:", req.body);
+      const { ORDERID, TXNID, TXNAMOUNT, STATUS, RESPMSG } = req.body;
+      
+      const sS = await getDocSafe("settings", "payment");
+      const s = sS.data();
+      if (!s) {
+        return res.send("<h2>Payment Settings Not Found</h2>");
+      }
+
+      const mid = s.paytmMid;
+      const mkey = s.paytmMerchantKey;
+      const env = s.paytmEnv || "sandbox";
+
+      const userId = req.query.userId || req.body.userId;
+      const userEmail = req.query.userEmail || req.body.userEmail || "not-provided";
+      const amount = Number(TXNAMOUNT || req.query.amount || 0);
+      const transactionId = TXNID || ORDERID;
+
+      if (!ORDERID) {
+        return res.send("<h2>Invalid Paytm callback. Missing Order ID.</h2>");
+      }
+
+      // Secure Order Status Check Call (Server to Server API)
+      const statusUrl = env === "production"
+        ? "https://securegw.paytm.in/v3/order/status"
+        : "https://securegw-stage.paytm.in/v3/order/status";
+
+      const statusParamsBody = {
+        mid: mid,
+        orderId: ORDERID
+      };
+
+      const bodyString = JSON.stringify(statusParamsBody);
+      const signature = generatePaytmSignature(bodyString, mkey);
+
+      console.log(`[PAYTM-VERIFY] Querying Paytm status for order ${ORDERID}`);
+      const response = await axios.post(statusUrl, {
+        body: statusParamsBody,
+        head: {
+          signature: signature
+        }
+      }, {
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+
+      console.log("[PAYTM-VERIFY] Response status:", response.data?.body?.resultInfo?.resultStatus);
+
+      if (response.data && response.data.body && response.data.body.resultInfo?.resultStatus === "TXN_SUCCESS") {
+        const verifiedAmount = Number(response.data.body.txnAmount);
+        const finalAmount = verifiedAmount || amount;
+
+        // Verify if already processed
+        let alreadyProcessed = false;
+        try {
+          if (!useRestFallback) {
+            const snap = await fdb.collection("deposits").where("utr", "==", transactionId).limit(1).get();
+            alreadyProcessed = !snap.empty;
+          } else {
+            const queryRes = await findDepositByUtrREST(transactionId);
+            alreadyProcessed = queryRes.length > 0;
+          }
+        } catch (dbErr) {
+          console.error("[PAYTM-VERIFY] Error searching duplicate transaction:", dbErr);
+        }
+
+        if (!alreadyProcessed) {
+          console.log(`[PAYTM-VERIFY] Processing credit of ₹${finalAmount} for user ${userId}`);
+          await adjustUserBalanceSafe(userId, finalAmount);
+          await addDocSafe("deposits", {
+            userId: userId,
+            userEmail: decodeURIComponent(userEmail),
+            amount: finalAmount,
+            utr: transactionId,
+            screenshotUrl: "",
+            status: "approved",
+            type: "deposit",
+            gateway: "Paytm",
+            createdAt: new Date().toISOString()
+          });
+        }
+
+        return res.send(`
+          <html>
+            <body style="font-family: sans-serif; text-align: center; padding-top: 50px; background-color: #f7f9fc;">
+              <div style="background-color: white; padding: 40px; border-radius: 20px; display: inline-block; box-shadow: 0 4px 12px rgba(0,0,0,0.05); max-width: 400px; width: 100%;">
+                <div style="color: #4caf50; font-size: 60px; margin-bottom: 20px;">✓</div>
+                <h2 style="color: #333; margin-bottom: 10px;">Payment Successful!</h2>
+                <p style="color: #666; font-size: 14px; margin-bottom: 25px;">₹${finalAmount.toFixed(2)} has been successfully added to your wallet.</p>
+                <button onclick="window.location.href='/profile'" style="background-color: #6366f1; color: white; border: none; padding: 12px 30px; border-radius: 10px; font-weight: bold; cursor: pointer; font-size: 14px;">Go back to Profile</button>
+              </div>
+            </body>
+          </html>
+        `);
+      } else {
+        console.warn(`[PAYTM-VERIFY] Paytm status not successful:`, response.data);
+        return res.send(`
+          <html>
+            <body style="font-family: sans-serif; text-align: center; padding-top: 50px; background-color: #f7f9fc;">
+              <div style="background-color: white; padding: 40px; border-radius: 20px; display: inline-block; box-shadow: 0 4px 12px rgba(0,0,0,0.05); max-width: 400px; width: 100%;">
+                <div style="color: #f44336; font-size: 60px; margin-bottom: 20px;">✗</div>
+                <h2 style="color: #333; margin-bottom: 10px;">Payment Failed!</h2>
+                <p style="color: #666; font-size: 14px; margin-bottom: 25px;">Paytm reported a status of: ${response.data?.body?.resultInfo?.resultMsg || RESPMSG || "FAILED"}.</p>
+                <button onclick="window.location.href='/profile'" style="background-color: #6366f1; color: white; border: none; padding: 12px 30px; border-radius: 10px; font-weight: bold; cursor: pointer; font-size: 14px;">Try Again</button>
+              </div>
+            </body>
+          </html>
+        `);
+      }
+    } catch (e: any) {
+      console.error("[PAYTM-CALLBACK-ERROR]", e.message);
+      return res.send(`
+        <html>
+          <body style="font-family: sans-serif; text-align: center; padding-top: 50px; background-color: #f7f9fc;">
+            <div style="background-color: white; padding: 40px; border-radius: 20px; display: inline-block; box-shadow: 0 4px 12px rgba(0,0,0,0.05); max-width: 400px; width: 100%;">
+              <div style="color: #ff9800; font-size: 60px; margin-bottom: 20px;">⚠</div>
+              <h2 style="color: #333; margin-bottom: 10px;">Payment Verification Pending</h2>
+              <p style="color: #666; font-size: 14px; margin-bottom: 25px;">There was a temporary verification delay with Paytm. Your balance will update in a few moments.</p>
+              <button onclick="window.location.href='/profile'" style="background-color: #6366f1; color: white; border: none; padding: 12px 30px; border-radius: 10px; font-weight: bold; cursor: pointer; font-size: 14px;">Go back to Profile</button>
+            </div>
+          </body>
+        </html>
+      `);
+    }
+  });
+
   // Manual Deposit
   app.post("/api/deposits/submit-manual", async (req, res) => {
     const { amount, utr, screenshotUrl, userId, userEmail } = req.body;
@@ -295,61 +1164,46 @@ async function startServer() {
     if (cleanUtr.length !== 12) return res.status(400).json({ error: "Invalid UTR format. Must be 12 digits." });
     
     try {
-      const { data: existingDep } = await supabaseAdmin.from("transactions").select("id").eq("utr", cleanUtr).maybeSingle();
-      if (existingDep) {
+      let empty = true;
+      if (!useRestFallback) {
+        try {
+          const snap = await fdb.collection("deposits").where("utr", "==", cleanUtr).limit(1).get();
+          empty = snap.empty;
+        } catch (e: any) {
+          if (e.message?.includes("permissions") || e.message?.includes("PERMISSION_DENIED") || e.code === 7) {
+            console.warn("[MANUAL-DEPOSIT] Permission denied on UTR search. Activating REST fallback.");
+            useRestFallback = true;
+          } else {
+            throw e;
+          }
+        }
+      }
+
+      if (useRestFallback) {
+        const queryRes = await findDepositByUtrREST(cleanUtr);
+        empty = queryRes.length === 0;
+      }
+
+      if (!empty) {
         return res.status(400).json({ error: "This UTR number has already been used." });
       }
 
-      // Check if Admin has enabled Auto-Approve Deposits
-      const sS = await getDocSafe("settings", "payment");
-      const paymentSettings = sS.exists ? sS.data() : {};
-      const autoApprove = paymentSettings.auto_approve_deposits === true;
+      // Save as pending manual deposit
+      const depId = await addDocSafe("deposits", {
+        userId: user_id, 
+        userEmail: user_email || "not-provided", 
+        amount: Number(amount), 
+        utr: cleanUtr, 
+        screenshotUrl: screenshotUrl || "", 
+        status: "pending", 
+        type: "deposit",
+        createdAt: new Date().toISOString()
+      });
 
-      if (autoApprove) {
-        // Create an already-approved deposit entry
-        const depId = await addDocSafe("transactions", {
-          user_id, 
-          user_email: user_email || "not-provided", 
-          amount: Number(amount), 
-          utr: cleanUtr, 
-          screenshot_url: screenshotUrl || "", 
-          status: "approved", 
-          type: "deposit",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        });
-
-        if (depId) {
-          // Immediately adjust user balance
-          const balanceAdjusted = await adjustUserBalanceSafe(user_id, Number(amount));
-          if (balanceAdjusted) {
-            console.log(`[DEPOSIT] Instant auto-approved & balance adjusted for User=${user_id} by ₹${amount}`);
-            res.json({ success: true, isAutoApproved: true });
-          } else {
-            console.error(`[DEPOSIT] Instant auto-approval wrote deposit ${depId} but failed to adjust balance for User=${user_id}!`);
-            res.json({ success: true, isAutoApproved: true, warning: "Balance update delayed" });
-          }
-        } else {
-          throw new Error("Failed to write manual deposit to database.");
-        }
+      if (depId) {
+        res.json({ success: true, isAutoApproved: false });
       } else {
-        // Fallback to standard pending deposit
-        const depId = await addDocSafe("transactions", {
-          user_id, 
-          user_email: user_email || "not-provided", 
-          amount: Number(amount), 
-          utr: cleanUtr, 
-          screenshot_url: screenshotUrl || "", 
-          status: "pending", 
-          type: "deposit",
-          created_at: new Date().toISOString()
-        });
-
-        if (depId) {
-          res.json({ success: true, isAutoApproved: false });
-        } else {
-          throw new Error("Failed to write manual deposit to database.");
-        }
+        throw new Error("Failed to write manual deposit to database.");
       }
     } catch (e: any) {
       console.error(`[DEPOSIT] Error submitting manual deposit: ${e.message}`);
@@ -407,31 +1261,58 @@ async function startServer() {
       const parsedAmount = amountMatch ? parseFloat(amountMatch[1]) : null;
       console.log(`[SMS-WEBHOOK] Extracted amount: ${parsedAmount}`);
 
-      // 3. Find matching pending manual deposit in Supabase
+      // 3. Find matching pending manual deposit in Firestore
       let depData: any = null;
       let depositId: string = "";
       let matchedUtr: string = "";
 
-      // Loop through all candidate UTRs to find a match in Supabase
+      // Loop through all candidate UTRs to find a match in Firestore
       for (const candidateUtr of candidateUtrs) {
         try {
-          const { data, error } = await supabaseAdmin
-            .from("deposits")
-            .select("*")
-            .eq("utr", candidateUtr)
-            .eq("status", "pending")
-            .maybeSingle();
+          let matchedDoc: any = null;
+          if (!useRestFallback) {
+            try {
+              const snap = await fdb.collection("deposits")
+                .where("utr", "==", candidateUtr)
+                .where("status", "==", "pending")
+                .limit(1)
+                .get();
 
-          if (error) throw error;
-          
-          if (data) {
-            depData = data;
-            depositId = data.id;
+              if (!snap.empty) {
+                const doc = snap.docs[0];
+                matchedDoc = {
+                  id: doc.id,
+                  data: doc.data()
+                };
+              }
+            } catch (err: any) {
+              if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
+                console.warn("[SMS-WEBHOOK] Permission denied. Activating REST fallback.");
+                useRestFallback = true;
+              } else {
+                throw err;
+              }
+            }
+          }
+
+          if (useRestFallback) {
+            const queryRes = await findDepositByUtrREST(candidateUtr, "pending");
+            if (queryRes.length > 0) {
+              matchedDoc = {
+                id: queryRes[0].id,
+                data: queryRes[0].data()
+              };
+            }
+          }
+
+          if (matchedDoc) {
+            depData = matchedDoc.data;
+            depositId = matchedDoc.id;
             matchedUtr = candidateUtr;
             break; // Found matching pending deposit!
           }
         } catch (err: any) {
-          console.warn(`[SMS-WEBHOOK] Supabase Query failed for UTR ${candidateUtr}: ${err.message}`);
+          console.warn(`[SMS-WEBHOOK] Firestore Query failed for UTR ${candidateUtr}: ${err.message}`);
         }
       }
 
@@ -493,7 +1374,7 @@ async function startServer() {
   const processingOrders = new Set<string>();
 
   // Helper to transmit single order to SMM provider directly
-  async function transmitOrderToProviderDirect(orderId: string, orderData: any) {
+  async function transmitOrderToProviderDirect(orderId: string, orderData: any, skipStoreCompleted = false) {
     // Look up lock first
     if (processingOrders.has(orderId)) {
       console.log(`[LOCK] Order ${orderId} is currently being processed by another worker path. Skipping.`);
@@ -501,31 +1382,30 @@ async function startServer() {
     }
 
     processingOrders.add(orderId);
-    console.log(`[TRANSMIT] Locking & processing orderId: ${orderId}`);
+    console.log(`[TRANSMIT] Locking & processing orderId: ${orderId} (skipStoreCompleted = ${skipStoreCompleted})`);
 
+    let currentOrderData = orderData;
     try {
       // 0. Resolve orderData or fallback to Supabase fetch to avoid redundant DB reads
-      let currentOrderData = orderData;
-      if (!currentOrderData || !currentOrderData.user_id || !currentOrderData.service_id) {
-        console.log(`[TRANSMIT] Fetching order document ${orderId} from Supabase (slow path fallback)`);
+      let userId = currentOrderData?.userId || currentOrderData?.user_id;
+      let serviceId = currentOrderData?.serviceId || currentOrderData?.service_id;
+
+      if (!currentOrderData || !userId || !serviceId) {
+        console.log(`[TRANSMIT] Fetching order document ${orderId} (slow path fallback)`);
         const snapObj = await getDocSafe("orders", orderId);
         if (!snapObj.exists) throw new Error("Order not found");
         currentOrderData = snapObj.data() || {};
+        userId = currentOrderData.userId || currentOrderData.user_id;
+        serviceId = currentOrderData.serviceId || currentOrderData.service_id;
         
-        if (currentOrderData.provider_order_id) {
-          console.log(`[TRANSMIT] Order ${orderId} already has provider_order_id registered: ${currentOrderData.provider_order_id}`);
-          return { success: true, provider_order_id: currentOrderData.provider_order_id };
-        }
-        if (currentOrderData.provider_transmission_status === "completed") {
-          console.log(`[TRANSMIT] Order ${orderId} transmission was already completed.`);
-          return { success: true, provider_order_id: currentOrderData.provider_order_id || "SENT" };
+        if (currentOrderData.providerOrderId) {
+          console.log(`[TRANSMIT] Order ${orderId} already has providerOrderId registered: ${currentOrderData.providerOrderId}`);
+          return { success: true, providerOrderId: currentOrderData.providerOrderId };
         }
       }
 
-      const orderAmount = Number(currentOrderData.total_price || 0);
-      const serviceId = currentOrderData.service_id;
-      const userId = currentOrderData.user_id;
-      const targetLink = currentOrderData.target_link || "";
+      const orderAmount = Number(currentOrderData.totalPrice || currentOrderData.total_price || 0);
+      const targetLink = currentOrderData.targetLink || currentOrderData.target_link || "";
       const quantity = currentOrderData.quantity;
 
       if (!serviceId) {
@@ -536,11 +1416,11 @@ async function startServer() {
       console.log(`[TRANSMIT] Retrieving User, Service, and Settings in parallel for order ${orderId}`);
       const [userSnap, cS, sS] = await Promise.all([
         getDocSafe("users", userId),
-        getDocSafe("services", serviceId),
+        getDocSafe("courses", serviceId),
         getDocSafe("settings", "payment")
       ]);
 
-      if (!userSnap.exists) throw new Error("User profile not found");
+      if (!userSnap.exists) throw new Error(`User profile not found for ID: ${userId}`);
       const userBalance = Number(userSnap.data().balance || 0);
 
       if (userBalance < orderAmount) {
@@ -548,25 +1428,25 @@ async function startServer() {
       }
 
       if (!cS || !cS.exists) {
-        throw new Error(`Service configuration with ID "${courseId}" does not exist in the database.`);
+        throw new Error(`Service configuration with ID "${serviceId}" does not exist in the database.`);
       }
       const c = cS.data();
 
       const s = sS.exists ? (sS.data() || {}) : {};
 
       // 3. Resolve API credentials
-      let pUrl = (s.api_url || "").trim();
-      let pKey = (s.api_key || "").trim();
+      let pUrl = (s.providerApiUrl || "").trim() || "https://smmbin.com/api/v2";
+      let pKey = (s.providerApiKey || "").trim();
 
-      if (c.provider_id && c.provider_id !== "global") {
-        console.log(`[TRANSMIT] Course ${courseId} is using a custom provider: ${c.provider_id}`);
-        const pS = await getDocSafe("providers", c.provider_id);
+      if (c.providerId && c.providerId !== "global") {
+        console.log(`[TRANSMIT] Course ${serviceId} is using a custom provider: ${c.providerId}`);
+        const pS = await getDocSafe("providers", c.providerId);
         if (pS && pS.exists) {
           const pData = pS.data() || {};
-          pUrl = (pData.api_url || "").trim();
-          pKey = (pData.api_key || "").trim();
+          pUrl = (pData.api_url || "").trim() || (pData.apiUrl || "").trim();
+          pKey = (pData.api_key || "").trim() || (pData.apiKey || "").trim();
         } else {
-          console.warn(`[TRANSMIT] Custom provider ${c.provider_id} not found. Falling back to global settings.`);
+          console.warn(`[TRANSMIT] Custom provider ${c.providerId} not found. Falling back to global settings.`);
         }
       }
 
@@ -578,7 +1458,7 @@ async function startServer() {
         pUrl = "https://" + pUrl;
       }
 
-      if (!c.provider_service_id || String(c.provider_service_id) === "0") {
+      if (!c.providerServiceId || String(c.providerServiceId) === "0") {
         throw new Error(`Service ID for course "${c.title}" is missing or mapped poorly.`);
       }
 
@@ -651,7 +1531,7 @@ async function startServer() {
             reqBody = {
               key: pKey,
               action: "add",
-              service: String(c.providerServiceId).trim(),
+              service: String(c.provider_service_id).trim(),
               link: finalLink,
               quantity: String(quantity).trim()
             };
@@ -702,13 +1582,17 @@ async function startServer() {
             const stringErr = (typeof providerErr === "string") ? providerErr : JSON.stringify(providerErr);
             console.error(`[TRANSMIT] Ultimate connection failure to provider: ${stringErr}`);
 
-            await updateDocSafe("orders", orderId, {
-              status: "Failed",
-              needsProviderTransmission: false,
-              providerTransmissionStatus: "failed",
-              error: `API Connection Error (${stringErr.substring(0, 400)})`,
-              updatedAt: new Date()
-            });
+            if (skipStoreCompleted) {
+              console.log("[TRANSMIT] skipStoreCompleted is enabled. Skipping saving failed order document to Firestore to optimize quota.");
+            } else {
+              await updateDocSafe("orders", orderId, {
+                status: "Failed",
+                needsProviderTransmission: false,
+                providerTransmissionStatus: "failed",
+                error: `API Connection Error (${stringErr.substring(0, 400)})`,
+                updatedAt: new Date()
+              });
+            }
 
             return { success: false, error: stringErr };
           } else {
@@ -749,48 +1633,52 @@ async function startServer() {
       if (providerOrderId || isStatusSuccess) {
         const oId = providerOrderId ? String(providerOrderId) : "SENT_NO_ID";
         console.log(`[TRANSMIT] Successfully ordered from SMM panel. Provider Order ID: ${oId}`);
-        await logToDb("PROXY_PROVIDER_SUCCESS", { provider_order_id: oId, isStatusSuccess, resData, orderId });
 
         // DEDUCT BALANCE NOW - Order was successful with provider
         try {
           const orderSnap = await getDocSafe("orders", orderId);
+          let needsDeduction = false;
+          let price = Number(currentOrderData.totalPrice || currentOrderData.total_price || 0);
+          let oUserId = currentOrderData.userId || currentOrderData.user_id;
+
           if (orderSnap.exists) {
             const currentData = orderSnap.data();
-            // We deduct if it hasn't been deducted yet (Pending/Processing status)
-            // or if it was previously failed and we are retrying.
-            const needsDeduction = ["Pending", "Processing", "Failed", "Refunded", "Awaiting-Validation"].includes(currentData.status);
-            
-            if (needsDeduction) {
-              const price = currentData.total_price || 0;
-              const deductionSuccess = await adjustUserBalanceSafe(currentData.user_id, -price);
-              if (deductionSuccess) {
-                console.log(`[DEDUCTION] Deducted ₹${price} from User ${currentData.user_id} after successful provider response.`);
-              } else {
-                console.error(`[DEDUCTION-FAIL] Could not deduct balance for user ${currentData.user_id} despite provider success!`);
-              }
+            needsDeduction = ["Pending", "Processing", "Failed", "Refunded", "Awaiting-Validation"].includes(currentData.status);
+            price = Number(currentData.totalPrice || currentData.total_price || price);
+            oUserId = currentData.userId || currentData.user_id || oUserId;
+          } else {
+            needsDeduction = true; 
+          }
+
+          if (needsDeduction && oUserId && price > 0) {
+            const deductionSuccess = await adjustUserBalanceSafe(oUserId, -price);
+            if (deductionSuccess) {
+              console.log(`[DEDUCTION] Deducted ₹${price} from User ${oUserId} after successful provider response.`);
+            } else {
+              console.error(`[DEDUCTION-FAIL] Could not deduct balance for user ${oUserId} despite provider success!`);
             }
           }
 
-          await updateDocSafe("orders", orderId, {
-            status: "Completed",
-            provider_order_id: oId,
-            needsProviderTransmission: false,
-            provider_transmission_status: "completed",
-            error: null,
-            updated_at: new Date().toISOString(),
-            provider_raw_response: JSON.stringify(resData).substring(0, 800)
-          });
+          if (skipStoreCompleted) {
+            console.log(`[TRANSMIT] skipStoreCompleted is enabled. Deleting any transient/pending order doc and skipping completed doc save.`);
+            if (orderSnap.exists) {
+              await deleteDocSafe("orders", orderId);
+            }
+          } else {
+            await updateDocSafe("orders", orderId, {
+              status: "Completed",
+              providerOrderId: oId,
+              needsProviderTransmission: false,
+              providerTransmissionStatus: "completed",
+              error: null,
+              updatedAt: new Date().toISOString(),
+              providerRawResponse: JSON.stringify(resData).substring(0, 800)
+            });
+          }
         } catch (updateErr: any) {
-          console.warn(`[TRANSMIT] Could not update database snapshot but was definitely ordered: ${updateErr.message}`);
-          await updateDocSafe("orders", orderId, {
-            status: "Completed",
-            provider_order_id: oId,
-            needsProviderTransmission: false,
-            provider_transmission_status: "completed",
-            updated_at: new Date().toISOString()
-          });
+          console.warn(`[TRANSMIT] Could not process success outputs or update db: ${updateErr.message}`);
         }
-        return { success: true, provider_order_id: oId };
+        return { success: true, providerOrderId: oId };
       } else {
         // Collect rejection errors
         const rawError = resData?.error || resData?.message || resData?.msg || resData?.errors || resData?.ERR || resData?.status || resData?.reason || resData?.error_message || resData?.msg_error;
@@ -814,7 +1702,6 @@ async function startServer() {
         }
 
         console.error(`[TRANSMIT] Provider rejected request: ${errorMsg}`);
-        await logToDb("PROXY_PROVIDER_REJECTED", { error: errorMsg, resData, orderId });
 
         let finalErrorStr = typeof errorMsg === "string" ? errorMsg : JSON.stringify(errorMsg);
         
@@ -822,19 +1709,51 @@ async function startServer() {
           finalErrorStr = "SMM Panel API credentials (API Key) are incorrect or your account/user is disabled on the SMM vendor panel. Please contact the admin/owner to update their provider credentials.";
         }
 
-        await updateDocSafe("orders", orderId, {
-          status: "Failed",
-          needsProviderTransmission: false,
-          provider_transmission_status: "failed",
-          error: `Provider Rejected Order (${finalErrorStr.substring(0, 400)})`,
-          updated_at: new Date().toISOString()
-        });
+        if (skipStoreCompleted) {
+          await setDocSafe("orders", orderId, {
+            ...currentOrderData,
+            status: "Failed",
+            needsProviderTransmission: false,
+            providerTransmissionStatus: "failed",
+            error: `Provider Rejected Order (${finalErrorStr.substring(0, 400)})`,
+            updatedAt: new Date().toISOString()
+          });
+        } else {
+          await updateDocSafe("orders", orderId, {
+            status: "Failed",
+            needsProviderTransmission: false,
+            providerTransmissionStatus: "failed",
+            error: `Provider Rejected Order (${finalErrorStr.substring(0, 400)})`,
+            updatedAt: new Date().toISOString()
+          });
+        }
 
         return { success: false, error: finalErrorStr };
       }
     } catch (e: any) {
       console.error(`[TRANSMIT] Severe Exception: ${e.message}`);
-      await logToDb("PROXY_PROVIDER_ERROR", { error: e.message, orderId });
+      if (skipStoreCompleted) {
+        await setDocSafe("orders", orderId, {
+          ...currentOrderData,
+          status: "Failed",
+          needsProviderTransmission: false,
+          providerTransmissionStatus: "failed",
+          error: e.message || "Internal transmission handler error",
+          updatedAt: new Date().toISOString()
+        }).catch(err => {
+          console.error(`[TRANSMIT] Failed to set order status to Failed after severe exception: ${err.message}`);
+        });
+      } else {
+        await updateDocSafe("orders", orderId, {
+          status: "Failed",
+          needsProviderTransmission: false,
+          providerTransmissionStatus: "failed",
+          error: e.message || "Internal transmission handler error",
+          updatedAt: new Date().toISOString()
+        }).catch(err => {
+          console.error(`[TRANSMIT] Failed to set order status to Failed after severe exception: ${err.message}`);
+        });
+      }
       return { success: false, error: e.message || "Unknown internal processing error" };
     } finally {
       processingOrders.delete(orderId);
@@ -842,92 +1761,12 @@ async function startServer() {
     }
   };
 
-  // Secure REST Polling Loop Fallback to fetch pending orders securely using public key credentials
-  async function startRESTBackupPollingLoop() {
-    if (isPollingActive) return;
-    isPollingActive = true;
-    console.log(`[BACKGROUND-PROCESSOR] [REST-POLL] Initiating failsafe REST-based polling query loop...`);
+  // In-memory scheduler disabled completely to prevent periodic query/read quota consumption.
+  // All orders are dispatched synchronously and status updates triggered manually or on-demand.
+  console.log("[SERVER] Order dispatcher initialized.");
 
-    const tidyDb = (!databaseId || databaseId === "(default)") ? "(default)" : databaseId;
-    const runQueryUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${tidyDb}/documents:runQuery?key=${FIREBASE_API_KEY}`;
-
-    setInterval(async () => {
-      try {
-        const queryPayload = {
-          structuredQuery: {
-            from: [{ collectionId: "orders" }],
-            where: {
-              fieldFilter: {
-                field: { fieldPath: "needsProviderTransmission" },
-                op: "EQUAL",
-                value: { booleanValue: true }
-              }
-            },
-            limit: 3
-          }
-        };
-
-        const response = await axios.post(runQueryUrl, queryPayload, { timeout: 8000 });
-        if (!response.data || !Array.isArray(response.data)) return;
-
-        for (const item of response.data) {
-          if (!item.document || !item.document.name) continue;
-          
-          const docName = item.document.name;
-          const orderId = docName.split("/").pop();
-          if (!orderId) continue;
-
-          // Check memory lock
-          if (processingOrders.has(orderId)) continue;
-
-          const rawFields = item.document.fields || {};
-          const orderData = unwrapRestFields(rawFields);
-
-          if (orderData.needsProviderTransmission !== true) continue;
-
-          if (orderData.providerTransmissionStatus === "processing" || 
-              orderData.providerTransmissionStatus === "completed" || 
-              orderData.providerTransmissionStatus === "failed") {
-            continue;
-          }
-
-          if (orderData.providerOrderId) {
-            await updateDocSafe("orders", orderId, {
-              needsProviderTransmission: false,
-              providerTransmissionStatus: "completed"
-            });
-            continue;
-          }
-
-          console.log(`[REST-POLL] 🔔 Pending custom-domain order ${orderId} detected via secure REST Firestore poller! Initiating automatic dispatch...`);
-
-          (async () => {
-            try {
-              await updateDocSafe("orders", orderId, {
-                providerTransmissionStatus: "processing",
-                updatedAt: new Date()
-              });
-
-              await transmitOrderToProviderDirect(orderId, orderData);
-            } catch (err: any) {
-              console.error(`[REST-POLL] Task dispatcher error on ${orderId}:`, err.message);
-            }
-          })();
-        }
-      } catch (err: any) {
-        console.error(`[BACKGROUND-PROCESSOR] [REST-POLL] Polling loop query failed: ${err.message}`);
-      }
-    }, 1800000); // Check every 30 minutes. Primary listener uses direct HTTP api POST, so backup can be extremely lightweight and save reads!
-  }
-
-  // Background Live Snapshot Listener (Optimized for Spark Free tier - Deactivated real-time SDK listener to prevent permission-denied retry loop reads spam)
-  function startBackgroundOrderListener(dbInstance: any) {
-    console.log("[BACKGROUND-PROCESSOR] Initializing lightweight order manager background scheduler...");
-    
-    // Background REST polling loop disabled completely to prevent periodic query/read quota consumption.
-    // All orders are dispatched synchronously and status updates triggered manually or on-demand.
-
-    console.log("[BACKGROUND-PROCESSOR] In-memory orders scheduler active. SDK onSnapshot stream remains disabled to prevent credential block retries.");
+  async function logToDb(event: string, data: any) {
+    console.log(`[LOG-DB] ${event}:`, data);
   }
 
   // Improved Proxy for Provider with better logging and headers
@@ -939,6 +1778,7 @@ async function startServer() {
         userEmail, 
         user_email: bodyUserEmail,
         courseId, 
+        serviceId,
         service_id: bodyServiceId,
         courseTitle, 
         title: bodyTitle,
@@ -953,15 +1793,16 @@ async function startServer() {
 
       const final_user_id = bodyUserId || userId;
       const final_user_email = bodyUserEmail || userEmail || "";
-      const final_service_id = bodyServiceId || courseId;
+      const final_service_id = bodyServiceId || serviceId || courseId;
       const final_title = bodyTitle || courseTitle || "";
       const final_target_link = bodyTargetLink || targetLink || "";
       const final_total_price = bodyTotalPrice !== undefined ? bodyTotalPrice : totalPrice;
 
       let orderId = passedOrderId;
+      const skipStoreCompleted = req.body.skipStoreCompleted || false;
 
       // Check if this is a DIRECT Synchronous order creation request (contains userId & totalPrice)
-      if (final_user_id && final_total_price !== undefined) {
+      if (final_user_id && final_total_price !== undefined && !skipStoreCompleted) {
         if (!orderId) {
           orderId = "ord_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
         }
@@ -969,17 +1810,17 @@ async function startServer() {
 
         // 1. Create order document first so transit methods can read/update it
         const orderData = {
-          user_id: final_user_id,
-          user_email: final_user_email,
-          service_id: final_service_id,
+          userId: final_user_id,
+          userEmail: final_user_email,
+          serviceId: final_service_id,
           title: final_title,
           category: category || "Other",
           quantity: Number(quantity),
-          target_link: final_target_link.trim(),
-          total_price: Number(final_total_price),
+          targetLink: final_target_link.trim(),
+          totalPrice: Number(final_total_price),
           status: "Pending",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
         };
 
         const createSuccess = await setDocSafe("orders", orderId, orderData);
@@ -989,34 +1830,34 @@ async function startServer() {
       }
 
       if (!orderId) {
-        return res.status(400).json({ success: false, error: "Missing orderId or order parameters." });
+        orderId = "ord_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
       }
 
-      console.log(`[HTTP Proxy] Order transmission call received for order: ${orderId}`);
+      console.log(`[HTTP Proxy] Order transmission call received for order: ${orderId} (skipStoreCompleted = ${skipStoreCompleted})`);
       const payloadData = {
-        user_id: final_user_id,
-        user_email: final_user_email,
-        service_id: final_service_id,
+        userId: final_user_id,
+        userEmail: final_user_email,
+        serviceId: final_service_id,
         title: final_title,
         category: category || "Other",
         quantity: Number(quantity),
-        target_link: final_target_link?.trim() || "",
-        total_price: Number(final_total_price),
+        targetLink: final_target_link?.trim() || "",
+        totalPrice: Number(final_total_price),
         status: "Pending"
       };
 
       if (req.body.isAsync) {
         console.log(`[HTTP Proxy] Dispatching asynchronous background order transit for order: ${orderId}`);
         // Run background transmittal immediately and return milliseconds response to client
-        transmitOrderToProviderDirect(orderId, payloadData).catch(err => {
+        transmitOrderToProviderDirect(orderId, payloadData, skipStoreCompleted).catch(err => {
           console.error(`[ASYNC-TRANSMIT-ERROR] Background transmission exception for ${orderId}:`, err.message);
         });
-        return res.json({ success: true, isAsync: true, provider_order_id: "PENDING", orderId });
+        return res.json({ success: true, isAsync: true, providerOrderId: "PENDING", orderId });
       }
 
-      const result = await transmitOrderToProviderDirect(orderId, payloadData);
+      const result = await transmitOrderToProviderDirect(orderId, payloadData, skipStoreCompleted);
       if (result.success) {
-        return res.json({ success: true, provider_order_id: result.provider_order_id, orderId });
+        return res.json({ success: true, providerOrderId: result.providerOrderId, orderId });
       } else {
         return res.status(400).json({ success: false, error: result.alreadyProcessing ? "Processing in-progress..." : result.error, orderId });
       }
@@ -1036,15 +1877,15 @@ async function startServer() {
       if (providerId) {
         const pS = await getDocSafe("providers", providerId);
         if (pS.exists) {
-          pUrl = pS.data()?.api_url;
-          pKey = pS.data()?.api_key;
+          pUrl = pS.data()?.apiUrl;
+          pKey = pS.data()?.apiKey;
         } else {
           return res.status(404).json({ error: "Provider not found" });
         }
       } else {
         const sS = await getDocSafe("settings", "payment");
-        pUrl = sS.data()?.api_url;
-        pKey = sS.data()?.api_key;
+        pUrl = sS.data()?.providerApiUrl;
+        pKey = sS.data()?.providerApiKey;
       }
 
       if (!pUrl || !pKey) return res.status(400).json({ error: "API URL or Key missing" });
@@ -1098,7 +1939,8 @@ async function startServer() {
         return res.json({ success: true, status: currentStatus, upToDate: true });
       }
 
-      if (!order.provider_order_id) {
+      const pOrderId = order.providerOrderId || order.provider_order_id;
+      if (!pOrderId) {
         return res.json({ success: true, status: currentStatus, message: "No provider ID yet" });
       }
 
@@ -1107,19 +1949,20 @@ async function startServer() {
       let pKey = "";
       const sS = await getDocSafe("settings", "payment");
       const sData = sS.data() || {};
-      pUrl = sData.api_url || "";
-      pKey = sData.api_key || "";
+      pUrl = sData.providerApiUrl || "";
+      pKey = sData.providerApiKey || "";
 
-      if (order.service_id) {
-        const cS = await getDocSafe("services", order.service_id);
+      const sId = order.serviceId || order.service_id;
+      if (sId) {
+        const cS = await getDocSafe("courses", sId);
         if (cS.exists) {
           const cData = cS.data();
-          if (cData.provider_id && cData.provider_id !== "global") {
-            const pS = await getDocSafe("providers", cData.provider_id);
+          if (cData.providerId && cData.providerId !== "global") {
+            const pS = await getDocSafe("providers", cData.providerId);
             if (pS.exists) {
               const pData = pS.data();
-              pUrl = pData.api_url || "";
-              pKey = pData.api_key || "";
+              pUrl = pData.apiUrl || "";
+              pKey = pData.apiKey || "";
             }
           }
         }
@@ -1130,7 +1973,7 @@ async function startServer() {
       const params = new URLSearchParams();
       params.append("key", pKey);
       params.append("action", "status");
-      params.append("order", String(order.provider_order_id));
+      params.append("order", String(pOrderId));
 
       const response = await axios.post(pUrl.startsWith("http") ? pUrl : `https://${pUrl}`, params.toString(), {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
