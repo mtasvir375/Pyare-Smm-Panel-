@@ -30,18 +30,16 @@ export default function App() {
     const isLocalOrPreview = origin.includes("localhost") || 
                             origin.includes("127.0.0.1") || 
                             origin.includes("ais-pre-") || 
-                            origin.includes("ais-dev-") ||
-                            origin.includes("pyaresmmpanel.online") ||
-                            origin.includes("smmpanel.online");
+                            origin.includes("ais-dev-");
 
     // 2. STAGE 1 (Synchronous Setup): Pre-set Axios baseURL instantly
-    if (isLocalOrPreview || !origin.includes(".vercel.app")) {
+    if (isLocalOrPreview) {
       axios.defaults.baseURL = origin;
       console.log(`[API] [SYNC_INIT] Same-origin routing enabled: ${origin}`);
     } else {
-      // For any external static host (like Vercel), fallback to stable Cloud Run backend
+      // For any custom domain or external static host (like Vercel/Cloudflare), route directly to Cloud Run backend
       axios.defaults.baseURL = activeBackendUrl;
-      console.log(`[API] [SYNC_INIT] External host detected. Fallback routing to Cloud Run backend: ${activeBackendUrl}`);
+      console.log(`[API] [SYNC_INIT] External/Custom domain detected. Routing API calls to Cloud Run backend: ${activeBackendUrl}`);
     }
 
     // 3. Register request interceptor (must use current state of axios.defaults.baseURL)
