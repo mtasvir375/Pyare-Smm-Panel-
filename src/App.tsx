@@ -27,19 +27,21 @@ export default function App() {
       activeBackendUrl = DEV_API_URL;
     }
 
+    // 2. STAGE 1 (Synchronous Setup): Pre-set Axios baseURL instantly
+    // For local development and Cloud Run previews, we route through same-origin.
+    // For custom domains (e.g. deployed on Vercel, Hostinger, etc.), we bypass the static hosting proxy completely
+    // and route directly to the active Cloud Run backend URL. This avoids CORS/proxy timeouts (such as Vercel's strict 10s serverless function limit).
     const isLocalOrPreview = origin.includes("localhost") || 
                             origin.includes("127.0.0.1") || 
                             origin.includes("ais-pre-") || 
                             origin.includes("ais-dev-");
 
-    // 2. STAGE 1 (Synchronous Setup): Pre-set Axios baseURL instantly
     if (isLocalOrPreview) {
       axios.defaults.baseURL = origin;
       console.log(`[API] [SYNC_INIT] Same-origin routing enabled: ${origin}`);
     } else {
-      // For any custom domain or external static host (like Vercel/Cloudflare), route directly to Cloud Run backend
       axios.defaults.baseURL = activeBackendUrl;
-      console.log(`[API] [SYNC_INIT] External/Custom domain detected. Routing API calls to Cloud Run backend: ${activeBackendUrl}`);
+      console.log(`[API] [SYNC_INIT] Custom/External domain detected: ${origin}. Routing directly to Cloud Run backend: ${activeBackendUrl}`);
     }
 
     // 3. Register request interceptor (must use current state of axios.defaults.baseURL)

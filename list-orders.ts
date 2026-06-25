@@ -42,7 +42,7 @@ async function run() {
         
         console.log(`\n========================================`);
         console.log(`ORDER ID: ${docId}`);
-        console.log(`Course / Service ID: ${fields.courseId?.stringValue}`);
+        console.log(`Course / Service ID: ${fields.serviceId?.stringValue || fields.courseId?.stringValue}`);
         console.log(`Target Link: ${fields.targetLink?.stringValue}`);
         console.log(`Quantity: ${fields.quantity?.integerValue || fields.quantity?.doubleValue || fields.quantity?.stringValue}`);
         console.log(`Status: ${fields.status?.stringValue}`);
