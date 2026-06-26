@@ -6,6 +6,7 @@ function unwrapRestFields(fields: any) {
   const result: any = {};
   for (const key in fields) {
     const val = fields[key];
+    if (!val) continue;
     if (val.stringValue !== undefined) result[key] = val.stringValue;
     else if (val.integerValue !== undefined) result[key] = parseInt(val.integerValue);
     else if (val.doubleValue !== undefined) result[key] = parseFloat(val.doubleValue);
@@ -23,32 +24,24 @@ async function run() {
     const { projectId, apiKey } = config;
     const dbId = "ai-studio-f36429fa-50a3-4e58-b960-86b1e1d0141c";
 
-    const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${dbId}/documents/orders?key=${apiKey}&pageSize=50`;
-    console.log("Fetching orders...");
+    const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${dbId}/documents/backend_logs?key=${apiKey}&pageSize=50`;
+    console.log("Fetching logs...");
     const res = await axios.get(url);
     const documents = res.data.documents || [];
-    console.log(`Found ${documents.length} orders.`);
+    console.log(`Found ${documents.length} log documents.`);
     
-    // Sort manually in memory
     const sortedDocs = documents.map((doc: any) => ({
       id: doc.name.split("/").pop(),
       fields: unwrapRestFields(doc.fields || {}),
       createTime: doc.createTime
-    })).sort((a: any, b: any) => new Date(b.fields.createdAt || b.createTime).getTime() - new Date(a.fields.createdAt || a.createTime).getTime());
+    })).sort((a: any, b: any) => new Date(b.createTime).getTime() - new Date(a.createTime).getTime());
 
     for (const doc of sortedDocs.slice(0, 15)) {
-      console.log(`\nOrder ID: ${doc.id}`);
-      console.log(`- Course/Service: ${doc.fields.courseTitle}`);
-      console.log(`- Status: ${doc.fields.status}`);
-      console.log(`- Provider Transmission Status: ${doc.fields.providerTransmissionStatus}`);
-      console.log(`- Provider Order ID: ${doc.fields.providerOrderId || "N/A"}`);
-      console.log(`- Error: ${doc.fields.error || "None"}`);
-      console.log(`- Total Price: ₹${doc.fields.totalPrice}`);
-      console.log(`- Target Link: ${doc.fields.targetLink}`);
-      console.log(`- Created At: ${doc.fields.createdAt}`);
+      console.log(`\nLog ID: ${doc.id}`);
+      console.log(`- Data:`, JSON.stringify(doc.fields, null, 2));
     }
   } catch (err: any) {
-    console.error("FAILED to fetch orders:", err.response?.data || err.message);
+    console.error("FAILED to fetch logs:", err.response?.data || err.message);
   }
 }
 
