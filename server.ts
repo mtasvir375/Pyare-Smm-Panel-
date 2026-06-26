@@ -59,7 +59,7 @@ axios.defaults.httpAgent = keepAliveHttpAgent;
         admin.initializeApp({
           projectId: projectId,
           databaseId: databaseId
-        });
+        } as any);
         console.log(`[FIREBASE] Admin SDK initialized for project ${projectId} (db: ${databaseId}) with minimal config.`);
       }
     }
@@ -174,10 +174,6 @@ async function startServer() {
 
   const getDocREST = async (collect: string, id: string) => {
     try {
-      const token = await getAccessToken();
-      const headers: any = {};
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-
       const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${dbId}/documents/${collect}/${id}?key=${apiKey}`;
       const res = await axios.get(url, { timeout: 10000 });
       if (res.data && res.data.fields) {
@@ -223,10 +219,6 @@ async function startServer() {
 
   const setDocREST = async (collect: string, id: string, data: any) => {
     try {
-      const token = await getAccessToken();
-      const headers: any = { "Content-Type": "application/json" };
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-
       const dataWithTime = { ...data, updatedAt: new Date().toISOString() };
       const keys = Object.keys(dataWithTime);
       const maskParams = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
@@ -247,10 +239,6 @@ async function startServer() {
 
   const updateDocREST = async (collect: string, id: string, data: any) => {
     try {
-      const token = await getAccessToken();
-      const headers: any = { "Content-Type": "application/json" };
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-
       const keys = Object.keys(data);
       if (keys.length === 0) return true;
       
@@ -268,17 +256,13 @@ async function startServer() {
 
   const addDocREST = async (collect: string, data: any) => {
     try {
-      const token = await getAccessToken();
-      const headers: any = { "Content-Type": "application/json" };
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-
       const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${dbId}/documents/${collect}?key=${apiKey}`;
       const fields = wrapRestFields({
         ...data,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
-      const res = await axios.post(url, { fields }, { headers, timeout: 10000 });
+      const res = await axios.post(url, { fields }, { timeout: 10000 });
       if (res.data && res.data.name) {
         return res.data.name.split("/").pop();
       }
@@ -1534,8 +1518,10 @@ async function startServer() {
           if (resolvedKey) pKey = resolvedKey;
           
           console.log(`[TRANSMIT] Resolved Provider: ${providerName} (URL: ${pUrl})`);
+          await logToDb("PROVIDER_RESOLVED", { providerName, pUrl, orderId });
         } else {
           console.warn(`[TRANSMIT] Custom provider ${c.providerId} not found. Falling back to global settings.`);
+          await logToDb("PROVIDER_MISSING", { providerId: c.providerId, orderId });
         }
       }
 
@@ -1595,13 +1581,13 @@ async function startServer() {
       const params = new URLSearchParams();
       params.append("key", pKey);
       params.append("action", "add");
-      params.append("service", String(c.providerServiceId).trim());
+      params.append("service", String(c.providerServiceId || c.provider_service_id || "0").trim());
       params.append("link", finalLink);
       params.append("quantity", String(quantity).trim());
 
       let response;
       let attempts = 0;
-      const maxAttempts = 2;
+      const maxAttempts = 3;
 
       while (attempts < maxAttempts) {
         try {
@@ -1613,7 +1599,6 @@ async function startServer() {
             const cleanedBase = targetUrl.endsWith("/") ? targetUrl.slice(0, -1) : targetUrl;
             if (attempts === 2) targetUrl = `${cleanedBase}/api/v2`;
             else if (attempts === 3) targetUrl = `${cleanedBase}/api/v2/`;
-            else if (attempts === 4) targetUrl = `${cleanedBase}/api/v1`;
           }
 
           let isDualMode = false;
@@ -1630,7 +1615,7 @@ async function startServer() {
             reqBody = {
               key: pKey,
               action: "add",
-              service: String(c.provider_service_id).trim(),
+              service: String(c.providerServiceId || c.provider_service_id || "0").trim(),
               link: finalLink,
               quantity: String(quantity).trim()
             };
@@ -1725,13 +1710,14 @@ async function startServer() {
         resData = resData[0];
       }
 
-      let providerOrderId = resData?.order || resData?.order_id || resData?.orderid || resData?.orderId || resData?.id || resData?.ID;
+      let providerOrderId = resData?.order || resData?.order_id || resData?.orderid || resData?.orderId || resData?.id || resData?.ID || resData?.data?.order || resData?.data?.order_id || resData?.data?.id;
       const isStatusSuccess = resData?.status === "success" || 
                               resData?.status === "Success" || 
                               resData?.success === true || 
                               resData?.success === "true" ||
                               resData?.msg?.toLowerCase().includes("success") ||
-                              resData?.message?.toLowerCase().includes("success");
+                              resData?.message?.toLowerCase().includes("success") ||
+                              resData?.data?.status === "success";
 
       if (!providerOrderId && typeof resData === "number") {
         providerOrderId = String(resData);
@@ -1758,13 +1744,14 @@ async function startServer() {
           }
 
           if (needsDeduction && oUserId && price > 0) {
+            console.log(`[DEDUCTION-START] Attempting to deduct ₹${price} from User ${oUserId} for order ${orderId}`);
             const deductionSuccess = await adjustUserBalanceSafe(oUserId, -price);
             if (deductionSuccess) {
-              console.log(`[DEDUCTION] Deducted ₹${price} from User ${oUserId} after successful provider response.`);
-              await logToDb("BALANCE_DEDUCTION", { userId: oUserId, amount: price, orderId });
+              console.log(`[DEDUCTION-SUCCESS] Deducted ₹${price} from User ${oUserId} after successful provider response.`);
+              await logToDb("BALANCE_DEDUCTION", { userId: oUserId, amount: price, orderId, success: true });
             } else {
               console.error(`[DEDUCTION-FAIL] Could not deduct balance for user ${oUserId} despite provider success!`);
-              await logToDb("BALANCE_DEDUCTION_FAIL", { userId: oUserId, amount: price, orderId });
+              await logToDb("BALANCE_DEDUCTION", { userId: oUserId, amount: price, orderId, success: false });
             }
           }
 

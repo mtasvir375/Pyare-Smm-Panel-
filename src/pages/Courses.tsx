@@ -212,7 +212,7 @@ export default function Courses() {
         setLastOrder(null);
         const orderId = "ord_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
 
-        // 3. Trigger synchronous proxy transmit with skipStoreCompleted flag
+        // 3. Trigger synchronous proxy transmit
         console.log(`[API Proxy Submit] Sending order ${orderId} synchronously to panel`);
         const response = await axios.post("/api/proxy-provider", {
           orderId: orderId,
@@ -225,8 +225,12 @@ export default function Courses() {
           targetLink: targetLink.trim(),
           totalPrice: totalPrice,
           isAsync: false,
-          skipStoreCompleted: true
+          skipStoreCompleted: false // Always store in database now for admin & user visibility
         });
+
+        if (!response.data || response.data.success === false) {
+          throw new Error(response.data?.error || "Provider transmission failed unexpectedly.");
+        }
 
         const pId = response.data?.providerOrderId || "SENT";
         toast.dismiss(sendingToastId);
