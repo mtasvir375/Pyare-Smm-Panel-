@@ -18,31 +18,10 @@ export default function App() {
   useEffect(() => {
     const origin = window.location.origin;
     
-    // 1. Establish stable backup backend URLs
-    const STABLE_API_URL = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
-    const DEV_API_URL = "https://ais-dev-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
-    
-    let activeBackendUrl = STABLE_API_URL;
-    if (origin.includes("ais-dev-") || origin.includes("localhost") || origin.includes("127.0.0.1")) {
-      activeBackendUrl = DEV_API_URL;
-    }
-
-    // 2. STAGE 1 (Synchronous Setup): Pre-set Axios baseURL instantly
-    // For local development and Cloud Run previews, we route through same-origin.
-    // For custom domains (e.g. deployed on Vercel, Hostinger, etc.), we bypass the static hosting proxy completely
-    // and route directly to the active Cloud Run backend URL. This avoids CORS/proxy timeouts (such as Vercel's strict 10s serverless function limit).
-    const isLocalOrPreview = origin.includes("localhost") || 
-                            origin.includes("127.0.0.1") || 
-                            origin.includes("ais-pre-") || 
-                            origin.includes("ais-dev-");
-
-    if (isLocalOrPreview) {
-      axios.defaults.baseURL = origin;
-      console.log(`[API] [SYNC_INIT] Same-origin routing enabled: ${origin}`);
-    } else {
-      axios.defaults.baseURL = activeBackendUrl;
-      console.log(`[API] [SYNC_INIT] Custom/External domain detected: ${origin}. Routing directly to Cloud Run backend: ${activeBackendUrl}`);
-    }
+    // We always use same-origin routing now because our backend and frontend are co-located
+    // (locally on port 3000, on Cloud Run previews, and natively on Vercel/Custom Domains).
+    axios.defaults.baseURL = origin;
+    console.log(`[API] [SYNC_INIT] Co-located routing enabled: ${origin}`);
 
     // 3. Register request interceptor (must use current state of axios.defaults.baseURL)
     const interceptor = axios.interceptors.request.use(

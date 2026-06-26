@@ -60,9 +60,11 @@ const fdb = getFirestore(admin.apps[0] || admin.app(), "ai-studio-f36429fa-50a3-
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
+const app = express();
+export default app;
+
 async function startServer() {
   console.log("[STARTUP] Initializing server...");
-  const app = express();
   
   app.use(express.json({ limit: "50mb" }));
   
@@ -2022,7 +2024,9 @@ async function startServer() {
     app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
   }
 
-  app.listen(PORT, "0.0.0.0", () => console.log(`[READY] Port ${PORT}`));
+  if (!process.env.VERCEL) {
+    app.listen(PORT, "0.0.0.0", () => console.log(`[READY] Port ${PORT}`));
+  }
 }
 
 startServer().catch(console.error);
