@@ -14,46 +14,19 @@ import Profile from "./pages/Profile";
 import Admin from "./pages/Admin";
 import Login from "./pages/Login";
 
-const activeBackendUrl = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
+const activeBackendUrl = "https://ais-dev-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
 
 export default function App() {
   useEffect(() => {
     const origin = window.location.origin;
-    const isLocalhost3000 = origin.includes("localhost:3000") || origin.includes("127.0.0.1:3000");
-    const isCloudRun = origin.includes(".run.app");
     
-    if (isLocalhost3000 || isCloudRun) {
-      axios.defaults.baseURL = origin;
-      console.log(`[API] [SYNC_INIT] Co-located routing enabled: ${origin}`);
-    } else {
-      axios.defaults.baseURL = activeBackendUrl;
-      console.log(`[API] [SYNC_INIT] Custom origin detected (${origin}). Routing directly to Cloud Run: ${activeBackendUrl}`);
-    }
+    // Use origin for baseURL to support relative paths and proxying (e.g. via Vercel/Custom Domain)
+    axios.defaults.baseURL = origin;
+    console.log(`[API] [SYNC_INIT] Base URL set to origin: ${origin}`);
 
-    // 3. Register request interceptor (must use current state of axios.defaults.baseURL)
-    const interceptor = axios.interceptors.request.use(
-      (config) => {
-        if (config.url && config.url.startsWith("/api/")) {
-          const base = axios.defaults.baseURL || activeBackendUrl;
-          const cleanBase = base.endsWith("/") ? base.slice(0, -1) : base;
-          config.url = `${cleanBase}${config.url}`;
-          console.log(`[API Interceptor] Fully resolved target URL: ${config.url}`);
-        }
-        return config;
-      },
-      (error) => Promise.reject(error)
-    );
-
-    // 4. STAGE 2: Self-Healing backend lookup is simplified because the app runs fully on Cloud Run.
-    // BaseURL is already pinned to origin synchronously, which eliminates the need to do Firestore reads on mount.
-    const resolveBackendUrl = async () => {
-      console.log("[API] App initialized. Using origin as identical backend target.");
-    };
-    resolveBackendUrl();
-
-    return () => {
-      axios.interceptors.request.eject(interceptor);
-    };
+    // No need for interceptor if we use baseURL correctly with relative paths
+    
+    return () => {};
   }, []);
 
   return (

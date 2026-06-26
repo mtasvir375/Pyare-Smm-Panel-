@@ -482,7 +482,7 @@ async function startServer() {
 
   // Activate auto-ensure on startup
   const ensureBackendUrlIsSet = async () => {
-    const ACTIVE_BACKEND_URL = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
+    const ACTIVE_BACKEND_URL = "https://ais-dev-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
     try {
       console.log(`[INIT] Auto-ensuring backend URL in database: ${ACTIVE_BACKEND_URL}`);
       const snap = await getDocSafe("settings", "payment");
