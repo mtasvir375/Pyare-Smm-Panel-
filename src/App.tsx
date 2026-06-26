@@ -14,14 +14,21 @@ import Profile from "./pages/Profile";
 import Admin from "./pages/Admin";
 import Login from "./pages/Login";
 
+const activeBackendUrl = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
+
 export default function App() {
   useEffect(() => {
     const origin = window.location.origin;
+    const isLocalhost3000 = origin.includes("localhost:3000") || origin.includes("127.0.0.1:3000");
+    const isCloudRun = origin.includes(".run.app");
     
-    // We always use same-origin routing now because our backend and frontend are co-located
-    // (locally on port 3000, on Cloud Run previews, and natively on Vercel/Custom Domains).
-    axios.defaults.baseURL = origin;
-    console.log(`[API] [SYNC_INIT] Co-located routing enabled: ${origin}`);
+    if (isLocalhost3000 || isCloudRun) {
+      axios.defaults.baseURL = origin;
+      console.log(`[API] [SYNC_INIT] Co-located routing enabled: ${origin}`);
+    } else {
+      axios.defaults.baseURL = activeBackendUrl;
+      console.log(`[API] [SYNC_INIT] Custom origin detected (${origin}). Routing directly to Cloud Run: ${activeBackendUrl}`);
+    }
 
     // 3. Register request interceptor (must use current state of axios.defaults.baseURL)
     const interceptor = axios.interceptors.request.use(

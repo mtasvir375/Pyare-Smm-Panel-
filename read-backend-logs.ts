@@ -26,7 +26,11 @@ async function run() {
 
     const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${dbId}/documents/backend_logs?key=${apiKey}&pageSize=50`;
     console.log("Fetching logs...");
-    const res = await axios.get(url);
+    const res = await axios.get(url, {
+      headers: {
+        "Referer": "https://gen-lang-client-0629912823.firebaseapp.com/"
+      }
+    });
     const documents = res.data.documents || [];
     console.log(`Found ${documents.length} log documents.`);
     

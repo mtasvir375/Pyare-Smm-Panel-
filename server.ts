@@ -1869,6 +1869,78 @@ async function startServer() {
     }
   });
 
+  // Test Firebase Connection Diagnostic
+  app.get("/api/test-firebase", async (req, res) => {
+    const results: any = {};
+    try {
+      results.useRestFallback = useRestFallback;
+      results.firebaseConfig = { projectId, dbId };
+      
+      // 1. Test Admin SDK
+      try {
+        const adminSnap = await fdb.collection("settings").doc("payment").get();
+        results.adminSdk = {
+          success: adminSnap.exists,
+          data: adminSnap.exists ? adminSnap.data() : null,
+          exists: adminSnap.exists
+        };
+      } catch (adminErr: any) {
+        results.adminSdk = {
+          success: false,
+          error: adminErr.message,
+          code: adminErr.code
+        };
+      }
+
+      // 2. Test REST SDK
+      try {
+        const restResult = await getDocREST("settings", "payment");
+        results.restSdk = {
+          success: restResult.exists,
+          data: restResult.exists ? restResult.data() : null
+        };
+      } catch (restErr: any) {
+        results.restSdk = {
+          success: false,
+          error: restErr.message
+        };
+      }
+
+      // 3. Test Course Fetch
+      try {
+        const coursesList: any[] = [];
+        if (!useRestFallback) {
+          const snap = await fdb.collection("courses").limit(5).get();
+          snap.forEach(doc => {
+            coursesList.push({ id: doc.id, ...doc.data() });
+          });
+        } else {
+          // REST query for courses
+          const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${dbId}/documents/courses?key=${apiKey}&pageSize=5`;
+          const cRes = await axios.get(url);
+          const docs = cRes.data.documents || [];
+          docs.forEach((doc: any) => {
+            coursesList.push({ id: doc.name.split("/").pop(), ...unwrapRestFields(doc.fields || {}) });
+          });
+        }
+        results.courses = {
+          success: true,
+          count: coursesList.length,
+          items: coursesList.map(c => ({ id: c.id, title: c.title, providerServiceId: c.providerServiceId || c.provider_service_id }))
+        };
+      } catch (cErr: any) {
+        results.courses = {
+          success: false,
+          error: cErr.response?.data || cErr.message
+        };
+      }
+
+      return res.json(results);
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
   // Test Provider API
   app.post("/api/test-provider", async (req, res) => {
     try {
