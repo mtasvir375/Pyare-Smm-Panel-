@@ -1,5 +1,6 @@
 {
   "hosting": {
+    "site": "gen-lang-client-0629912823",
     "public": "dist",
     "ignore": [
       "firebase.json",
