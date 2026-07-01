@@ -661,13 +661,23 @@ async function startServer() {
 
       // Sort services by category priority
       const categoryOrder = ["Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Twitter", "Other"];
+      const getTimestamp = (item: any) => {
+        const val = item.updatedAt || item.updated_at || item.createdAt || item.created_at;
+        if (!val) return 0;
+        if (typeof val.toDate === "function") return val.toDate().getTime();
+        if (typeof val.seconds === "number") return val.seconds * 1000;
+        if (val._seconds !== undefined) return val._seconds * 1000;
+        const t = new Date(val).getTime();
+        return isNaN(t) ? 0 : t;
+      };
+
       activeServices.sort((a: any, b: any) => {
         const orderA = categoryOrder.indexOf(a.category) === -1 ? 99 : categoryOrder.indexOf(a.category);
         const orderB = categoryOrder.indexOf(b.category) === -1 ? 99 : categoryOrder.indexOf(b.category);
         if (orderA !== orderB) return orderA - orderB;
         
-        const timeA = new Date(a.updated_at || a.created_at || 0).getTime();
-        const timeB = new Date(b.updated_at || b.created_at || 0).getTime();
+        const timeA = getTimestamp(a);
+        const timeB = getTimestamp(b);
         return timeB - timeA;
       });
 

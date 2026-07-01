@@ -42,14 +42,23 @@ export const getCachedCourses = async (forceRefresh = false) => {
           const parsed = JSON.parse(lsData);
           // Always ensure sorting on retrieval
           const categoryOrder = ["Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Twitter", "Other"];
+          const getTimestamp = (item: any) => {
+            const val = item.updatedAt || item.updated_at || item.createdAt || item.created_at;
+            if (!val) return 0;
+            if (typeof val.toDate === "function") return val.toDate().getTime();
+            if (typeof val.seconds === "number") return val.seconds * 1000;
+            if (val._seconds !== undefined) return val._seconds * 1000;
+            const t = new Date(val).getTime();
+            return isNaN(t) ? 0 : t;
+          };
+
           parsed.sort((a: any, b: any) => {
             const orderA = categoryOrder.indexOf(a.category) === -1 ? 99 : categoryOrder.indexOf(a.category);
             const orderB = categoryOrder.indexOf(b.category) === -1 ? 99 : categoryOrder.indexOf(b.category);
             if (orderA !== orderB) return orderA - orderB;
             
-            // Secondary sort by updatedAt preferred, fallback to createdAt (latest first)
-            const timeA = a.updatedAt?.seconds || a.createdAt?.seconds || 0;
-            const timeB = b.updatedAt?.seconds || b.createdAt?.seconds || 0;
+            const timeA = getTimestamp(a);
+            const timeB = getTimestamp(b);
             return timeB - timeA;
           });
           cachedCourses = parsed;
@@ -120,13 +129,23 @@ export const getCachedCourses = async (forceRefresh = false) => {
       const activeServices = fetchedCourses.filter((s: any) => s.status !== "archived" && s.status !== "hidden");
 
       const categoryOrder = ["Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Twitter", "Other"];
+      const getTimestamp = (item: any) => {
+        const val = item.updatedAt || item.updated_at || item.createdAt || item.created_at;
+        if (!val) return 0;
+        if (typeof val.toDate === "function") return val.toDate().getTime();
+        if (typeof val.seconds === "number") return val.seconds * 1000;
+        if (val._seconds !== undefined) return val._seconds * 1000;
+        const t = new Date(val).getTime();
+        return isNaN(t) ? 0 : t;
+      };
+
       activeServices.sort((a: any, b: any) => {
         const orderA = categoryOrder.indexOf(a.category) === -1 ? 99 : categoryOrder.indexOf(a.category);
         const orderB = categoryOrder.indexOf(b.category) === -1 ? 99 : categoryOrder.indexOf(b.category);
         if (orderA !== orderB) return orderA - orderB;
         
-        const timeA = new Date(a.updatedAt || a.createdAt || 0).getTime();
-        const timeB = new Date(b.updatedAt || b.createdAt || 0).getTime();
+        const timeA = getTimestamp(a);
+        const timeB = getTimestamp(b);
         return timeB - timeA;
       });
 

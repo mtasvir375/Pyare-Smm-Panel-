@@ -249,6 +249,18 @@ export default function Admin() {
           );
         }
 
+        // Sort by updatedAt descending (preferred), fallback to createdAt descending
+        const getTimestamp = (item: any) => {
+          const val = item.updatedAt || item.updated_at || item.createdAt || item.created_at;
+          if (!val) return 0;
+          if (typeof val.toDate === "function") return val.toDate().getTime();
+          if (typeof val.seconds === "number") return val.seconds * 1000;
+          if (val._seconds !== undefined) return val._seconds * 1000;
+          const t = new Date(val).getTime();
+          return isNaN(t) ? 0 : t;
+        };
+        coursesList.sort((a: any, b: any) => getTimestamp(b) - getTimestamp(a));
+
         setCourses(coursesList);
         const providersList = await dbClient.getProviders();
         setProviders(providersList);
