@@ -14,7 +14,8 @@ import {
   Copy,
   Check,
   Gift,
-  RefreshCw
+  RefreshCw,
+  Zap
 } from "lucide-react";
 
 import axios from "axios";
@@ -82,6 +83,7 @@ export default function Profile() {
   const [isRazorpayLoading, setIsRazorpayLoading] = useState(false);
   const [isPhonePeLoading, setIsPhonePeLoading] = useState(false);
   const [isPaytmLoading, setIsPaytmLoading] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<"auto" | "manual" | null>(null);
   const [paymentSettings, setPaymentSettings] = useState<{
     upiId: string;
     merchantName: string;
@@ -246,6 +248,8 @@ export default function Profile() {
         const settingsData = await getCachedSettings();
         if (settingsData) {
           setPaymentSettings(settingsData);
+          const hasAuto = !!(settingsData.razorpayEnabled || settingsData.phonepeEnabled || settingsData.paytmEnabled);
+          setPaymentMethod(hasAuto ? "auto" : "manual");
         }
       } catch (error) {
         console.error("Error fetching settings:", error);
@@ -389,7 +393,20 @@ export default function Profile() {
       icon: Wallet, 
       label: "Add Funds", 
       color: "text-blue-600", 
-      onClick: () => setIsAddFundsOpen(true),
+      onClick: async () => {
+        setIsAddFundsOpen(true);
+        try {
+          const { getCachedSettings } = await import("@/lib/cache");
+          const settingsData = await getCachedSettings(true); // Force-refresh settings on open
+          if (settingsData) {
+            setPaymentSettings(settingsData);
+            const hasAuto = !!(settingsData.razorpayEnabled || settingsData.phonepeEnabled || settingsData.paytmEnabled);
+            setPaymentMethod(hasAuto ? "auto" : "manual");
+          }
+        } catch (error) {
+          console.error("Error force refreshing settings on open:", error);
+        }
+      },
       value: `₹${Number(profile?.balance || 0).toFixed(2)}`
     },
     { 
@@ -503,170 +520,205 @@ export default function Profile() {
               />
             </div>
 
-            {((paymentSettings?.razorpayEnabled || paymentSettings?.phonepeEnabled || paymentSettings?.paytmEnabled) && amount && Number(amount) > 0) && (
-              <div className="space-y-2 pt-2 animate-in fade-in slide-in-from-top-2">
-                <div className="relative flex items-center py-2">
-                  <div className="flex-grow border-t border-gray-100"></div>
-                  <span className="flex-shrink mx-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Automatic Payment</span>
-                  <div className="flex-grow border-t border-gray-100"></div>
-                </div>
-
-                {paymentSettings?.razorpayEnabled && (
-                  <Button 
-                    onClick={handleRazorpayPayment}
-                    disabled={isRazorpayLoading}
-                    className="w-full h-12 rounded-2xl bg-[#3395FF] hover:bg-[#2085ee] text-white font-bold flex items-center justify-center gap-2 mb-2"
-                  >
-                    {isRazorpayLoading ? (
-                      <RefreshCw className="w-5 h-5 animate-spin" />
-                    ) : (
-                      <>
-                        <Wallet className="w-5 h-5" />
-                        Pay with Razorpay (Instant)
-                      </>
-                    )}
-                  </Button>
-                )}
-
-                {paymentSettings?.phonepeEnabled && (
-                  <Button 
-                    onClick={handlePhonePePayment}
-                    disabled={isPhonePeLoading}
-                    className="w-full h-12 rounded-2xl bg-[#5f259f] hover:bg-[#4d1d82] text-white font-bold flex items-center justify-center gap-2 mb-2"
-                  >
-                    {isPhonePeLoading ? (
-                      <RefreshCw className="w-5 h-5 animate-spin" />
-                    ) : (
-                      <>
-                        <Wallet className="w-5 h-5" />
-                        Pay with PhonePe (Instant)
-                      </>
-                    )}
-                  </Button>
-                )}
-
-                {paymentSettings?.paytmEnabled && (
-                  <Button 
-                    onClick={handlePaytmPayment}
-                    disabled={isPaytmLoading}
-                    className="w-full h-12 rounded-2xl bg-[#00b9f5] hover:bg-[#009cd0] text-white font-bold flex items-center justify-center gap-2 mb-2"
-                  >
-                    {isPaytmLoading ? (
-                      <RefreshCw className="w-5 h-5 animate-spin" />
-                    ) : (
-                      <>
-                        <Wallet className="w-5 h-5" />
-                        Pay with Paytm (Instant)
-                      </>
-                    )}
-                  </Button>
-                )}
-
-                <div className="relative flex items-center py-2">
-                  <div className="flex-grow border-t border-gray-100"></div>
-                  <span className="flex-shrink mx-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest">OR Manual QR</span>
-                  <div className="flex-grow border-t border-gray-100"></div>
-                </div>
-              </div>
-            )}
-
-            {amount && Number(amount) > 0 && paymentSettings?.upiId && (
-              <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
-                <div className="flex flex-col items-center gap-1.5 p-3 bg-primary/5 rounded-2xl border-2 border-primary/10">
-                  <div className="bg-white p-1.5 rounded-xl shadow-sm">
-                    <QRCodeSVG 
-                      value={upiLink} 
-                      size={120}
-                      level="H"
-                      includeMargin={true}
-                    />
-                  </div>
-                  <div className="text-center">
-                    <p className="text-xs font-bold text-primary">{paymentSettings.merchantName}</p>
-                    <p className="text-[9px] text-gray-500 font-medium">{paymentSettings.upiId}</p>
-                  </div>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    className="rounded-full h-6 text-[9px] font-bold px-3"
-                    onClick={() => {
-                      navigator.clipboard.writeText(paymentSettings.upiId);
-                      toast.success("UPI ID copied!");
-                    }}
-                  >
-                    <Copy className="w-3 h-3 mr-1" />
-                    Copy UPI ID
-                  </Button>
-                </div>
-
-                <div className="space-y-2">
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-gray-700">2. Transaction ID / UTR (Mandatory)</label>
-                    <Input 
-                      placeholder="Enter 12-digit UTR number" 
-                      value={utr}
-                      onChange={(e) => setUtr(e.target.value.replace(/\D/g, ''))}
-                      className="rounded-xl h-9 text-sm"
-                      inputMode="numeric"
-                    />
-                  </div>
-
-                  <div className="relative">
-                    <div className="absolute inset-0 flex items-center">
-                      <span className="w-full border-t" />
+            {(() => {
+              const hasAutoGateways = !!(paymentSettings?.razorpayEnabled || paymentSettings?.phonepeEnabled || paymentSettings?.paytmEnabled);
+              
+              return (
+                <>
+                  {hasAutoGateways && amount && Number(amount) > 0 && (
+                    <div className="grid grid-cols-2 gap-3 mb-4 mt-1">
+                      <button
+                        type="button"
+                        onClick={() => setPaymentMethod("auto")}
+                        className={`flex flex-col items-center justify-center p-3 rounded-2xl border-2 text-center transition-all ${
+                          paymentMethod === "auto" 
+                            ? "border-primary bg-primary/5 text-primary" 
+                            : "border-gray-100 hover:border-gray-200 text-gray-600"
+                        }`}
+                      >
+                        <Zap className="w-5 h-5 mb-1 text-yellow-500 fill-yellow-500 animate-pulse" />
+                        <span className="text-xs font-bold">Automatic Pay</span>
+                        <span className="text-[9px] opacity-80">Instant Credit</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPaymentMethod("manual")}
+                        className={`flex flex-col items-center justify-center p-3 rounded-2xl border-2 text-center transition-all ${
+                          paymentMethod === "manual" 
+                            ? "border-primary bg-primary/5 text-primary" 
+                            : "border-gray-100 hover:border-gray-200 text-gray-600"
+                        }`}
+                      >
+                        <QrCode className="w-5 h-5 mb-1 text-blue-500" />
+                        <span className="text-xs font-bold">Manual UPI QR</span>
+                        <span className="text-[9px] opacity-80">Needs UTR & SS</span>
+                      </button>
                     </div>
-                    <div className="relative flex justify-center text-[10px] uppercase">
-                      <span className="bg-white px-2 text-gray-500 font-bold">AND MANDATORY SCREENSHOT</span>
-                    </div>
-                  </div>
+                  )}
 
-                  <div className="space-y-1">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleImageChange}
-                      className="hidden"
-                      id="screenshot-upload"
-                    />
-                    <label
-                      htmlFor="screenshot-upload"
-                      className="flex flex-col items-center justify-center gap-1 p-3 border-2 border-dashed border-primary/20 bg-primary/5 rounded-2xl cursor-pointer hover:bg-primary/10 transition-colors"
-                    >
-                      {screenshotPreview ? (
-                        <div className="relative w-full">
-                          <img src={screenshotPreview} alt="Preview" className="w-full h-24 object-contain rounded-lg shadow-sm" />
-                          <div className="absolute top-0 right-0 bg-green-500 text-white p-1 rounded-full shadow-md">
-                            <Check className="w-2 h-2" />
+                  {paymentMethod === "auto" && hasAutoGateways && amount && Number(amount) > 0 && (
+                    <div className="space-y-2 pt-2 animate-in fade-in slide-in-from-top-2">
+                      <div className="relative flex items-center py-2">
+                        <div className="flex-grow border-t border-gray-100"></div>
+                        <span className="flex-shrink mx-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Choose Gateway</span>
+                        <div className="flex-grow border-t border-gray-100"></div>
+                      </div>
+
+                      {paymentSettings?.razorpayEnabled && (
+                        <Button 
+                          onClick={handleRazorpayPayment}
+                          disabled={isRazorpayLoading}
+                          className="w-full h-12 rounded-2xl bg-[#3395FF] hover:bg-[#2085ee] text-white font-bold flex items-center justify-center gap-2 mb-2"
+                        >
+                          {isRazorpayLoading ? (
+                            <RefreshCw className="w-5 h-5 animate-spin" />
+                          ) : (
+                            <>
+                              <Wallet className="w-5 h-5" />
+                              Pay with Razorpay (Instant)
+                            </>
+                          )}
+                        </Button>
+                      )}
+
+                      {paymentSettings?.phonepeEnabled && (
+                        <Button 
+                          onClick={handlePhonePePayment}
+                          disabled={isPhonePeLoading}
+                          className="w-full h-12 rounded-2xl bg-[#5f259f] hover:bg-[#4d1d82] text-white font-bold flex items-center justify-center gap-2 mb-2"
+                        >
+                          {isPhonePeLoading ? (
+                            <RefreshCw className="w-5 h-5 animate-spin" />
+                          ) : (
+                            <>
+                              <Wallet className="w-5 h-5" />
+                              Pay with PhonePe (Instant)
+                            </>
+                          )}
+                        </Button>
+                      )}
+
+                      {paymentSettings?.paytmEnabled && (
+                        <Button 
+                          onClick={handlePaytmPayment}
+                          disabled={isPaytmLoading}
+                          className="w-full h-12 rounded-2xl bg-[#00b9f5] hover:bg-[#009cd0] text-white font-bold flex items-center justify-center gap-2 mb-2"
+                        >
+                          {isPaytmLoading ? (
+                            <RefreshCw className="w-5 h-5 animate-spin" />
+                          ) : (
+                            <>
+                              <Wallet className="w-5 h-5" />
+                              Pay with Paytm (Instant)
+                            </>
+                          )}
+                        </Button>
+                      )}
+                    </div>
+                  )}
+
+                  {paymentMethod === "manual" && amount && Number(amount) > 0 && paymentSettings?.upiId && (
+                    <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
+                      <div className="flex flex-col items-center gap-1.5 p-3 bg-primary/5 rounded-2xl border-2 border-primary/10">
+                        <div className="bg-white p-1.5 rounded-xl shadow-sm">
+                          <QRCodeSVG 
+                            value={upiLink} 
+                            size={120}
+                            level="H"
+                            includeMargin={true}
+                          />
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xs font-bold text-primary">{paymentSettings.merchantName}</p>
+                          <p className="text-[9px] text-gray-500 font-medium">{paymentSettings.upiId}</p>
+                        </div>
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="rounded-full h-6 text-[9px] font-bold px-3"
+                          onClick={() => {
+                            navigator.clipboard.writeText(paymentSettings.upiId);
+                            toast.success("UPI ID copied!");
+                          }}
+                        >
+                          <Copy className="w-3 h-3 mr-1" />
+                          Copy UPI ID
+                        </Button>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="space-y-1">
+                          <label className="text-xs font-bold text-gray-700">2. Transaction ID / UTR (Mandatory)</label>
+                          <Input 
+                            placeholder="Enter 12-digit UTR number" 
+                            value={utr}
+                            onChange={(e) => setUtr(e.target.value.replace(/\D/g, ''))}
+                            className="rounded-xl h-9 text-sm"
+                            inputMode="numeric"
+                          />
+                        </div>
+
+                        <div className="relative">
+                          <div className="absolute inset-0 flex items-center">
+                            <span className="w-full border-t" />
+                          </div>
+                          <div className="relative flex justify-center text-[10px] uppercase">
+                            <span className="bg-white px-2 text-gray-500 font-bold">AND MANDATORY SCREENSHOT</span>
                           </div>
                         </div>
-                      ) : (
-                        <>
-                          <Upload className="w-5 h-5 text-primary/60" />
-                          <span className="text-[10px] text-primary/60 font-medium">Upload Payment Screenshot</span>
-                        </>
-                      )}
-                    </label>
-                  </div>
-                </div>
-              </div>
-            )}
 
-            {!paymentSettings?.upiId && (
-              <div className="p-4 bg-orange-50 text-orange-700 rounded-2xl text-xs border border-orange-100">
-                Payment system is currently being set up by admin. Please try again later.
-              </div>
-            )}
+                        <div className="space-y-1">
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={handleImageChange}
+                            className="hidden"
+                            id="screenshot-upload"
+                          />
+                          <label
+                            htmlFor="screenshot-upload"
+                            className="flex flex-col items-center justify-center gap-1 p-3 border-2 border-dashed border-primary/20 bg-primary/5 rounded-2xl cursor-pointer hover:bg-primary/10 transition-colors"
+                          >
+                            {screenshotPreview ? (
+                              <div className="relative w-full">
+                                <img src={screenshotPreview} alt="Preview" className="w-full h-24 object-contain rounded-lg shadow-sm" />
+                                <div className="absolute top-0 right-0 bg-green-500 text-white p-1 rounded-full shadow-md">
+                                  <Check className="w-2 h-2" />
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <Upload className="w-5 h-5 text-primary/60" />
+                                <span className="text-[10px] text-primary/60 font-medium">Upload Payment Screenshot</span>
+                              </>
+                            )}
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {!paymentSettings?.upiId && (
+                    <div className="p-4 bg-orange-50 text-orange-700 rounded-2xl text-xs border border-orange-100">
+                      Payment system is currently being set up by admin. Please try again later.
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
 
-          <DialogFooter>
-            <Button 
-              className="w-full h-12 rounded-xl text-lg font-bold" 
-              onClick={handleAddFunds}
-              disabled={isUploading || !amount || Number(amount) <= 0}
-            >
-              {isUploading ? "Verifying..." : "Confirm Payment"}
-            </Button>
-          </DialogFooter>
+          {paymentMethod === "manual" && (
+            <DialogFooter>
+              <Button 
+                className="w-full h-12 rounded-xl text-lg font-bold" 
+                onClick={handleAddFunds}
+                disabled={isUploading || !amount || Number(amount) <= 0}
+              >
+                {isUploading ? "Verifying..." : "Confirm Payment"}
+              </Button>
+            </DialogFooter>
+          )}
         </DialogContent>
       </Dialog>
       </div>
