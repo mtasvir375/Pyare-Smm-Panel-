@@ -2202,6 +2202,36 @@ async function startServer() {
     }
   });
 
+  // Explicit Sitemap Handler for Google Search Console and SEO Crawlers
+  app.get("/sitemap.xml", (req, res) => {
+    const pathsToTry = [
+      path.join(process.cwd(), "dist", "sitemap.xml"),
+      path.join(process.cwd(), "public", "sitemap.xml"),
+    ];
+    for (const p of pathsToTry) {
+      if (fs.existsSync(p)) {
+        res.header("Content-Type", "application/xml; charset=utf-8");
+        return res.sendFile(p);
+      }
+    }
+    res.status(404).send("Sitemap not found");
+  });
+
+  // Explicit Robots.txt Handler
+  app.get("/robots.txt", (req, res) => {
+    const pathsToTry = [
+      path.join(process.cwd(), "dist", "robots.txt"),
+      path.join(process.cwd(), "public", "robots.txt"),
+    ];
+    for (const p of pathsToTry) {
+      if (fs.existsSync(p)) {
+        res.header("Content-Type", "text/plain; charset=utf-8");
+        return res.sendFile(p);
+      }
+    }
+    res.status(404).send("Robots.txt not found");
+  });
+
   // Vite
   const isProductionMode = process.env.NODE_ENV === "production" || fs.existsSync(path.join(process.cwd(), 'dist'));
   if (!isProductionMode) {
