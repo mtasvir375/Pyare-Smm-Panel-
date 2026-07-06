@@ -122,8 +122,8 @@ export const dbClient = {
   },
 
   async checkDuplicateOrder(userId: string, courseId: string, link: string): Promise<boolean> {
-    // Check if any order with same link and course was placed in last 10 minutes
-    const tenMinsAgo = new Date(Date.now() - 10 * 60 * 1000);
+    // Check if any order with same link and course was placed in last 25 minutes
+    const twentyFiveMinsAgo = new Date(Date.now() - 25 * 60 * 1000);
     
     // Fetch all orders of this user with this target link to avoid complex composite index requirement
     const q = query(
@@ -152,7 +152,7 @@ export const dbClient = {
         }
       }
       
-      if (createdDate && createdDate > tenMinsAgo) {
+      if (createdDate && createdDate > twentyFiveMinsAgo) {
         return true;
       }
       return false;

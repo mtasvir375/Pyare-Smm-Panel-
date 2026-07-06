@@ -19,7 +19,7 @@ export default function Dashboard() {
   const [checkingStatus, setCheckingStatus] = useState(false);
   const statusIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastCheckedRef = useRef<number>(0);
-  const [renderLimit] = useState(3);
+  const [renderLimit] = useState(10);
 
   useEffect(() => {
     if (!user) return;
@@ -76,7 +76,7 @@ export default function Dashboard() {
       });
 
       if (isMounted) {
-        setOrders(mergedOrders.slice(0, 3));
+        setOrders(mergedOrders.slice(0, 10));
         setLoading(false);
       }
     };
@@ -217,7 +217,7 @@ export default function Dashboard() {
 
       <div className="space-y-4">
         {loading ? (
-          [1, 2, 3].map((i) => (
+          [1, 2, 3, 4, 5].map((i) => (
             <Card key={i} className="overflow-hidden border-none shadow-sm">
               <CardContent className="p-4 space-y-4">
                 <Skeleton className="h-6 w-3/4" />

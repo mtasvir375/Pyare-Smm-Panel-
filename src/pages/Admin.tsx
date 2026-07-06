@@ -1379,7 +1379,7 @@ export default function Admin() {
                   />
                   <label htmlFor="preventDuplicateLink" className="text-sm font-medium text-gray-300">
                     Prevent Duplicate Target Link
-                    <span className="block text-xs text-gray-500 font-normal mt-0.5">If checked, a target link cannot be used again for this service within 10 minutes.</span>
+                    <span className="block text-xs text-gray-500 font-normal mt-0.5">If checked, a target link cannot be used again for this service within 25 minutes.</span>
                   </label>
                 </div>
               </div>
@@ -2292,7 +2292,7 @@ export default function Admin() {
                 className="w-5 h-5 rounded border-gray-200 bg-gray-50 text-blue-600 focus:ring-blue-500"
               />
               <label htmlFor="editPreventDuplicateLink" className="text-sm font-medium text-gray-600">
-                Prevent Duplicate Target Link (10 min)
+                Prevent Duplicate Target Link (25 min)
               </label>
             </div>
           </div>
