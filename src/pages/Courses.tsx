@@ -278,17 +278,34 @@ export default function Courses() {
           params.append("quantity", String(quantity).trim());
 
           let providerRes;
-          try {
-            providerRes = await axios.post(pUrl, params, {
-              headers: { "Content-Type": "application/x-www-form-urlencoded" }
-            });
-          } catch (err: any) {
-            console.warn("Direct SMM call failed, attempting via CORS proxy fallback...", err);
-            // Fallback using AllOrigins CORS proxy
-            const proxiedUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(pUrl)}`;
-            providerRes = await axios.post(proxiedUrl, params, {
-              headers: { "Content-Type": "application/x-www-form-urlencoded" }
-            });
+          let lastErr = null;
+          
+          // List of proxy wrappers to try sequentially. Prepend CORS proxy to avoid browser-level blocking.
+          const proxies = [
+            (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+            (url: string) => `https://thingproxy.freeboard.io/fetch/${url}`,
+            (url: string) => url // Direct as final fallback
+          ];
+
+          for (const proxyFn of proxies) {
+            try {
+              const targetUrl = proxyFn(pUrl);
+              console.log(`[Custom Domain Proxy] Attempting call to SMM provider via: ${targetUrl}`);
+              providerRes = await axios.post(targetUrl, params, {
+                headers: { "Content-Type": "application/x-www-form-urlencoded" }
+              });
+              if (providerRes?.data) {
+                console.log(`[Custom Domain Proxy] Succeeded with: ${targetUrl}`);
+                break;
+              }
+            } catch (err: any) {
+              console.warn(`[Custom Domain Proxy] Proxy attempt failed:`, err);
+              lastErr = err;
+            }
+          }
+
+          if (!providerRes && lastErr) {
+            throw lastErr;
           }
 
           let resData = providerRes?.data;
