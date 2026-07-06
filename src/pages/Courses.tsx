@@ -219,245 +219,195 @@ export default function Courses() {
         }
       }
 
-      // 1. Show the loading toast immediately
-      const sendingToastId = toast.loading("Processing your service order instantly...");
+      // 1. Calculate and update balance
+      const currentBal = Number(profile?.balance || 0);
+      const newBal = Math.max(0, currentBal - totalPrice);
 
+      // 2. Prepare random order ID on demand
+      setLastOrder(null);
+      const orderId = "ord_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
+
+      // 3. Update Firestore profile balance instantly!
+      await dbClient.updateUserProfile(user.uid, { 
+        balance: newBal,
+        last_ordered_at: new Date().toISOString()
+      });
+
+      // 4. Update local UI state balance instantly!
+      if (updateUserProfileLocal) {
+        updateUserProfileLocal({ balance: newBal });
+      }
+
+      // 5. Create the order data object with status "Completed"
+      const orderData = {
+        userId: user.uid,
+        userEmail: user.email || "",
+        serviceId: selectedCourse.id,
+        title: selectedCourse.title,
+        category: selectedCourse.category || "Other",
+        quantity: Number(quantity),
+        targetLink: targetLink.trim(),
+        totalPrice: Number(totalPrice),
+        status: "Completed",
+        providerOrderId: "PROCESSING", // Will be updated by background API task
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      // 6. Save the order to Firestore instantly!
+      await dbClient.setDoc("orders", orderId, orderData);
+
+      // 7. Cache in localStorage so it shows up instantly in Dashboard
       try {
-        // 2. Prepare random order ID on demand
-        setLastOrder(null);
-        const orderId = "ord_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
+        const localOrdersKey = `local_orders_${user.uid}`;
+        const existingLocal = JSON.parse(localStorage.getItem(localOrdersKey) || "[]");
+        existingLocal.unshift(orderData);
+        localStorage.setItem(localOrdersKey, JSON.stringify(existingLocal.slice(0, 50)));
+      } catch (localErr) {
+        console.warn("[LOCAL-CACHE-ERR] Failed to cache order:", localErr);
+      }
 
-        const isNativeHost = window.location.origin.includes("localhost") || 
-                             window.location.origin.includes("127.0.0.1") || 
-                             window.location.origin.includes("-523409699457");
+      // 8. Open the success popup instantly!
+      setLastOrder(orderData);
+      setIsOrderSuccessOpen(true);
+      toast.success("Order Placed Successfully!");
+      
+      // Reset input fields instantly
+      const savedTargetLink = targetLink.trim();
+      const savedQuantity = String(quantity);
+      setTargetLink("");
+      setQuantity(String(selectedCourse.minLimit || 1000));
+      setSubmitting(false);
 
-        let pId = "SENT";
+      // 9. Fire background task to transmit the order to the SMM provider (Completely Non-Blocking)
+      const isNativeHost = window.location.origin.includes("localhost") || 
+                           window.location.origin.includes("127.0.0.1") || 
+                           window.location.origin.includes("-523409699457");
 
-        if (!isNativeHost) {
-          console.log(`[Custom Domain Mode] Processing order ${orderId} directly from browser to SMM provider to bypass AI Studio`);
-          
-          // 1. Fetch settings and provider info
-          const settingsSnap = await dbClient.getDoc("settings", "payment");
-          let pUrl = (settingsSnap?.providerApiUrl || "").trim();
-          let pKey = (settingsSnap?.providerApiKey || "").trim();
-          let providerName = "Global Settings";
+      (async () => {
+        try {
+          let pId = "SENT";
 
-          if (selectedCourse.providerId && selectedCourse.providerId !== "global") {
-            const providerSnap = await dbClient.getDoc("providers", selectedCourse.providerId);
-            if (providerSnap) {
-              providerName = providerSnap.name || selectedCourse.providerId;
-              const resolvedUrl = (providerSnap.api_url || "").trim() || (providerSnap.apiUrl || "").trim();
-              const resolvedKey = (providerSnap.api_key || "").trim() || (providerSnap.apiKey || "").trim();
-              if (resolvedUrl) pUrl = resolvedUrl;
-              if (resolvedKey) pKey = resolvedKey;
-            }
-          }
-
-          if (!pUrl) pUrl = "https://smmbin.com/api/v2";
-          if (!pKey) throw new Error(`SMM Provider API Key is missing for ${providerName}. Please update settings.`);
-
-          if (!pUrl.startsWith("http")) {
-            pUrl = "https://" + pUrl;
-          }
-
-          // Normalize Link/Username
-          let finalLink = String(targetLink).trim();
-          if (finalLink.startsWith("@")) {
-            const username = finalLink.substring(1);
-            if (selectedCourse.category?.toLowerCase().includes("instagram")) finalLink = `https://www.instagram.com/${username}/`;
-            else if (selectedCourse.category?.toLowerCase().includes("twitter") || selectedCourse.category?.toLowerCase().includes("x")) finalLink = `https://x.com/${username}/`;
-            else if (selectedCourse.category?.toLowerCase().includes("tiktok")) finalLink = `https://www.tiktok.com/@${username}`;
-          }
-
-          // Call provider
-          const params = new URLSearchParams();
-          params.append("key", pKey);
-          params.append("action", "add");
-          params.append("service", String(selectedCourse.providerServiceId || selectedCourse.provider_service_id || "0").trim());
-          params.append("link", finalLink);
-          params.append("quantity", String(quantity).trim());
-
-          let providerRes;
-          let lastErr = null;
-          
-          // List of proxy wrappers to try sequentially. Prepend CORS proxy to avoid browser-level blocking.
-          const proxies = [
-            (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-            (url: string) => `https://thingproxy.freeboard.io/fetch/${url}`,
-            (url: string) => url // Direct as final fallback
-          ];
-
-          for (const proxyFn of proxies) {
-            try {
-              const targetUrl = proxyFn(pUrl);
-              console.log(`[Custom Domain Proxy] Attempting call to SMM provider via: ${targetUrl}`);
-              providerRes = await axios.post(targetUrl, params, {
-                headers: { "Content-Type": "application/x-www-form-urlencoded" }
-              });
-              if (providerRes?.data) {
-                console.log(`[Custom Domain Proxy] Succeeded with: ${targetUrl}`);
-                break;
-              }
-            } catch (err: any) {
-              console.warn(`[Custom Domain Proxy] Proxy attempt failed:`, err);
-              lastErr = err;
-            }
-          }
-
-          if (!providerRes && lastErr) {
-            throw lastErr;
-          }
-
-          let resData = providerRes?.data;
-          if (typeof resData === "string") {
-            try {
-              const trimmed = resData.trim();
-              if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-                resData = JSON.parse(trimmed);
-              } else if (trimmed.match(/^\d+$/)) {
-                resData = { order: trimmed };
-              }
-            } catch (e) {}
-          }
-
-          if (Array.isArray(resData) && resData.length > 0) {
-            resData = resData[0];
-          }
-
-          const resolvedProviderOrderId = resData?.order || resData?.order_id || resData?.orderid || resData?.orderId || resData?.id || resData?.ID || resData?.data?.order || resData?.data?.order_id || resData?.data?.id;
-          const isStatusSuccess = resData?.status === "success" || 
-                                  resData?.status === "Success" || 
-                                  resData?.success === true || 
-                                  resData?.success === "true" ||
-                                  resData?.msg?.toLowerCase().includes("success") ||
-                                  resData?.message?.toLowerCase().includes("success") ||
-                                  resData?.data?.status === "success";
-
-          if (resolvedProviderOrderId || isStatusSuccess) {
-            pId = resolvedProviderOrderId ? String(resolvedProviderOrderId) : "SENT";
+          if (!isNativeHost) {
+            console.log(`[Custom Domain Mode] Direct Background transmit for order ${orderId}`);
             
-            // Deduct balance and Save order directly in Firestore
-            const currentBal = Number(profile?.balance || 0);
-            const newBal = Math.max(0, currentBal - totalPrice);
-            await dbClient.updateUserProfile(user.uid, { balance: newBal });
-            
-            const orderData = {
-              userId: user.uid,
-              userEmail: user.email || "",
+            // Fetch settings and provider details
+            const settingsSnap = await dbClient.getDoc("settings", "payment");
+            let pUrl = (settingsSnap?.providerApiUrl || "").trim();
+            let pKey = (settingsSnap?.providerApiKey || "").trim();
+
+            if (selectedCourse.providerId && selectedCourse.providerId !== "global") {
+              const providerSnap = await dbClient.getDoc("providers", selectedCourse.providerId);
+              if (providerSnap) {
+                const resolvedUrl = (providerSnap.api_url || "").trim() || (providerSnap.apiUrl || "").trim();
+                const resolvedKey = (providerSnap.api_key || "").trim() || (providerSnap.apiKey || "").trim();
+                if (resolvedUrl) pUrl = resolvedUrl;
+                if (resolvedKey) pKey = resolvedKey;
+              }
+            }
+
+            if (!pUrl) pUrl = "https://smmbin.com/api/v2";
+            if (!pUrl.startsWith("http")) pUrl = "https://" + pUrl;
+
+            if (pKey) {
+              // Normalize Link/Username
+              let finalLink = savedTargetLink;
+              if (finalLink.startsWith("@")) {
+                const username = finalLink.substring(1);
+                if (selectedCourse.category?.toLowerCase().includes("instagram")) finalLink = `https://www.instagram.com/${username}/`;
+                else if (selectedCourse.category?.toLowerCase().includes("twitter") || selectedCourse.category?.toLowerCase().includes("x")) finalLink = `https://x.com/${username}/`;
+                else if (selectedCourse.category?.toLowerCase().includes("tiktok")) finalLink = `https://www.tiktok.com/@${username}`;
+              }
+
+              // Params for SMM api
+              const params = new URLSearchParams();
+              params.append("key", pKey);
+              params.append("action", "add");
+              params.append("service", String(selectedCourse.providerServiceId || selectedCourse.provider_service_id || "0").trim());
+              params.append("link", finalLink);
+              params.append("quantity", savedQuantity);
+
+              let providerRes;
+              const proxies = [
+                (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+                (url: string) => `https://thingproxy.freeboard.io/fetch/${url}`,
+                (url: string) => url
+              ];
+
+              for (const proxyFn of proxies) {
+                try {
+                  const targetUrl = proxyFn(pUrl);
+                  providerRes = await axios.post(targetUrl, params, {
+                    headers: { "Content-Type": "application/x-www-form-urlencoded" }
+                  });
+                  if (providerRes?.data) break;
+                } catch (e) {
+                  console.warn("[Background Custom Proxy failed]:", e);
+                }
+              }
+
+              let resData = providerRes?.data;
+              if (typeof resData === "string") {
+                try {
+                  const trimmed = resData.trim();
+                  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+                    resData = JSON.parse(trimmed);
+                  } else if (trimmed.match(/^\d+$/)) {
+                    resData = { order: trimmed };
+                  }
+                } catch (e) {}
+              }
+
+              if (Array.isArray(resData) && resData.length > 0) {
+                resData = resData[0];
+              }
+
+              const resolvedProviderOrderId = resData?.order || resData?.order_id || resData?.orderid || resData?.orderId || resData?.id || resData?.ID || resData?.data?.order || resData?.data?.order_id || resData?.data?.id;
+              if (resolvedProviderOrderId) {
+                pId = String(resolvedProviderOrderId);
+              }
+            }
+          } else {
+            // Standard native host path: call server proxy in background
+            const response = await axios.post("/api/proxy-provider", {
+              orderId: orderId,
+              userId: user?.uid,
+              userEmail: user?.email || "",
               serviceId: selectedCourse.id,
               title: selectedCourse.title,
               category: selectedCourse.category || "Other",
-              quantity: Number(quantity),
-              targetLink: targetLink.trim(),
-              totalPrice: Number(totalPrice),
-              status: "Completed",
-              providerOrderId: pId,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
-            };
-            await dbClient.setDoc("orders", orderId, orderData);
-          } else {
-            const rawError = resData?.error || resData?.message || resData?.msg || resData?.errors || resData?.ERR || resData?.status || resData?.reason || resData?.error_message || resData?.msg_error;
-            let errorMsg = "Provider rejected the request.";
-            if (rawError) {
-              if (typeof rawError === "string") errorMsg = rawError;
-              else if (Array.isArray(rawError)) errorMsg = rawError.join(", ");
-              else if (typeof rawError === "object") errorMsg = JSON.stringify(rawError);
-            }
-            throw new Error(errorMsg);
+              quantity: Number(savedQuantity),
+              targetLink: savedTargetLink,
+              totalPrice: totalPrice,
+              isAsync: false,
+              skipStoreCompleted: true // Skip duplication in api endpoint as we saved it
+            });
+            pId = response.data?.providerOrderId || "SENT";
           }
-        } else {
-          // Standard native host path: call server proxy
-          const response = await axios.post("/api/proxy-provider", {
-            orderId: orderId,
-            userId: user?.uid,
-            userEmail: user?.email || "",
-            serviceId: selectedCourse.id,
-            title: selectedCourse.title,
-            category: selectedCourse.category || "Other",
-            quantity: Number(quantity),
-            targetLink: targetLink.trim(),
-            totalPrice: totalPrice,
-            isAsync: false,
-            skipStoreCompleted: false // Always store in database now for admin & user visibility
+
+          // Quietly update the order document in Firestore with the actual provider order ID
+          await dbClient.updateDoc("orders", orderId, {
+            providerOrderId: pId,
+            updatedAt: new Date().toISOString()
           });
 
-          if (!response.data || response.data.success === false) {
-            throw new Error(response.data?.error || "Provider transmission failed unexpectedly.");
+          console.log(`[Background Order Transmit] Success! Provider Order ID: ${pId}`);
+
+        } catch (bgError) {
+          console.error("[Background Order Transmit] Failed to transmit in background:", bgError);
+          // Update order document with Pending status and log the error details
+          try {
+            await dbClient.updateDoc("orders", orderId, {
+              status: "Pending", // Mark as Pending so admin can review
+              error: bgError instanceof Error ? bgError.message : String(bgError),
+              updatedAt: new Date().toISOString()
+            });
+          } catch (e) {
+            console.error("[Background Order Transmit] Failed to mark order as Pending:", e);
           }
-
-          pId = response.data?.providerOrderId || "SENT";
         }
+      })();
 
-        toast.dismiss(sendingToastId);
-
-        // Deduct balance instantly in local UI state without any extra Firebase reads/writes
-        if (updateUserProfileLocal) {
-          const currentBal = Number(profile?.balance || 0);
-          updateUserProfileLocal({ balance: Math.max(0, currentBal - totalPrice) });
-        }
-
-        // Increment statistics counters via quiet updates
-        try {
-          if (user?.uid) {
-            await dbClient.updateUserProfile(user.uid, { last_ordered_at: new Date().toISOString() });
-          }
-        } catch (se) {
-          console.warn("[SYNC-ORDER] Secondary stats update failed:", se);
-        }
-
-        const localOrder = {
-          userId: user?.uid,
-          userEmail: user?.email,
-          serviceId: selectedCourse.id,
-          title: selectedCourse.title,
-          category: selectedCourse.category || "Other",
-          quantity: Number(quantity),
-          targetLink: targetLink.trim(),
-          totalPrice: totalPrice,
-          status: "Completed",
-          providerOrderId: pId,
-          createdAt: new Date().toISOString()
-        };
-
-        // Cache order in localStorage so it appears in Dashboard/My Orders lists without Firebase reads
-        try {
-          const localOrdersKey = `local_orders_${user.uid}`;
-          const existingLocal = JSON.parse(localStorage.getItem(localOrdersKey) || "[]");
-          existingLocal.unshift(localOrder);
-          localStorage.setItem(localOrdersKey, JSON.stringify(existingLocal.slice(0, 50)));
-        } catch (localErr) {
-          console.warn("[LOCAL-CACHE-ERR] Failed to cache successfully transmitted order:", localErr);
-        }
-
-        setLastOrder(localOrder);
-        setIsOrderSuccessOpen(true);
-        toast.success(`Success! Order ID: ${pId}`);
-
-        setTargetLink("");
-        setQuantity(String(selectedCourse.minLimit || 1000));
-        setSubmitting(false);
-
-      } catch (proxyError: any) {
-        toast.dismiss(sendingToastId);
-        const failErr = (proxyError.response?.data?.error ? proxyError.response.data.error : null) || proxyError?.message || "Order dispatch rejected by provider";
-        toast.error(`Order Failed: ${failErr}`, { duration: 10000 });
-
-        setLastOrder({
-          userId: user?.uid,
-          userEmail: user?.email,
-          serviceId: selectedCourse.id,
-          title: selectedCourse.title,
-          category: selectedCourse.category || "Other",
-          quantity: Number(quantity),
-          targetLink: targetLink.trim(),
-          totalPrice: totalPrice,
-          status: "Failed",
-          error: failErr,
-          createdAt: new Date().toISOString()
-        });
-        setSubmitting(false);
-      }
     } catch (outerError: any) {
       toast.error(outerError?.message || "Failed to place order");
       setSubmitting(false);
