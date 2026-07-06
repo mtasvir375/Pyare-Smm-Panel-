@@ -139,6 +139,18 @@ export default function Admin() {
   const [paytmMid, setPaytmMid] = useState("");
   const [paytmMerchantKey, setPaytmMerchantKey] = useState("");
   const [paytmEnv, setPaytmEnv] = useState("sandbox");
+
+  const [customGateway1Enabled, setCustomGateway1Enabled] = useState(false);
+  const [customGateway1Name, setCustomGateway1Name] = useState("");
+  const [customGateway1Key, setCustomGateway1Key] = useState("");
+  const [customGateway1Secret, setCustomGateway1Secret] = useState("");
+  const [customGateway1Url, setCustomGateway1Url] = useState("");
+
+  const [customGateway2Enabled, setCustomGateway2Enabled] = useState(false);
+  const [customGateway2Name, setCustomGateway2Name] = useState("");
+  const [customGateway2Key, setCustomGateway2Key] = useState("");
+  const [customGateway2Secret, setCustomGateway2Secret] = useState("");
+  const [customGateway2Url, setCustomGateway2Url] = useState("");
   const [providers, setProviders] = useState<any[]>([]);
   const [newProviderName, setNewProviderName] = useState("");
   const [newProviderApiUrl, setNewProviderApiUrl] = useState("");
@@ -298,6 +310,18 @@ export default function Admin() {
           setPaytmMid(settingsData.paytmMid || "");
           setPaytmMerchantKey(settingsData.paytmMerchantKey || "");
           setPaytmEnv(settingsData.paytmEnv || "sandbox");
+
+          setCustomGateway1Enabled(settingsData.customGateway1Enabled || false);
+          setCustomGateway1Name(settingsData.customGateway1Name || "");
+          setCustomGateway1Key(settingsData.customGateway1Key || "");
+          setCustomGateway1Secret(settingsData.customGateway1Secret || "");
+          setCustomGateway1Url(settingsData.customGateway1Url || "");
+
+          setCustomGateway2Enabled(settingsData.customGateway2Enabled || false);
+          setCustomGateway2Name(settingsData.customGateway2Name || "");
+          setCustomGateway2Key(settingsData.customGateway2Key || "");
+          setCustomGateway2Secret(settingsData.customGateway2Secret || "");
+          setCustomGateway2Url(settingsData.customGateway2Url || "");
           
           const savedBackendUrl = settingsData.backendApiUrl || "";
           const activeBackendUrl = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
@@ -460,6 +484,16 @@ export default function Admin() {
         paytmMid: paytmMid.trim(),
         paytmMerchantKey: paytmMerchantKey.trim(),
         paytmEnv: paytmEnv,
+        customGateway1Enabled: customGateway1Enabled,
+        customGateway1Name: customGateway1Name.trim(),
+        customGateway1Key: customGateway1Key.trim(),
+        customGateway1Secret: customGateway1Secret.trim(),
+        customGateway1Url: customGateway1Url.trim(),
+        customGateway2Enabled: customGateway2Enabled,
+        customGateway2Name: customGateway2Name.trim(),
+        customGateway2Key: customGateway2Key.trim(),
+        customGateway2Secret: customGateway2Secret.trim(),
+        customGateway2Url: customGateway2Url.trim(),
         updatedAt: new Date().toISOString()
       });
       setQrUrl(base64);
@@ -1949,6 +1983,130 @@ export default function Admin() {
                             <option value="sandbox">Sandbox (Stage Mode)</option>
                             <option value="production">Production (Live Mode)</option>
                           </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Custom Payment Gateway 1 */}
+                    <div className="border-t pt-6 mt-6">
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <h3 className="font-bold text-sm">Custom Payment Gateway 1 (Other App)</h3>
+                          <p className="text-[10px] text-gray-500">Enable and integrate any other payment app using custom keys</p>
+                        </div>
+                        <div 
+                          className={cn(
+                            "w-12 h-6 rounded-full p-1 cursor-pointer transition-colors duration-200",
+                            customGateway1Enabled ? "bg-primary" : "bg-gray-200"
+                          )}
+                          onClick={() => setCustomGateway1Enabled(!customGateway1Enabled)}
+                        >
+                          <div className={cn(
+                            "w-4 h-4 bg-white rounded-full transition-transform duration-200",
+                            customGateway1Enabled ? "translate-x-6" : "translate-x-0"
+                          )} />
+                        </div>
+                      </div>
+
+                      <div className={cn("grid gap-4 md:grid-cols-2", !customGateway1Enabled && "opacity-50 pointer-events-none")}>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Gateway App Name</label>
+                          <Input 
+                            placeholder="e.g. Instamojo, Stripe, Cashfree" 
+                            value={customGateway1Name}
+                            onChange={(e) => setCustomGateway1Name(e.target.value)}
+                            className="rounded-xl h-12"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase tracking-wider text-gray-400">API Key / Client ID</label>
+                          <Input 
+                            placeholder="Enter Gateway API Key" 
+                            value={customGateway1Key}
+                            onChange={(e) => setCustomGateway1Key(e.target.value)}
+                            className="rounded-xl h-12"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Secret Key / Salt Secret</label>
+                          <Input 
+                            placeholder="Enter Secret Key" 
+                            type="password"
+                            value={customGateway1Secret}
+                            onChange={(e) => setCustomGateway1Secret(e.target.value)}
+                            className="rounded-xl h-12"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Gateway Base URL / API URL</label>
+                          <Input 
+                            placeholder="e.g. https://api.instamojo.com/v2" 
+                            value={customGateway1Url}
+                            onChange={(e) => setCustomGateway1Url(e.target.value)}
+                            className="rounded-xl h-12"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Custom Payment Gateway 2 */}
+                    <div className="border-t pt-6 mt-6">
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <h3 className="font-bold text-sm">Custom Payment Gateway 2 (Other App)</h3>
+                          <p className="text-[10px] text-gray-500">Enable an additional payment gateway for another app integration</p>
+                        </div>
+                        <div 
+                          className={cn(
+                            "w-12 h-6 rounded-full p-1 cursor-pointer transition-colors duration-200",
+                            customGateway2Enabled ? "bg-primary" : "bg-gray-200"
+                          )}
+                          onClick={() => setCustomGateway2Enabled(!customGateway2Enabled)}
+                        >
+                          <div className={cn(
+                            "w-4 h-4 bg-white rounded-full transition-transform duration-200",
+                            customGateway2Enabled ? "translate-x-6" : "translate-x-0"
+                          )} />
+                        </div>
+                      </div>
+
+                      <div className={cn("grid gap-4 md:grid-cols-2", !customGateway2Enabled && "opacity-50 pointer-events-none")}>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Gateway App Name</label>
+                          <Input 
+                            placeholder="e.g. Stripe, Razorpay Sandbox, Custom PG" 
+                            value={customGateway2Name}
+                            onChange={(e) => setCustomGateway2Name(e.target.value)}
+                            className="rounded-xl h-12"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase tracking-wider text-gray-400">API Key / Client ID</label>
+                          <Input 
+                            placeholder="Enter Gateway API Key" 
+                            value={customGateway2Key}
+                            onChange={(e) => setCustomGateway2Key(e.target.value)}
+                            className="rounded-xl h-12"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Secret Key / Salt Secret</label>
+                          <Input 
+                            placeholder="Enter Secret Key" 
+                            type="password"
+                            value={customGateway2Secret}
+                            onChange={(e) => setCustomGateway2Secret(e.target.value)}
+                            className="rounded-xl h-12"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Gateway Base URL / API URL</label>
+                          <Input 
+                            placeholder="e.g. https://api.gateway.com/v1" 
+                            value={customGateway2Url}
+                            onChange={(e) => setCustomGateway2Url(e.target.value)}
+                            className="rounded-xl h-12"
+                          />
                         </div>
                       </div>
                     </div>

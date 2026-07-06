@@ -20,11 +20,12 @@ export default function App() {
   useEffect(() => {
     const origin = window.location.origin;
     
-    // Use origin for baseURL to support relative paths and proxying (e.g. via Vercel/Custom Domain)
-    axios.defaults.baseURL = origin;
-    console.log(`[API] [SYNC_INIT] Base URL set to origin: ${origin}`);
-
-    // No need for interceptor if we use baseURL correctly with relative paths
+    // Check if the current origin is a local dev environment or the native Cloud Run instance.
+    // If it's a custom domain or hosted on Vercel, we MUST point to activeBackendUrl directly,
+    // otherwise relative requests to /api/ will hit Vercel's static router and result in 404 errors.
+    const isNativeHost = origin.includes("localhost") || origin.includes("127.0.0.1") || origin.includes("-523409699457");
+    axios.defaults.baseURL = isNativeHost ? origin : activeBackendUrl;
+    console.log(`[API] [SYNC_INIT] Base URL set to: ${axios.defaults.baseURL} (origin: ${origin})`);
     
     return () => {};
   }, []);
