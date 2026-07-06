@@ -227,27 +227,151 @@ export default function Courses() {
         setLastOrder(null);
         const orderId = "ord_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
 
-        // 3. Trigger synchronous proxy transmit
-        console.log(`[API Proxy Submit] Sending order ${orderId} synchronously to panel`);
-        const response = await axios.post("/api/proxy-provider", {
-          orderId: orderId,
-          userId: user?.uid,
-          userEmail: user?.email || "",
-          serviceId: selectedCourse.id,
-          title: selectedCourse.title,
-          category: selectedCourse.category || "Other",
-          quantity: Number(quantity),
-          targetLink: targetLink.trim(),
-          totalPrice: totalPrice,
-          isAsync: false,
-          skipStoreCompleted: false // Always store in database now for admin & user visibility
-        });
+        const isNativeHost = window.location.origin.includes("localhost") || 
+                             window.location.origin.includes("127.0.0.1") || 
+                             window.location.origin.includes("-523409699457");
 
-        if (!response.data || response.data.success === false) {
-          throw new Error(response.data?.error || "Provider transmission failed unexpectedly.");
+        let pId = "SENT";
+
+        if (!isNativeHost) {
+          console.log(`[Custom Domain Mode] Processing order ${orderId} directly from browser to SMM provider to bypass AI Studio`);
+          
+          // 1. Fetch settings and provider info
+          const settingsSnap = await dbClient.getDoc("settings", "payment");
+          let pUrl = (settingsSnap?.providerApiUrl || "").trim();
+          let pKey = (settingsSnap?.providerApiKey || "").trim();
+          let providerName = "Global Settings";
+
+          if (selectedCourse.providerId && selectedCourse.providerId !== "global") {
+            const providerSnap = await dbClient.getDoc("providers", selectedCourse.providerId);
+            if (providerSnap) {
+              providerName = providerSnap.name || selectedCourse.providerId;
+              const resolvedUrl = (providerSnap.api_url || "").trim() || (providerSnap.apiUrl || "").trim();
+              const resolvedKey = (providerSnap.api_key || "").trim() || (providerSnap.apiKey || "").trim();
+              if (resolvedUrl) pUrl = resolvedUrl;
+              if (resolvedKey) pKey = resolvedKey;
+            }
+          }
+
+          if (!pUrl) pUrl = "https://smmbin.com/api/v2";
+          if (!pKey) throw new Error(`SMM Provider API Key is missing for ${providerName}. Please update settings.`);
+
+          if (!pUrl.startsWith("http")) {
+            pUrl = "https://" + pUrl;
+          }
+
+          // Normalize Link/Username
+          let finalLink = String(targetLink).trim();
+          if (finalLink.startsWith("@")) {
+            const username = finalLink.substring(1);
+            if (selectedCourse.category?.toLowerCase().includes("instagram")) finalLink = `https://www.instagram.com/${username}/`;
+            else if (selectedCourse.category?.toLowerCase().includes("twitter") || selectedCourse.category?.toLowerCase().includes("x")) finalLink = `https://x.com/${username}/`;
+            else if (selectedCourse.category?.toLowerCase().includes("tiktok")) finalLink = `https://www.tiktok.com/@${username}`;
+          }
+
+          // Call provider
+          const params = new URLSearchParams();
+          params.append("key", pKey);
+          params.append("action", "add");
+          params.append("service", String(selectedCourse.providerServiceId || selectedCourse.provider_service_id || "0").trim());
+          params.append("link", finalLink);
+          params.append("quantity", String(quantity).trim());
+
+          let providerRes;
+          try {
+            providerRes = await axios.post(pUrl, params, {
+              headers: { "Content-Type": "application/x-www-form-urlencoded" }
+            });
+          } catch (err: any) {
+            console.warn("Direct SMM call failed, attempting via CORS proxy fallback...", err);
+            // Fallback using AllOrigins CORS proxy
+            const proxiedUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(pUrl)}`;
+            providerRes = await axios.post(proxiedUrl, params, {
+              headers: { "Content-Type": "application/x-www-form-urlencoded" }
+            });
+          }
+
+          let resData = providerRes?.data;
+          if (typeof resData === "string") {
+            try {
+              const trimmed = resData.trim();
+              if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+                resData = JSON.parse(trimmed);
+              } else if (trimmed.match(/^\d+$/)) {
+                resData = { order: trimmed };
+              }
+            } catch (e) {}
+          }
+
+          if (Array.isArray(resData) && resData.length > 0) {
+            resData = resData[0];
+          }
+
+          const resolvedProviderOrderId = resData?.order || resData?.order_id || resData?.orderid || resData?.orderId || resData?.id || resData?.ID || resData?.data?.order || resData?.data?.order_id || resData?.data?.id;
+          const isStatusSuccess = resData?.status === "success" || 
+                                  resData?.status === "Success" || 
+                                  resData?.success === true || 
+                                  resData?.success === "true" ||
+                                  resData?.msg?.toLowerCase().includes("success") ||
+                                  resData?.message?.toLowerCase().includes("success") ||
+                                  resData?.data?.status === "success";
+
+          if (resolvedProviderOrderId || isStatusSuccess) {
+            pId = resolvedProviderOrderId ? String(resolvedProviderOrderId) : "SENT";
+            
+            // Deduct balance and Save order directly in Firestore
+            const currentBal = Number(profile?.balance || 0);
+            const newBal = Math.max(0, currentBal - totalPrice);
+            await dbClient.updateUserProfile(user.uid, { balance: newBal });
+            
+            const orderData = {
+              userId: user.uid,
+              userEmail: user.email || "",
+              serviceId: selectedCourse.id,
+              title: selectedCourse.title,
+              category: selectedCourse.category || "Other",
+              quantity: Number(quantity),
+              targetLink: targetLink.trim(),
+              totalPrice: Number(totalPrice),
+              status: "Completed",
+              providerOrderId: pId,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            };
+            await dbClient.setDoc("orders", orderId, orderData);
+          } else {
+            const rawError = resData?.error || resData?.message || resData?.msg || resData?.errors || resData?.ERR || resData?.status || resData?.reason || resData?.error_message || resData?.msg_error;
+            let errorMsg = "Provider rejected the request.";
+            if (rawError) {
+              if (typeof rawError === "string") errorMsg = rawError;
+              else if (Array.isArray(rawError)) errorMsg = rawError.join(", ");
+              else if (typeof rawError === "object") errorMsg = JSON.stringify(rawError);
+            }
+            throw new Error(errorMsg);
+          }
+        } else {
+          // Standard native host path: call server proxy
+          const response = await axios.post("/api/proxy-provider", {
+            orderId: orderId,
+            userId: user?.uid,
+            userEmail: user?.email || "",
+            serviceId: selectedCourse.id,
+            title: selectedCourse.title,
+            category: selectedCourse.category || "Other",
+            quantity: Number(quantity),
+            targetLink: targetLink.trim(),
+            totalPrice: totalPrice,
+            isAsync: false,
+            skipStoreCompleted: false // Always store in database now for admin & user visibility
+          });
+
+          if (!response.data || response.data.success === false) {
+            throw new Error(response.data?.error || "Provider transmission failed unexpectedly.");
+          }
+
+          pId = response.data?.providerOrderId || "SENT";
         }
 
-        const pId = response.data?.providerOrderId || "SENT";
         toast.dismiss(sendingToastId);
 
         // Deduct balance instantly in local UI state without any extra Firebase reads/writes
