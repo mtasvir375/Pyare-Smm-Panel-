@@ -1227,7 +1227,7 @@ export default function Courses() {
                 </div>
                 <div className="flex justify-between text-xs">
                   <span className="text-gray-400 font-bold uppercase">Amount</span>
-                  <span className="font-bold text-primary">₹{lastOrder.total_price}</span>
+                  <span className="font-bold text-primary">₹{lastOrder.totalPrice ?? lastOrder.total_price}</span>
                 </div>
                 <div className="flex justify-between text-xs">
                   <span className="text-gray-400 font-bold uppercase">Status</span>
