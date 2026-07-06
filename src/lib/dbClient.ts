@@ -124,16 +124,39 @@ export const dbClient = {
   async checkDuplicateOrder(userId: string, courseId: string, link: string): Promise<boolean> {
     // Check if any order with same link and course was placed in last 10 minutes
     const tenMinsAgo = new Date(Date.now() - 10 * 60 * 1000);
+    
+    // Fetch all orders of this user with this target link to avoid complex composite index requirement
     const q = query(
       collection(db, 'orders'),
       where('userId', '==', userId),
-      where('courseId', '==', courseId),
-      where('targetLink', '==', link),
-      where('createdAt', '>', tenMinsAgo),
-      limit(1)
+      where('targetLink', '==', link.trim())
     );
+    
     const snap = await getDocs(q);
-    return !snap.empty;
+    if (snap.empty) return false;
+    
+    return snap.docs.some(doc => {
+      const data = doc.data();
+      const cId = data.courseId || data.serviceId;
+      if (cId !== courseId) return false;
+      
+      // Parse createdAt
+      let createdDate: Date | null = null;
+      if (data.createdAt) {
+        if (typeof data.createdAt === 'string') {
+          createdDate = new Date(data.createdAt);
+        } else if (data.createdAt.toDate) {
+          createdDate = data.createdAt.toDate();
+        } else {
+          createdDate = new Date(data.createdAt);
+        }
+      }
+      
+      if (createdDate && createdDate > tenMinsAgo) {
+        return true;
+      }
+      return false;
+    });
   },
 
   async getTableCount(table: string): Promise<number> {

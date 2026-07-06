@@ -210,10 +210,10 @@ export default function Courses() {
     setSubmitting(true);
     try {
       // Check for duplicate link if required
-      if (selectedCourse.prevent_duplicate_link) {
+      if (selectedCourse.prevent_duplicate_link || selectedCourse.preventDuplicateLink) {
         const isDuplicate = await dbClient.checkDuplicateOrder(user.uid, selectedCourse.id, targetLink);
         if (isDuplicate) {
-          toast.error("Please wait 10 minutes before placing another order with the same link for this service.");
+          toast.error("This link already working");
           setSubmitting(false);
           return;
         }
@@ -243,6 +243,7 @@ export default function Courses() {
         userId: user.uid,
         userEmail: user.email || "",
         serviceId: selectedCourse.id,
+        courseId: selectedCourse.id, // For duplicate checker backwards compatibility
         title: selectedCourse.title,
         category: selectedCourse.category || "Other",
         quantity: Number(quantity),
