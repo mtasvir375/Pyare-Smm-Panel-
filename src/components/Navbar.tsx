@@ -22,8 +22,8 @@ export default function Navbar() {
     <nav className="fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200 pb-safe md:top-0 md:bottom-auto md:border-t-0 md:border-b shadow-md md:shadow-none">
       <div className="max-w-md mx-auto px-6 h-16 flex items-center justify-between md:max-w-7xl">
         <Link to="/" className="hidden md:flex items-center gap-2 font-bold text-xl text-primary mr-8">
-          <PlayCircle className="w-6 h-6" />
-          <span>SMM Panel Pro</span>
+          <img src="/favicon.png" alt="Pyare SMM" className="w-8 h-8 rounded-lg" />
+          <span>Pyare SMM Panel</span>
         </Link>
         
         <div className="flex flex-1 justify-around md:justify-start md:gap-8">

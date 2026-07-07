@@ -51,7 +51,7 @@ export default function Home() {
   const handleShare = async () => {
     try {
       await navigator.share({
-        title: 'SMM Panel Pro - Grow Social Media',
+        title: 'Pyare SMM Panel - Grow Social Media',
         text: 'Get high quality Instagram likes, followers and views!',
         url: window.location.href,
       });
@@ -72,7 +72,7 @@ export default function Home() {
             <div className="flex items-center gap-3">
               <PlusCircle className="w-5 h-5" />
               <div>
-                <p className="font-bold text-xs">Install SMM Panel Pro</p>
+                <p className="font-bold text-xs">Install Pyare SMM Panel</p>
               </div>
             </div>
             <Button 

@@ -369,8 +369,8 @@ async function startServer() {
   const getDocSafe = async (collect: string, id: string) => {
     const now = Date.now();
     
-    // 10 minutes in-memory caching DISABLED temporarily for debugging
-    const CACHE_TTL = 0; 
+    // 10 minutes in-memory caching to optimize and protect Firestore read quota
+    const CACHE_TTL = 10 * 60 * 1000; 
 
     if (collect === "settings" && id === "payment" && serverCache.settings && now - serverCache.settings.time < CACHE_TTL) {
       return { exists: true, data: () => serverCache.settings.data };
