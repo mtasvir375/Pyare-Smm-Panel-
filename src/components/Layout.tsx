@@ -1,9 +1,35 @@
-import { Outlet, Link } from "react-router-dom";
+import { Outlet, Link, useLocation, Navigate } from "react-router-dom";
 import Navbar from "./Navbar";
 import { Toaster } from "sonner";
 import WhatsAppButton from "./WhatsAppButton";
+import { useAuth } from "@/context/AuthContext";
 
 export default function Layout() {
+  const location = useLocation();
+  const { user, loading } = useAuth() as any;
+
+  // While checking auth status, render a modern loading animation
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6 text-center">
+        <div className="animate-spin rounded-full h-10 w-10 border-4 border-primary border-t-transparent shadow-md"></div>
+        <p className="mt-4 text-sm font-bold text-gray-500 tracking-wide animate-pulse">
+          Verifying secure node session...
+        </p>
+      </div>
+    );
+  }
+
+  // Allow unrestricted access to Login and SEO Landing Pages (/p/:slug)
+  const isPublicPath = 
+    location.pathname === "/login" || 
+    location.pathname.startsWith("/p/");
+
+  // If unauthenticated and trying to access a protected route, redirect to login page immediately
+  if (!user && !isPublicPath) {
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 pb-20 md:pb-0 md:pt-16 flex flex-col justify-between">
       <div>
