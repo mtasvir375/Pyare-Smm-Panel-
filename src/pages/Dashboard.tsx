@@ -35,12 +35,12 @@ export default function Dashboard() {
 
       let dbOrders: any[] = [];
 
-      if (cachedData && cacheTime && (now - parseInt(cacheTime) < 5 * 60 * 1000)) { // 5 minutes cache
+      if (cachedData && cacheTime && (now - parseInt(cacheTime) < 2 * 60 * 1000)) { // 2 minutes cache
         console.log("[DASHBOARD] ✅ Using session cache for orders");
         dbOrders = JSON.parse(cachedData);
       } else {
         try {
-          dbOrders = await dbClient.getUserOrders(user.uid, renderLimit);
+          dbOrders = await dbClient.getUserOrders(user.uid, 50); // Fetch more for better history
           sessionStorage.setItem(cacheKey, JSON.stringify(dbOrders));
           sessionStorage.setItem(`${cacheKey}_time`, now.toString());
         } catch (error) {
@@ -59,10 +59,18 @@ export default function Dashboard() {
 
       // 3. Merge both collections and remove any duplicates by order ID
       const mergedMap = new Map();
-      [...localOrders, ...dbOrders].forEach(order => {
-        if (order) {
-          const key = order.id || order.createdAt || Math.random().toString();
-          mergedMap.set(key, order);
+      
+      // Load DB orders first
+      dbOrders.forEach(order => {
+        if (order && (order.id || order.createdAt)) {
+          mergedMap.set(order.id || order.createdAt, order);
+        }
+      });
+      
+      // Load local orders (they might be newer or have updated local status)
+      localOrders.forEach(order => {
+        if (order && (order.id || order.createdAt)) {
+          mergedMap.set(order.id || order.createdAt, order);
         }
       });
 
@@ -76,7 +84,7 @@ export default function Dashboard() {
       });
 
       if (isMounted) {
-        setOrders(mergedOrders.slice(0, 10));
+        setOrders(mergedOrders.slice(0, 15)); // Show 15 instead of 10
         setLoading(false);
       }
     };

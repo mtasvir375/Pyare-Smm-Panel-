@@ -258,12 +258,16 @@ export default function Courses() {
       // 6. Save the order to Firestore instantly!
       await dbClient.setDoc("orders", orderId, orderData);
 
-      // 7. Cache in localStorage so it shows up instantly in Dashboard
+      // 7. Cache in localStorage so it shows up instantly in Dashboard and clear session cache
       try {
         const localOrdersKey = `local_orders_${user.uid}`;
         const existingLocal = JSON.parse(localStorage.getItem(localOrdersKey) || "[]");
-        existingLocal.unshift(orderData);
+        existingLocal.unshift({ ...orderData, id: orderId });
         localStorage.setItem(localOrdersKey, JSON.stringify(existingLocal.slice(0, 50)));
+        
+        // Clear session cache to force fresh fetch on dashboard
+        sessionStorage.removeItem(`orders_${user.uid}`);
+        sessionStorage.removeItem(`orders_${user.uid}_time`);
       } catch (localErr) {
         console.warn("[LOCAL-CACHE-ERR] Failed to cache order:", localErr);
       }

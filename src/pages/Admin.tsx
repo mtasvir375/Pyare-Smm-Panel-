@@ -151,6 +151,11 @@ export default function Admin() {
   const [customGateway2Key, setCustomGateway2Key] = useState("");
   const [customGateway2Secret, setCustomGateway2Secret] = useState("");
   const [customGateway2Url, setCustomGateway2Url] = useState("");
+  const [qrAutoEnabled, setQrAutoEnabled] = useState(false);
+  const [qrAutoProvider, setQrAutoProvider] = useState("smmqr");
+  const [qrAutoApiKey, setQrAutoApiKey] = useState("");
+  const [qrAutoToken, setQrAutoToken] = useState("");
+  const [qrAutoUrl, setQrAutoUrl] = useState("");
   const [providers, setProviders] = useState<any[]>([]);
   const [newProviderName, setNewProviderName] = useState("");
   const [newProviderApiUrl, setNewProviderApiUrl] = useState("");
@@ -323,6 +328,12 @@ export default function Admin() {
           setCustomGateway2Secret(settingsData.customGateway2Secret || "");
           setCustomGateway2Url(settingsData.customGateway2Url || "");
           
+          setQrAutoEnabled(settingsData.qrAutoEnabled || false);
+          setQrAutoProvider(settingsData.qrAutoProvider || "smmqr");
+          setQrAutoApiKey(settingsData.qrAutoApiKey || "");
+          setQrAutoToken(settingsData.qrAutoToken || "");
+          setQrAutoUrl(settingsData.qrAutoUrl || "");
+          
           const savedBackendUrl = settingsData.backendApiUrl || "";
           const activeBackendUrl = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
           if (!savedBackendUrl || savedBackendUrl.includes("ais-dev-")) {
@@ -494,6 +505,11 @@ export default function Admin() {
         customGateway2Key: customGateway2Key.trim(),
         customGateway2Secret: customGateway2Secret.trim(),
         customGateway2Url: customGateway2Url.trim(),
+        qrAutoEnabled: qrAutoEnabled,
+        qrAutoProvider: qrAutoProvider,
+        qrAutoApiKey: qrAutoApiKey.trim(),
+        qrAutoToken: qrAutoToken.trim(),
+        qrAutoUrl: qrAutoUrl.trim(),
         updatedAt: new Date().toISOString()
       });
       setQrUrl(base64);
@@ -2109,6 +2125,103 @@ export default function Admin() {
                           />
                         </div>
                       </div>
+                    </div>
+
+                    {/* QR Auto Verification Gateway */}
+                    <div className="border-t pt-6 mt-6 bg-primary/5 p-6 rounded-3xl border-2 border-primary/10">
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <h3 className="font-bold text-base text-primary">QR Auto Verification Gateway (SMMQR / VPA API)</h3>
+                          <p className="text-[10px] text-gray-500 font-medium">Allows users to pay via QR and get instant wallet credit after entering UTR.</p>
+                        </div>
+                        <div 
+                          className={cn(
+                            "w-12 h-6 rounded-full p-1 cursor-pointer transition-colors duration-200",
+                            qrAutoEnabled ? "bg-primary" : "bg-gray-200"
+                          )}
+                          onClick={() => setQrAutoEnabled(!qrAutoEnabled)}
+                        >
+                          <div className={cn(
+                            "w-4 h-4 bg-white rounded-full transition-transform duration-200",
+                            qrAutoEnabled ? "translate-x-6" : "translate-x-0"
+                          )} />
+                        </div>
+                      </div>
+
+                      <div className={cn("grid gap-4 md:grid-cols-2", !qrAutoEnabled && "opacity-50 pointer-events-none")}>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Provider Type</label>
+                          <select 
+                            value={qrAutoProvider}
+                            onChange={(e) => setQrAutoProvider(e.target.value)}
+                            className="w-full rounded-xl h-12 border border-gray-200 bg-white px-3 text-sm focus:outline-none focus:ring-1 focus:ring-primary font-bold"
+                          >
+                            <option value="smmqr">SMMQR.COM (UPI Auto)</option>
+                            <option value="vpaapi">VPAAPI.COM (Verify API)</option>
+                            <option value="upigateway">UPIGATEWAY.COM (Verify API)</option>
+                            <option value="custom">Other Custom API</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase tracking-wider text-gray-400">API Key / Token</label>
+                          <Input 
+                            placeholder="Enter API Key" 
+                            value={qrAutoApiKey}
+                            onChange={(e) => setQrAutoApiKey(e.target.value)}
+                            className="rounded-xl h-12"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Secret Token (Optional)</label>
+                          <Input 
+                            placeholder="Enter Secret/Token if required" 
+                            type="password"
+                            value={qrAutoToken}
+                            onChange={(e) => setQrAutoToken(e.target.value)}
+                            className="rounded-xl h-12"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Custom Verify URL (Optional)</label>
+                          <Input 
+                            placeholder="e.g. https://smmqr.com/api/verify" 
+                            value={qrAutoUrl}
+                            onChange={(e) => setQrAutoUrl(e.target.value)}
+                            className="rounded-xl h-12"
+                          />
+                        </div>
+                      </div>
+                      {qrAutoEnabled && (
+                        <div className="mt-4 p-4 bg-white rounded-2xl border border-primary/20 space-y-3">
+                          <p className="text-[10px] text-primary font-bold leading-relaxed">
+                            How it works: When a user pays and enters their 12-digit UTR, our system will call {qrAutoProvider.toUpperCase()} API to verify the payment. 
+                            If verified, the amount will be added to their wallet automatically.
+                          </p>
+                          
+                          {qrAutoProvider === "upigateway" && (
+                            <div className="pt-2 border-t border-gray-100">
+                              <p className="text-[10px] font-bold text-gray-500 uppercase mb-2">Webhook Configuration (Required for UPIGateway)</p>
+                              <div className="flex items-center gap-2 bg-gray-50 p-2 rounded-xl border border-gray-100">
+                                <code className="text-[9px] font-mono text-primary break-all">
+                                  {window.location.origin}/api/webhooks/upigateway
+                                </code>
+                                <Button 
+                                  variant="ghost" 
+                                  size="sm" 
+                                  className="h-6 px-2 text-[9px] font-bold"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(`${window.location.origin}/api/webhooks/upigateway`);
+                                    toast.success("Webhook URL copied!");
+                                  }}
+                                >
+                                  Copy
+                                </Button>
+                              </div>
+                              <p className="text-[9px] text-gray-400 mt-1 italic">Copy this URL and paste it into your UPIGateway.com dashboard Webhook setting.</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                   <div className="grid gap-4 md:grid-cols-2">

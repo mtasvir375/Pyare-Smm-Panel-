@@ -213,6 +213,7 @@ export const getCachedSettings = async (forceRefresh = false) => {
       whatsappLink: res.data.whatsappLink || "",
       whatsappChatNumber: res.data.whatsappChatNumber || "",
       backendApiUrl: res.data.backendApiUrl || "",
+      qrAutoEnabled: !!res.data.qrAutoEnabled,
     };
 
     cachedSettings = settingsData;
@@ -254,6 +255,7 @@ export const getCachedSettings = async (forceRefresh = false) => {
         whatsappLink: settingsData.whatsappLink || "",
         whatsappChatNumber: settingsData.whatsappChatNumber || "",
         backendApiUrl: settingsData.backendApiUrl || "",
+        qrAutoEnabled: !!settingsData.qrAutoEnabled,
       };
 
       cachedSettings = settingsData;

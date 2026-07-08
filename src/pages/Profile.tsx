@@ -75,6 +75,7 @@ export default function Profile() {
   const { user, userProfile: profile, loading: authLoading, isAdmin, isPaymentAdmin, signOut } = useAuth() as any;
   const navigate = useNavigate();
   const [isAddFundsOpen, setIsAddFundsOpen] = useState(false);
+  const [paymentStep, setPaymentStep] = useState<"amount" | "payment">("amount");
   const [amount, setAmount] = useState("");
   const [utr, setUtr] = useState("");
   const [screenshot, setScreenshot] = useState<File | null>(null);
@@ -94,6 +95,7 @@ export default function Profile() {
     razorpayKeyId?: string;
     phonepeEnabled?: boolean;
     paytmEnabled?: boolean;
+    qrAutoEnabled?: boolean;
   } | null>(null);
 
   useEffect(() => {
@@ -248,7 +250,7 @@ export default function Profile() {
         const settingsData = await getCachedSettings();
         if (settingsData) {
           setPaymentSettings(settingsData);
-          const hasAuto = !!(settingsData.razorpayEnabled || settingsData.phonepeEnabled || settingsData.paytmEnabled);
+          const hasAuto = !!(settingsData.razorpayEnabled || settingsData.phonepeEnabled || settingsData.paytmEnabled || settingsData.qrAutoEnabled);
           setPaymentMethod(hasAuto ? "auto" : "manual");
         }
       } catch (error) {
@@ -296,6 +298,7 @@ export default function Profile() {
 
   const resetAddFunds = () => {
     setIsAddFundsOpen(false);
+    setPaymentStep("amount");
     setAmount("");
     setUtr("");
     setScreenshot(null);
@@ -313,7 +316,10 @@ export default function Profile() {
       return;
     }
 
-    if (!screenshotPreview) {
+    // Screenshot is optional for Auto verification but mandatory for manual fallback
+    const isAutoMode = !!paymentSettings?.qrAutoEnabled;
+    
+    if (!isAutoMode && !screenshotPreview) {
       toast.error("Please upload a payment screenshot");
       return;
     }
@@ -329,7 +335,44 @@ export default function Profile() {
         return;
       }
 
-      // 1. Submit via Secure API (includes transactional duplicate check)
+      if (isAutoMode) {
+        // 1. Try Automatic Verification first if enabled
+        try {
+          const response = await axios.post("/api/deposits/verify-qr-auto", {
+            amount: numAmount,
+            utr: cleanUtr,
+            userId: user?.uid
+          });
+
+          if (response.data.success) {
+            toast.success("🎉 Payment verified automatically! ₹" + numAmount + " added to wallet.");
+            resetAddFunds();
+            // Refresh profile balance locally if possible
+            if (profile) profile.balance = response.data.newBalance;
+            return;
+          }
+        } catch (autoError: any) {
+          console.warn("[AUTO-VERIFY-FAILED] Falling back to manual submission", autoError);
+          const errorMsg = autoError.response?.data?.error || "";
+          
+          if (errorMsg.includes("already been used")) {
+            toast.error(errorMsg);
+            setIsUploading(false);
+            return;
+          }
+
+          // If auto verify failed because it's not found, we can proceed to manual submission
+          // to let admin handle it, but only if they uploaded a screenshot.
+          if (!screenshotPreview) {
+            toast.error("Auto-verification failed: " + (errorMsg || "Payment not found.") + " Please upload a screenshot for manual review.");
+            setIsUploading(false);
+            return;
+          }
+          toast.info("Auto-verification failed. Submitting for manual review...");
+        }
+      }
+
+      // 2. Standard Manual Submission (or fallback from failed auto)
       const response = await axios.post("/api/deposits/submit-manual", {
         amount: numAmount,
         utr: cleanUtr,
@@ -339,11 +382,7 @@ export default function Profile() {
       });
 
       if (response.data.success) {
-        if (response.data.isAutoApproved) {
-          toast.success("🎉 Payment verified automatically! ₹" + numAmount + " has been added to your wallet.");
-        } else {
-          toast.success("Fund request submitted! Admin will verify it soon.");
-        }
+        toast.success("Fund request submitted! Admin will verify it soon.");
         resetAddFunds();
       } else {
         toast.error(response.data.error || "Submission failed.");
@@ -352,12 +391,9 @@ export default function Profile() {
     } catch (error: any) {
       console.error("Server payment submission failed, trying client-side fallback...", error);
       
-      // OPTION 2: Client-side Direct Write Fallback (Bypasses Server IAM issues)
-      // Enforce One UTR = One Request via dbClient check and insertion
+      // OPTION 2: Client-side Direct Write Fallback
       try {
         const cleanUtr = utr.replace(/\D/g, "");
-        if (cleanUtr.length !== 12) throw new Error("Invalid UTR format");
-
         const depositId = "dep_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
         await dbClient.submitManualDeposit(depositId, {
           userId: user.uid,
@@ -370,14 +406,7 @@ export default function Profile() {
         toast.success("Request submitted successfully!");
         resetAddFunds();
       } catch (clientError: any) {
-        console.error("Client fallback failed:", clientError);
-        let msg = "Submission failed.";
-        if (clientError.message?.includes("already been submitted") || clientError.message?.includes("already been used")) {
-          msg = "This UTR number has already been used for a payment request.";
-        } else {
-          msg = clientError.message || "An unexpected error occurred.";
-        }
-        toast.error(msg);
+        toast.error(clientError.message || "An unexpected error occurred.");
       }
     } finally {
       setIsUploading(false);
@@ -385,7 +414,7 @@ export default function Profile() {
   };
 
   const upiLink = paymentSettings?.upiId 
-    ? `upi://pay?pa=${paymentSettings.upiId}&pn=${encodeURIComponent(paymentSettings.merchantName || "SMM Panel")}&am=${amount}&cu=INR`
+    ? `upi://pay?pa=${paymentSettings.upiId}&pn=${encodeURIComponent(paymentSettings.merchantName || "SMM Panel")}&am=${amount}&cu=INR&tr=TXN_${user?.uid}_${Date.now()}`
     : "";
 
   const menuItems = [
@@ -499,226 +528,217 @@ export default function Profile() {
 
 
       <div className="pt-0">
-        <Dialog open={isAddFundsOpen} onOpenChange={setIsAddFundsOpen}>
+        <Dialog open={isAddFundsOpen} onOpenChange={(open) => {
+          setIsAddFundsOpen(open);
+          if (!open) resetAddFunds();
+        }}>
         <DialogContent className="max-w-[90vw] sm:max-w-md rounded-3xl p-4 sm:p-6 overflow-y-auto max-h-[90vh]">
           <DialogHeader className="pb-2">
-            <DialogTitle className="text-lg sm:text-xl font-bold">Add Funds to Wallet</DialogTitle>
+            <DialogTitle className="text-lg sm:text-xl font-bold">
+              {paymentStep === "amount" ? "Add Funds to Wallet" : "Complete Payment"}
+            </DialogTitle>
             <DialogDescription className="text-xs font-medium text-gray-500">
-              Enter amount, scan QR, provide 12-digit UTR <b>AND</b> upload screenshot.
+              {paymentStep === "amount" 
+                ? "Enter the amount you want to add to your wallet." 
+                : `Scan the QR code to pay ₹${amount} and submit details.`}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-3 py-2">
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-gray-700">1. Enter Amount (₹)</label>
-              <Input 
-                type="number" 
-                placeholder="e.g. 500" 
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                className="rounded-xl h-9 text-base font-bold"
-              />
-            </div>
+          <div className="space-y-4 py-2">
+            {paymentStep === "amount" ? (
+              <div className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-gray-700 uppercase tracking-wider">Enter Amount (₹)</label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-gray-400">₹</span>
+                    <Input 
+                      type="number" 
+                      placeholder="e.g. 500" 
+                      value={amount}
+                      onChange={(e) => setAmount(e.target.value)}
+                      className="rounded-2xl h-14 pl-8 text-xl font-bold border-gray-100 focus:border-primary transition-all"
+                    />
+                  </div>
+                </div>
 
-            {(() => {
-              const hasAutoGateways = !!(paymentSettings?.razorpayEnabled || paymentSettings?.phonepeEnabled || paymentSettings?.paytmEnabled);
-              
-              return (
-                <>
-                  {hasAutoGateways && amount && Number(amount) > 0 && (
-                    <div className="grid grid-cols-2 gap-3 mb-4 mt-1">
-                      <button
-                        type="button"
-                        onClick={() => setPaymentMethod("auto")}
-                        className={`flex flex-col items-center justify-center p-3 rounded-2xl border-2 text-center transition-all ${
-                          paymentMethod === "auto" 
-                            ? "border-primary bg-primary/5 text-primary" 
-                            : "border-gray-100 hover:border-gray-200 text-gray-600"
-                        }`}
-                      >
-                        <Zap className="w-5 h-5 mb-1 text-yellow-500 fill-yellow-500 animate-pulse" />
-                        <span className="text-xs font-bold">Automatic Pay</span>
-                        <span className="text-[9px] opacity-80">Instant Credit</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPaymentMethod("manual")}
-                        className={`flex flex-col items-center justify-center p-3 rounded-2xl border-2 text-center transition-all ${
-                          paymentMethod === "manual" 
-                            ? "border-primary bg-primary/5 text-primary" 
-                            : "border-gray-100 hover:border-gray-200 text-gray-600"
-                        }`}
-                      >
-                        <QrCode className="w-5 h-5 mb-1 text-blue-500" />
-                        <span className="text-xs font-bold">Manual UPI QR</span>
-                        <span className="text-[9px] opacity-80">Needs UTR & SS</span>
-                      </button>
-                    </div>
-                  )}
+                <div className="grid grid-cols-4 gap-2">
+                  {[100, 200, 500, 1000].map((val) => (
+                    <button
+                      key={val}
+                      onClick={() => setAmount(val.toString())}
+                      className="py-2.5 rounded-xl border border-gray-100 text-xs font-bold hover:bg-primary/5 hover:border-primary/20 transition-all"
+                    >
+                      +₹{val}
+                    </button>
+                  ))}
+                </div>
 
-                  {paymentMethod === "auto" && hasAutoGateways && amount && Number(amount) > 0 && (
-                    <div className="space-y-2 pt-2 animate-in fade-in slide-in-from-top-2">
-                      <div className="relative flex items-center py-2">
-                        <div className="flex-grow border-t border-gray-100"></div>
-                        <span className="flex-shrink mx-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Choose Gateway</span>
-                        <div className="flex-grow border-t border-gray-100"></div>
-                      </div>
-
-                      {paymentSettings?.razorpayEnabled && (
-                        <Button 
-                          onClick={handleRazorpayPayment}
-                          disabled={isRazorpayLoading}
-                          className="w-full h-12 rounded-2xl bg-[#3395FF] hover:bg-[#2085ee] text-white font-bold flex items-center justify-center gap-2 mb-2"
-                        >
-                          {isRazorpayLoading ? (
-                            <RefreshCw className="w-5 h-5 animate-spin" />
-                          ) : (
-                            <>
-                              <Wallet className="w-5 h-5" />
-                              Pay with Razorpay (Instant)
-                            </>
-                          )}
-                        </Button>
-                      )}
-
-                      {paymentSettings?.phonepeEnabled && (
-                        <Button 
-                          onClick={handlePhonePePayment}
-                          disabled={isPhonePeLoading}
-                          className="w-full h-12 rounded-2xl bg-[#5f259f] hover:bg-[#4d1d82] text-white font-bold flex items-center justify-center gap-2 mb-2"
-                        >
-                          {isPhonePeLoading ? (
-                            <RefreshCw className="w-5 h-5 animate-spin" />
-                          ) : (
-                            <>
-                              <Wallet className="w-5 h-5" />
-                              Pay with PhonePe (Instant)
-                            </>
-                          )}
-                        </Button>
-                      )}
-
-                      {paymentSettings?.paytmEnabled && (
-                        <Button 
-                          onClick={handlePaytmPayment}
-                          disabled={isPaytmLoading}
-                          className="w-full h-12 rounded-2xl bg-[#00b9f5] hover:bg-[#009cd0] text-white font-bold flex items-center justify-center gap-2 mb-2"
-                        >
-                          {isPaytmLoading ? (
-                            <RefreshCw className="w-5 h-5 animate-spin" />
-                          ) : (
-                            <>
-                              <Wallet className="w-5 h-5" />
-                              Pay with Paytm (Instant)
-                            </>
-                          )}
-                        </Button>
-                      )}
-                    </div>
-                  )}
-
-                  {paymentMethod === "manual" && amount && Number(amount) > 0 && paymentSettings?.upiId && (
-                    <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
-                      <div className="flex flex-col items-center gap-1.5 p-3 bg-primary/5 rounded-2xl border-2 border-primary/10">
-                        <div className="bg-white p-1.5 rounded-xl shadow-sm">
-                          <QRCodeSVG 
-                            value={upiLink} 
-                            size={120}
-                            level="H"
-                            includeMargin={true}
-                          />
-                        </div>
-                        <div className="text-center">
-                          <p className="text-xs font-bold text-primary">{paymentSettings.merchantName}</p>
-                          <p className="text-[9px] text-gray-500 font-medium">{paymentSettings.upiId}</p>
-                        </div>
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className="rounded-full h-6 text-[9px] font-bold px-3"
-                          onClick={() => {
-                            navigator.clipboard.writeText(paymentSettings.upiId);
-                            toast.success("UPI ID copied!");
-                          }}
-                        >
-                          <Copy className="w-3 h-3 mr-1" />
-                          Copy UPI ID
-                        </Button>
-                      </div>
-
-                      <div className="space-y-2">
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-gray-700">2. Transaction ID / UTR (Mandatory)</label>
-                          <Input 
-                            placeholder="Enter 12-digit UTR number" 
-                            value={utr}
-                            onChange={(e) => setUtr(e.target.value.replace(/\D/g, ''))}
-                            className="rounded-xl h-9 text-sm"
-                            inputMode="numeric"
-                          />
-                        </div>
-
-                        <div className="relative">
-                          <div className="absolute inset-0 flex items-center">
-                            <span className="w-full border-t" />
-                          </div>
-                          <div className="relative flex justify-center text-[10px] uppercase">
-                            <span className="bg-white px-2 text-gray-500 font-bold">AND MANDATORY SCREENSHOT</span>
-                          </div>
-                        </div>
-
-                        <div className="space-y-1">
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={handleImageChange}
-                            className="hidden"
-                            id="screenshot-upload"
-                          />
-                          <label
-                            htmlFor="screenshot-upload"
-                            className="flex flex-col items-center justify-center gap-1 p-3 border-2 border-dashed border-primary/20 bg-primary/5 rounded-2xl cursor-pointer hover:bg-primary/10 transition-colors"
-                          >
-                            {screenshotPreview ? (
-                              <div className="relative w-full">
-                                <img src={screenshotPreview} alt="Preview" className="w-full h-24 object-contain rounded-lg shadow-sm" />
-                                <div className="absolute top-0 right-0 bg-green-500 text-white p-1 rounded-full shadow-md">
-                                  <Check className="w-2 h-2" />
+                <Button 
+                  className="w-full h-14 rounded-2xl text-lg font-bold shadow-lg shadow-primary/20"
+                  disabled={!amount || Number(amount) < 1}
+                  onClick={() => setPaymentStep("payment")}
+                >
+                  Pay Now
+                  <ChevronRight className="w-5 h-5 ml-2" />
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
+                {(() => {
+                  const hasAutoGateways = !!(paymentSettings?.razorpayEnabled || paymentSettings?.phonepeEnabled || paymentSettings?.paytmEnabled);
+                  const qrAutoEnabled = !!paymentSettings?.qrAutoEnabled;
+                  
+                  return (
+                    <div className="space-y-4">
+                      {(hasAutoGateways || qrAutoEnabled) && (
+                        <div className="space-y-3">
+                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center">Payment Methods</p>
+                          <div className="flex flex-col gap-2">
+                            {qrAutoEnabled && (
+                              <div className="flex flex-col items-center gap-2 p-3 bg-green-50 rounded-2xl border-2 border-green-100 mb-2">
+                                <div className="flex items-center gap-2 text-green-700">
+                                  <Zap className="w-4 h-4 fill-green-500 text-green-500 animate-pulse" />
+                                  <span className="text-xs font-bold uppercase">Instant QR Auto-Verify Active</span>
                                 </div>
+                                <p className="text-[9px] text-green-600 font-medium text-center">Pay via QR and enter UTR for instant credit!</p>
                               </div>
-                            ) : (
-                              <>
-                                <Upload className="w-5 h-5 text-primary/60" />
-                                <span className="text-[10px] text-primary/60 font-medium">Upload Payment Screenshot</span>
-                              </>
                             )}
-                          </label>
+                            {paymentSettings?.razorpayEnabled && (
+                              <Button 
+                                onClick={handleRazorpayPayment}
+                                disabled={isRazorpayLoading}
+                                className="w-full h-12 rounded-xl bg-[#3395FF] hover:bg-[#2085ee] text-white font-bold flex items-center justify-center gap-2"
+                              >
+                                {isRazorpayLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : "Pay with Razorpay"}
+                              </Button>
+                            )}
+                            {paymentSettings?.phonepeEnabled && (
+                              <Button 
+                                onClick={handlePhonePePayment}
+                                disabled={isPhonePeLoading}
+                                className="w-full h-12 rounded-xl bg-[#5f259f] hover:bg-[#4d1d82] text-white font-bold flex items-center justify-center gap-2"
+                              >
+                                {isPhonePeLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : "Pay with PhonePe"}
+                              </Button>
+                            )}
+                          </div>
+                          
+                          <div className="relative flex items-center py-2">
+                            <div className="flex-grow border-t border-gray-100"></div>
+                            <span className="flex-shrink mx-4 text-[10px] font-bold text-gray-300 uppercase">OR PAY VIA UPI QR</span>
+                            <div className="flex-grow border-t border-gray-100"></div>
+                          </div>
                         </div>
-                      </div>
-                    </div>
-                  )}
+                      )}
 
-                  {!paymentSettings?.upiId && (
-                    <div className="p-4 bg-orange-50 text-orange-700 rounded-2xl text-xs border border-orange-100">
-                      Payment system is currently being set up by admin. Please try again later.
+                      {paymentSettings?.upiId && (
+                        <div className="space-y-4">
+                          <div className="flex flex-col items-center gap-2 p-4 bg-primary/5 rounded-3xl border-2 border-primary/10 relative overflow-hidden">
+                            <div className="absolute top-0 right-0 p-2 opacity-5">
+                              <QrCode className="w-20 h-20" />
+                            </div>
+                            
+                            <div className="bg-white p-2 rounded-2xl shadow-sm relative z-10">
+                              <QRCodeSVG 
+                                value={upiLink} 
+                                size={150}
+                                level="H"
+                                includeMargin={true}
+                              />
+                            </div>
+                            
+                            <div className="text-center relative z-10">
+                              <p className="text-sm font-bold text-primary">{paymentSettings.merchantName}</p>
+                              <div className="flex items-center justify-center gap-2 mt-1">
+                                <code className="text-[10px] bg-white px-2 py-0.5 rounded-full border border-gray-100 font-mono text-gray-500">
+                                  {paymentSettings.upiId}
+                                </code>
+                                <button 
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(paymentSettings.upiId);
+                                    toast.success("UPI ID copied!");
+                                  }}
+                                  className="text-primary hover:scale-110 transition-transform"
+                                >
+                                  <Copy className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="space-y-3">
+                            <div className="space-y-1.5">
+                              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider ml-1">Step 1: Enter 12-Digit UTR</label>
+                              <Input 
+                                placeholder="e.g. 418293021922" 
+                                value={utr}
+                                onChange={(e) => setUtr(e.target.value.replace(/\D/g, '').slice(0, 12))}
+                                className="rounded-xl h-11 text-base font-mono font-bold tracking-widest text-center"
+                                inputMode="numeric"
+                              />
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider ml-1">Step 2: Upload Screenshot</label>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                onChange={handleImageChange}
+                                className="hidden"
+                                id="screenshot-upload"
+                              />
+                              <label
+                                htmlFor="screenshot-upload"
+                                className="flex items-center justify-between p-3 border-2 border-dashed border-gray-100 bg-gray-50/50 rounded-xl cursor-pointer hover:bg-gray-100 transition-colors"
+                              >
+                                {screenshotPreview ? (
+                                  <div className="flex items-center gap-3 w-full">
+                                    <img src={screenshotPreview} alt="Preview" className="w-10 h-10 object-cover rounded-lg border border-white shadow-sm" />
+                                    <span className="text-xs font-bold text-green-600 flex items-center">
+                                      <Check className="w-3 h-3 mr-1" /> Image Uploaded
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div className="flex items-center gap-2">
+                                      <Upload className="w-4 h-4 text-gray-400" />
+                                      <span className="text-xs font-bold text-gray-500">Select payment proof</span>
+                                    </div>
+                                    <span className="text-[10px] bg-white px-2 py-1 rounded-md border border-gray-100 font-bold text-gray-400">SELECT</span>
+                                  </>
+                                )}
+                              </label>
+                            </div>
+
+                            <div className="pt-2">
+                              <Button 
+                                className="w-full h-12 rounded-xl text-base font-bold shadow-lg" 
+                                onClick={handleAddFunds}
+                                disabled={isUploading || !utr || utr.length < 12 || !screenshotPreview}
+                              >
+                                {isUploading ? (
+                                  <>
+                                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                                    Verifying Payment...
+                                  </>
+                                ) : "Confirm & Add Balance"}
+                              </Button>
+                              <button 
+                                onClick={() => setPaymentStep("amount")}
+                                className="w-full mt-2 text-[10px] font-bold text-gray-400 uppercase hover:text-primary transition-colors"
+                              >
+                                ← Go back and change amount
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </>
-              );
-            })()}
+                  );
+                })()}
+              </div>
+            )}
           </div>
-
-          {paymentMethod === "manual" && (
-            <DialogFooter>
-              <Button 
-                className="w-full h-12 rounded-xl text-lg font-bold" 
-                onClick={handleAddFunds}
-                disabled={isUploading || !amount || Number(amount) <= 0}
-              >
-                {isUploading ? "Verifying..." : "Confirm Payment"}
-              </Button>
-            </DialogFooter>
-          )}
         </DialogContent>
       </Dialog>
       </div>

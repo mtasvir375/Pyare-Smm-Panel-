@@ -51,10 +51,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               displayName: firebaseUser.displayName || 'User',
               photoURL: firebaseUser.photoURL || '',
               role: 'student', // Default role
-              balance: 0,
+              balance: 1, // Welcome bonus ₹1
             };
             await dbClient.createUserProfile(firebaseUser.uid, newProfile);
-            profile = await dbClient.getUserProfile(firebaseUser.uid);
+            profile = { ...newProfile, createdAt: new Date() }; // Optimize: avoid extra read, use local data
           }
           
           setUserProfile(profile);

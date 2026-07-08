@@ -1,8 +1,86 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Global Deny
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+      ) || request.auth.token.email == 'mtasvir375@gmail.com';
+    }
+
+    function isPaymentAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'payment_admin' || 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      ) || request.auth.token.email == 'mtasvir375@gmail.com' || request.auth.token.email == 'mdsaudalam621@gmail.com';
+    }
+
+    // User profiles
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow update: if (isOwner(userId) && 
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'uid', 'email']))
+        || isAdmin();
+    }
+
+    // Orders
+    match /orders/{orderId} {
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      // For now, allow create if user is signed in and sets their own userId.
+      // In a perfect world, this would be server-only.
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Courses (Services)
+    match /courses/{courseId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Settings
+    match /settings/{settingId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Providers
+    match /providers/{providerId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Deposits
+    match /deposits/{depositId} {
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isPaymentAdmin());
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update: if isPaymentAdmin();
+    }
+
+    // Stats
+    match /stats/counters {
+      allow read, write: if isAdmin();
+    }
+
+    // Logs
+    match /logs/{logId} {
+      allow read, write: if isAdmin();
     }
   }
 }

@@ -17,6 +17,7 @@ import {
   addDoc as firestoreAddDoc
 } from 'firebase/firestore';
 import { db } from './firebase';
+import axios from 'axios';
 
 export interface UserProfile {
   uid: string;
@@ -45,16 +46,42 @@ export const dbClient = {
   },
 
   async setDoc(table: string, id: string, data: any): Promise<void> {
+    if (table === 'orders') {
+      try {
+        await axios.post('/api/db/set', { collection: table, id, data });
+        return;
+      } catch (e) {
+        console.warn("[DB-CLIENT] Memory order set failed.");
+        return;
+      }
+    }
     const docRef = doc(db, table, id);
     await setDoc(docRef, { ...data, updatedAt: serverTimestamp() }, { merge: true });
   },
 
   async updateDoc(table: string, id: string, data: any): Promise<void> {
+    if (table === 'orders') {
+      try {
+        await axios.post('/api/db/update', { collection: table, id, data });
+        return;
+      } catch (e) {
+        console.warn("[DB-CLIENT] Memory order update failed.");
+        return;
+      }
+    }
     const docRef = doc(db, table, id);
     await updateDoc(docRef, { ...data, updatedAt: serverTimestamp() });
   },
 
   async addDoc(table: string, data: any): Promise<any> {
+    if (table === 'orders') {
+      try {
+        const res = await axios.post('/api/db/add', { collection: table, data });
+        return { id: res.data.id, ...data };
+      } catch (e) {
+        return { id: 'temp_' + Date.now(), ...data };
+      }
+    }
     const colRef = collection(db, table);
     const docRef = await firestoreAddDoc(colRef, { ...data, createdAt: serverTimestamp() });
     return { id: docRef.id, ...data };
@@ -81,7 +108,7 @@ export const dbClient = {
       displayName: profileData.displayName || '',
       photoURL: profileData.photoURL || '',
       role: profileData.role || 'student',
-      balance: profileData.balance || 0,
+      balance: profileData.balance !== undefined ? profileData.balance : 1,
       createdAt: serverTimestamp(),
       ...profileData
     };
@@ -98,15 +125,32 @@ export const dbClient = {
   },
 
   async getMyOrders(userId: string): Promise<any[]> {
-    return this.getDocs('orders', [where('userId', '==', userId), orderBy('createdAt', 'desc')]);
+    try {
+      const response = await axios.get(`/api/user-orders/${userId}?limit=50`);
+      return response.data;
+    } catch (e) {
+      console.warn("[DB-CLIENT] Memory order fetch failed, falling back to empty list to save quota.");
+      return [];
+    }
   },
 
   async getUserOrders(userId: string, l = 10): Promise<any[]> {
-    return this.getDocs('orders', [where('userId', '==', userId), orderBy('createdAt', 'desc'), limit(l)]);
+    try {
+      const response = await axios.get(`/api/user-orders/${userId}?limit=${l}`);
+      return response.data;
+    } catch (e) {
+      console.warn("[DB-CLIENT] Memory order fetch failed.");
+      return [];
+    }
   },
 
   async getAllOrders(): Promise<any[]> {
-    return this.getDocs('orders', [orderBy('createdAt', 'desc')]);
+    try {
+      const response = await axios.get(`/api/admin/all-orders`);
+      return response.data;
+    } catch (e) {
+      return [];
+    }
   },
 
   async getPendingDeposits(): Promise<any[]> {

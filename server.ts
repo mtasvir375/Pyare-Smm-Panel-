@@ -104,7 +104,59 @@ async function startServer() {
     settings: null as any,
     courses: new Map<string, any>(),
     providers: new Map<string, any>(),
+    users: new Map<string, any>(),
+    orders: new Map<string, any>(),
+    latestOrders: [] as any[] // Globally tracked latest orders in memory
   };
+
+  // Add order to memory only
+  function addOrderToMemory(id: string, data: any) {
+    const now = new Date().toISOString();
+    const orderData = { 
+      id, 
+      ...data, 
+      createdAt: data.createdAt || now,
+      updatedAt: now 
+    };
+    serverCache.orders.set(id, { data: orderData, time: Date.now() });
+    
+    // Avoid duplicates if loading from Firestore
+    const exists = serverCache.latestOrders.find(o => o.id === id);
+    if (!exists) {
+      serverCache.latestOrders.unshift(orderData);
+      // Sort by createdAt just in case they come in out of order
+      serverCache.latestOrders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }
+    
+    if (serverCache.latestOrders.length > 500) {
+      serverCache.latestOrders.pop();
+    }
+  }
+
+  // Load last few orders from Firestore on startup to have initial data
+  // This runs only once when the server boots
+  async function seedMemoryOrders() {
+    try {
+      console.log("[MEMORY] Seeding initial orders from Firestore...");
+      const snap = await fdb.collection("orders").orderBy("createdAt", "desc").limit(50).get();
+      snap.docs.forEach(doc => {
+        const data = doc.data();
+        // Convert Firestore timestamp to ISO string for consistency
+        if (data.createdAt && data.createdAt.toDate) {
+          data.createdAt = data.createdAt.toDate().toISOString();
+        }
+        if (data.updatedAt && data.updatedAt.toDate) {
+          data.updatedAt = data.updatedAt.toDate().toISOString();
+        }
+        addOrderToMemory(doc.id, data);
+      });
+      console.log(`[MEMORY] Seeded ${snap.size} orders.`);
+    } catch (e) {
+      console.error("[MEMORY] Failed to seed orders:", e);
+    }
+  }
+  
+  seedMemoryOrders();
 
   let useRestFallback = true; // Force REST fallback due to environment permissions issues
 
@@ -371,6 +423,8 @@ async function startServer() {
     
     // 10 minutes in-memory caching to optimize and protect Firestore read quota
     const CACHE_TTL = 10 * 60 * 1000; 
+    // Shorter cache for dynamic data like users and orders to ensure balance/status updates aren't stale
+    const DYNAMIC_CACHE_TTL = 30 * 1000; // 30 seconds
 
     if (collect === "settings" && id === "payment" && serverCache.settings && now - serverCache.settings.time < CACHE_TTL) {
       return { exists: true, data: () => serverCache.settings.data };
@@ -384,6 +438,18 @@ async function startServer() {
     if (collect === "providers" && id && serverCache.providers && serverCache.providers.has(id)) {
       const cached = serverCache.providers.get(id);
       if (now - cached.time < CACHE_TTL) {
+        return { exists: true, data: () => cached.data };
+      }
+    }
+    if (collect === "users" && id && serverCache.users && serverCache.users.has(id)) {
+      const cached = serverCache.users.get(id);
+      if (now - cached.time < DYNAMIC_CACHE_TTL) {
+        return { exists: true, data: () => cached.data };
+      }
+    }
+    if (collect === "orders" && id && serverCache.orders && serverCache.orders.has(id)) {
+      const cached = serverCache.orders.get(id);
+      if (now - cached.time < DYNAMIC_CACHE_TTL) {
         return { exists: true, data: () => cached.data };
       }
     }
@@ -419,6 +485,10 @@ async function startServer() {
         serverCache.courses.set(id, { data, time: now });
       } else if (collect === "providers" && id) {
         serverCache.providers.set(id, { data, time: now });
+      } else if (collect === "users" && id) {
+        serverCache.users.set(id, { data, time: now });
+      } else if (collect === "orders" && id) {
+        serverCache.orders.set(id, { data, time: now });
       }
     }
 
@@ -426,6 +496,18 @@ async function startServer() {
   };
 
   const updateDocSafe = async (col: string, id: string, data: any) => {
+    if (col === "orders") {
+      console.log(`[MEMORY-UPDATE] Updating order ${id} in memory.`);
+      const cached = serverCache.orders.get(id);
+      const existingData = cached ? cached.data : {};
+      const newData = { ...existingData, ...data, updatedAt: new Date().toISOString() };
+      serverCache.orders.set(id, { data: newData, time: Date.now() });
+      const idx = serverCache.latestOrders.findIndex(o => o.id === id);
+      if (idx !== -1) {
+        serverCache.latestOrders[idx] = { ...serverCache.latestOrders[idx], ...data };
+      }
+      return true;
+    }
     if (!useRestFallback) {
       try {
         await fdb.collection(col).doc(id).update({ ...data, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
@@ -445,6 +527,11 @@ async function startServer() {
   };
 
   const setDocSafe = async (col: string, id: string, data: any) => {
+    if (col === "orders") {
+      console.log(`[MEMORY-ONLY] Saving order ${id} to memory only.`);
+      addOrderToMemory(id, data);
+      return true; 
+    }
     if (!useRestFallback) {
       try {
         await fdb.collection(col).doc(id).set({ ...data, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
@@ -464,6 +551,12 @@ async function startServer() {
   };
 
   const addDocSafe = async (col: string, data: any) => {
+    if (col === "orders") {
+      const id = "ord_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
+      const now = new Date().toISOString();
+      addOrderToMemory(id, { ...data, createdAt: now });
+      return id;
+    }
     if (!useRestFallback) {
       try {
         const docRef = await fdb.collection(col).add({ ...data, createdAt: admin.firestore.FieldValue.serverTimestamp() });
@@ -712,6 +805,42 @@ async function startServer() {
       if (serverCachedSettings) return res.json(serverCachedSettings);
       res.status(500).json({ error: "Failed to fetch settings" });
     }
+  });
+
+  app.get("/api/user-orders/:userId", (req, res) => {
+    const { userId } = req.params;
+    const limit = parseInt(req.query.limit as string) || 10;
+    console.log(`[API] Fetching memory orders for user: ${userId}`);
+    const userOrders = serverCache.latestOrders
+      .filter(o => o.userId === userId)
+      .slice(0, limit);
+    res.json(userOrders);
+  });
+
+  app.get("/api/admin/all-orders", (req, res) => {
+    console.log(`[API] Fetching all memory orders for admin`);
+    res.json(serverCache.latestOrders.slice(0, 50));
+  });
+
+  app.post("/api/db/set", async (req, res) => {
+    const { collection, id, data } = req.body;
+    if (!collection || !id) return res.status(400).json({ error: "Missing collection or id" });
+    const success = await setDocSafe(collection, id, data);
+    res.json({ success });
+  });
+
+  app.post("/api/db/add", async (req, res) => {
+    const { collection, data } = req.body;
+    if (!collection) return res.status(400).json({ error: "Missing collection" });
+    const result = await addDocSafe(collection, data);
+    res.json({ success: !!result, id: typeof result === 'string' ? result : (result as any)?.id });
+  });
+
+  app.post("/api/db/update", async (req, res) => {
+    const { collection, id, data } = req.body;
+    if (!collection || !id) return res.status(400).json({ error: "Missing collection or id" });
+    const success = await updateDocSafe(collection, id, data);
+    res.json({ success });
   });
 
   // Temporary developer debug endpoint to inspect orders
@@ -1277,6 +1406,239 @@ async function startServer() {
     } catch (e: any) {
       console.error(`[DEPOSIT] Error submitting manual deposit: ${e.message}`);
       res.status(500).json({ error: e.message || "Failed to submit request." });
+    }
+  });
+
+  // Verify QR Auto Payment (SMMQR/VPAAPI)
+  app.post("/api/deposits/verify-qr-auto", async (req, res) => {
+    const { userId, amount, utr } = req.body;
+    if (!userId || !amount || !utr) return res.status(400).json({ error: "Missing fields" });
+
+    try {
+      const cleanUtr = String(utr).replace(/\D/g, "");
+      if (cleanUtr.length !== 12) return res.status(400).json({ error: "Invalid UTR format." });
+
+      // 1. Check if UTR already used
+      const existing = await fdb.collection("deposits")
+        .where("utr", "==", cleanUtr)
+        .where("status", "==", "approved")
+        .limit(1)
+        .get();
+      
+      if (!existing.empty) {
+        return res.status(400).json({ error: "This UTR has already been used and verified." });
+      }
+
+      // 2. Get Settings
+      const settingsDoc = await fdb.collection("settings").doc("payment").get();
+      const settings = settingsDoc.data() || {};
+
+      if (!settings.qrAutoEnabled) {
+        return res.status(400).json({ error: "Automatic QR verification is disabled by admin." });
+      }
+
+      const { qrAutoProvider, qrAutoApiKey, qrAutoToken, qrAutoUrl } = settings;
+      let isVerified = false;
+      let providerResponse = null;
+
+      // 3. Call Provider API
+      if (qrAutoProvider === "smmqr") {
+        const verifyUrl = qrAutoUrl || "https://smmqr.com/api/v1/verify-payment";
+        try {
+          const apiRes = await axios.get(verifyUrl, {
+            params: {
+              api_key: qrAutoApiKey,
+              token: qrAutoToken,
+              utr: cleanUtr,
+              amount: amount
+            },
+            timeout: 15000
+          });
+          providerResponse = apiRes.data;
+          if (apiRes.data.status === "success" || apiRes.data.success === true || apiRes.data.msg?.toLowerCase().includes("success")) {
+            isVerified = true;
+          }
+        } catch (apiErr: any) {
+          console.error("[QR-AUTO-SMMQR-ERR]", apiErr.message);
+          return res.status(500).json({ error: "Gateway connection failed. Please try manual verification." });
+        }
+      } else if (qrAutoProvider === "vpaapi") {
+        const verifyUrl = qrAutoUrl || "https://vpaapi.com/api/verify";
+        try {
+          const apiRes = await axios.post(verifyUrl, {
+            api_key: qrAutoApiKey,
+            utr: cleanUtr,
+            amount: amount
+          }, { timeout: 15000 });
+          providerResponse = apiRes.data;
+          if (apiRes.data.status === "success" || apiRes.data.success === true) {
+            isVerified = true;
+          }
+        } catch (apiErr: any) {
+          console.error("[QR-AUTO-VPA-ERR]", apiErr.message);
+          return res.status(500).json({ error: "Gateway connection failed." });
+        }
+      } else if (qrAutoProvider === "upigateway") {
+        const verifyUrl = qrAutoUrl || "https://api.upigateway.com/api/v1/verify_payment";
+        try {
+          const apiRes = await axios.post(verifyUrl, {
+            key: qrAutoApiKey,
+            utr: cleanUtr
+          }, { timeout: 15000 });
+          providerResponse = apiRes.data;
+          // UPIGateway usually returns { status: true, data: { amount: 100, ... } }
+          if (apiRes.data.status === true || apiRes.data.msg?.toLowerCase().includes("success")) {
+            isVerified = true;
+            // Verify amount if provided in response
+            if (apiRes.data.data && apiRes.data.data.amount) {
+              if (Number(apiRes.data.data.amount) < Number(amount)) {
+                isVerified = false;
+                return res.status(400).json({ error: `Amount mismatch. Found ₹${apiRes.data.data.amount} for this UTR.` });
+              }
+            }
+          }
+        } catch (apiErr: any) {
+          console.error("[QR-AUTO-UPIGATEWAY-ERR]", apiErr.message);
+          return res.status(500).json({ error: "UPIGateway connection failed." });
+        }
+      } else {
+        if (qrAutoUrl) {
+          try {
+            const apiRes = await axios.post(qrAutoUrl, {
+              key: qrAutoApiKey,
+              token: qrAutoToken,
+              utr: cleanUtr,
+              amount: amount
+            }, { timeout: 15000 });
+            providerResponse = apiRes.data;
+            if (apiRes.data.status === "success" || apiRes.data.success === true) {
+              isVerified = true;
+            }
+          } catch (apiErr) {
+            return res.status(500).json({ error: "Custom gateway failed." });
+          }
+        }
+      }
+
+      if (isVerified) {
+        // 4. Update User Balance
+        const userDoc = await fdb.collection("users").doc(userId).get();
+        if (!userDoc.exists) return res.status(404).json({ error: "User not found" });
+        
+        const userData = userDoc.data() || {};
+        const currentBalance = Number(userData.balance) || 0;
+        const depositAmount = Number(amount);
+        
+        await fdb.collection("users").doc(userId).update({
+          balance: currentBalance + depositAmount
+        });
+
+        // 5. Create Approved Deposit Record
+        const depositId = `dep_auto_${Date.now()}`;
+        await fdb.collection("deposits").doc(depositId).set({
+          id: depositId,
+          userId,
+          amount: depositAmount,
+          utr: cleanUtr,
+          status: "approved",
+          type: "auto_qr_verify",
+          provider: qrAutoProvider,
+          providerResponse: JSON.stringify(providerResponse),
+          createdAt: new Date().toISOString()
+        });
+
+        return res.json({ success: true, newBalance: currentBalance + depositAmount });
+      } else {
+        return res.status(400).json({ 
+          error: "Payment not found or not yet processed. Please wait 1-2 minutes and try again.",
+          details: providerResponse 
+        });
+      }
+    } catch (error: any) {
+      console.error("[QR-VERIFY-ERR]", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+  
+  // UPIGateway.com Webhook Handler
+  app.post("/api/webhooks/upigateway", async (req, res) => {
+    // Note: UPIGateway usually sends data as form-urlencoded or JSON
+    const data = req.body;
+    console.log("[WEBHOOK-UPIGATEWAY]", JSON.stringify(data));
+
+    try {
+      // Common parameters: status, utr, amount, client_txn_id
+      const status = data.status;
+      const utr = data.utr;
+      const amount = data.amount;
+      const clientTxnId = data.client_txn_id || ""; // e.g. TXN_USERID_TIMESTAMP
+
+      if (status === "success" || status === "COMPLETED") {
+        // Extract userId from clientTxnId if it follows our pattern: TXN_USERID_TIMESTAMP
+        let userId = "";
+        if (clientTxnId.startsWith("TXN_")) {
+          const parts = clientTxnId.split("_");
+          if (parts.length >= 2) userId = parts[1];
+        }
+
+        if (!userId && utr) {
+          // If no userId in txnId, try to find a pending deposit with this UTR
+          const pending = await fdb.collection("deposits")
+            .where("utr", "==", utr)
+            .where("status", "==", "pending")
+            .limit(1)
+            .get();
+          
+          if (!pending.empty) {
+            userId = pending.docs[0].data().userId;
+          }
+        }
+
+        if (userId && utr && amount) {
+          const cleanUtr = String(utr).replace(/\D/g, "");
+          
+          // Check if already processed
+          const existing = await fdb.collection("deposits")
+            .where("utr", "==", cleanUtr)
+            .where("status", "==", "approved")
+            .limit(1)
+            .get();
+
+          if (existing.empty) {
+            // Update User Balance
+            const userDoc = await fdb.collection("users").doc(userId).get();
+            if (userDoc.exists) {
+              const currentBalance = Number(userDoc.data()?.balance) || 0;
+              const depositAmount = Number(amount);
+              
+              await fdb.collection("users").doc(userId).update({
+                balance: currentBalance + depositAmount
+              });
+
+              // Create/Update Deposit Record
+              const depositId = `dep_webhook_${utr}`;
+              await fdb.collection("deposits").doc(depositId).set({
+                id: depositId,
+                userId,
+                amount: depositAmount,
+                utr: cleanUtr,
+                status: "approved",
+                type: "webhook_upigateway",
+                rawData: JSON.stringify(data),
+                createdAt: new Date().toISOString()
+              });
+              
+              console.log(`[WEBHOOK-SUCCESS] Added ₹${depositAmount} to user ${userId}`);
+            }
+          }
+        }
+      }
+      
+      // Always return 200 to acknowledge webhook
+      res.status(200).send("OK");
+    } catch (err: any) {
+      console.error("[WEBHOOK-ERROR]", err.message);
+      res.status(200).send("ERROR_LOGGED"); // Still 200 to stop retries if it's a fatal logic error
     }
   });
 
