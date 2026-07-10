@@ -55,6 +55,8 @@ export default function Courses() {
   const [isRazorpayLoading, setIsRazorpayLoading] = useState(false);
   const [isPhonePeLoading, setIsPhonePeLoading] = useState(false);
   const [isPaytmLoading, setIsPaytmLoading] = useState(false);
+  const [qrAutoData, setQrAutoData] = useState<{ payment_url?: string; client_txn_id?: string } | null>(null);
+  const [isQrAutoLoading, setIsQrAutoLoading] = useState(false);
 
   const [isCategoryOpen, setIsCategoryOpen] = useState(false);
   const [isServiceOpen, setIsServiceOpen] = useState(false);
@@ -101,7 +103,7 @@ export default function Courses() {
         const settingsData = await getCachedSettings();
         if (settingsData) {
           setPaymentSettings(settingsData);
-          const hasAuto = !!(settingsData.razorpayEnabled || settingsData.phonepeEnabled || settingsData.paytmEnabled);
+          const hasAuto = !!(settingsData.razorpayEnabled || settingsData.phonepeEnabled || settingsData.paytmEnabled || settingsData.qrAutoEnabled);
           setPaymentMethod(hasAuto ? "auto" : "manual");
         }
       } catch (error) {
@@ -446,12 +448,56 @@ export default function Courses() {
     }
 
     const cleanUtr = utr.replace(/\D/g, "");
-    if (!screenshot && cleanUtr.length !== 12) {
+    if (cleanUtr.length !== 12) {
       toast.error("Please provide a valid 12-digit UTR number");
       return;
     }
 
-    if (!screenshotPreview) {
+    const isQrAuto = !!paymentSettings?.qrAutoEnabled;
+
+    if (isQrAuto) {
+      setIsUploading(true);
+      try {
+        const response = await axios.post("/api/deposits/verify-qr-auto", {
+          amount: Number(depositAmount),
+          utr: cleanUtr,
+          userId: user.uid,
+          userEmail: user.email,
+          client_txn_id: qrAutoData?.client_txn_id
+        });
+
+        if (response.data.success) {
+          toast.success("🎉 Payment verified! ₹" + response.data.amount + " added to wallet.");
+          setIsAddFundsOpen(false);
+          setDepositAmount("");
+          setUtr("");
+          setScreenshot(null);
+          setScreenshotPreview(null);
+          // Refresh user profile to show new balance
+          if (updateUserProfileLocal) {
+            updateUserProfileLocal({ balance: (profile?.balance || 0) + Number(response.data.amount) });
+          }
+          return;
+        } else {
+          toast.error(response.data.error || "Verification failed. Please check UTR/Amount.");
+          setIsUploading(false);
+          return;
+        }
+      } catch (error: any) {
+        console.error("Auto verify failed:", error);
+        toast.error(error.response?.data?.error || "Automatic verification failed. You can try manual upload.");
+        setIsUploading(false);
+        // Fallback to manual if auto fails? No, let user decide.
+        return;
+      }
+    }
+
+    if (!screenshot && !isQrAuto) {
+      toast.error("Please provide a valid 12-digit UTR number");
+      return;
+    }
+
+    if (!screenshotPreview && !isQrAuto) {
       toast.error("Please upload a payment screenshot");
       return;
     }
@@ -655,9 +701,11 @@ export default function Courses() {
     }
   };
 
-  const upiLink = paymentSettings?.upiId 
+  const upiLink = qrAutoData?.payment_url || (paymentSettings?.upiId 
     ? `upi://pay?pa=${paymentSettings.upiId}&pn=${encodeURIComponent(paymentSettings.merchantName || "SMM Panel")}&am=${depositAmount}&cu=INR`
-    : "";
+    : "");
+
+  const isQrAuto = !!paymentSettings?.qrAutoEnabled;
 
   const renderLights = () => {
     const dots = [];
@@ -982,7 +1030,16 @@ export default function Courses() {
         )}
       </div>
 
-      <Dialog open={isAddFundsOpen} onOpenChange={setIsAddFundsOpen}>
+      <Dialog open={isAddFundsOpen} onOpenChange={(open) => {
+        setIsAddFundsOpen(open);
+        if (!open) {
+          setDepositAmount("");
+          setUtr("");
+          setScreenshot(null);
+          setScreenshotPreview(null);
+          setQrAutoData(null);
+        }
+      }}>
         <DialogContent className="max-w-[90vw] sm:max-w-md rounded-3xl p-4 sm:p-6 overflow-y-auto max-h-[90vh]">
           <DialogHeader className="pb-2">
             <DialogTitle className="text-lg sm:text-xl font-bold">Add Funds to Wallet</DialogTitle>
@@ -1004,11 +1061,13 @@ export default function Courses() {
             </div>
 
             {(() => {
-              const hasAutoGateways = !!(paymentSettings?.razorpayEnabled || paymentSettings?.phonepeEnabled || paymentSettings?.paytmEnabled);
+              const hasTraditionalAuto = !!(paymentSettings?.razorpayEnabled || paymentSettings?.phonepeEnabled || paymentSettings?.paytmEnabled);
+              const qrAutoEnabled = !!paymentSettings?.qrAutoEnabled;
+              const hasAnyAuto = hasTraditionalAuto || qrAutoEnabled;
               
               return (
                 <>
-                  {hasAutoGateways && depositAmount && Number(depositAmount) > 0 && (
+                  {hasAnyAuto && depositAmount && Number(depositAmount) > 0 && (
                     <div className="grid grid-cols-2 gap-3 mb-4 mt-1">
                       <button
                         type="button"
@@ -1020,12 +1079,34 @@ export default function Courses() {
                         }`}
                       >
                         <Zap className="w-5 h-5 mb-1 text-yellow-500 fill-yellow-500 animate-pulse" />
-                        <span className="text-xs font-bold">Automatic Pay</span>
-                        <span className="text-[9px] opacity-80">Instant Credit</span>
+                        <span className="text-xs font-bold">Auto Gateways</span>
+                        <span className="text-[9px] opacity-80">Razorpay/PhonePe</span>
                       </button>
                       <button
                         type="button"
-                        onClick={() => setPaymentMethod("manual")}
+                        onClick={async () => {
+                          setPaymentMethod("manual");
+                          if (paymentSettings?.qrAutoEnabled && depositAmount && Number(depositAmount) >= 1) {
+                            setIsQrAutoLoading(true);
+                            try {
+                              const res = await axios.post("/api/deposits/create-qr-auto-order", {
+                                userId: user.uid,
+                                amount: Number(depositAmount),
+                                userEmail: user.email
+                              });
+                              if (res.data.success && res.data.payment_url) {
+                                setQrAutoData({ 
+                                  payment_url: res.data.payment_url, 
+                                  client_txn_id: res.data.client_txn_id 
+                                });
+                              }
+                            } catch (err) {
+                              console.error("Auto pre-order failed:", err);
+                            } finally {
+                              setIsQrAutoLoading(false);
+                            }
+                          }
+                        }}
                         className={`flex flex-col items-center justify-center p-3 rounded-2xl border-2 text-center transition-all ${
                           paymentMethod === "manual" 
                             ? "border-primary bg-primary/5 text-primary" 
@@ -1033,13 +1114,13 @@ export default function Courses() {
                         }`}
                       >
                         <QrCode className="w-5 h-5 mb-1 text-blue-500" />
-                        <span className="text-xs font-bold">Manual UPI QR</span>
-                        <span className="text-[9px] opacity-80">Needs UTR & SS</span>
+                        <span className="text-xs font-bold">UPI QR {qrAutoEnabled && "(Auto)"}</span>
+                        <span className="text-[9px] opacity-80">{qrAutoEnabled ? "Instant Verify" : "Manual Verify"}</span>
                       </button>
                     </div>
                   )}
 
-                  {paymentMethod === "auto" && hasAutoGateways && depositAmount && Number(depositAmount) > 0 && (
+                  {paymentMethod === "auto" && hasTraditionalAuto && depositAmount && Number(depositAmount) > 0 && (
                     <div className="space-y-2 pt-2 animate-in fade-in slide-in-from-top-2">
                       <div className="relative flex items-center py-2">
                         <div className="flex-grow border-t border-gray-100"></div>
@@ -1102,31 +1183,48 @@ export default function Courses() {
 
                   {paymentMethod === "manual" && depositAmount && Number(depositAmount) > 0 && paymentSettings?.upiId && (
                     <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
-                      <div className="flex flex-col items-center gap-1.5 p-3 bg-primary/5 rounded-2xl border-2 border-primary/10">
-                        <div className="bg-white p-1.5 rounded-xl shadow-sm">
-                          <QRCodeSVG 
-                            value={upiLink} 
-                            size={120}
-                            level="H"
-                            includeMargin={true}
-                          />
+                      <div className="flex flex-col items-center gap-2 p-4 bg-primary/5 rounded-3xl border-2 border-primary/10 relative overflow-hidden">
+                        <div className="absolute top-0 right-0 p-2 opacity-5">
+                          <QrCode className="w-20 h-20" />
                         </div>
-                        <div className="text-center">
-                          <p className="text-xs font-bold text-primary">{paymentSettings.merchantName}</p>
-                          <p className="text-[9px] text-gray-500 font-medium">{paymentSettings.upiId}</p>
+                        
+                        <div className="bg-white p-2 rounded-2xl shadow-sm relative z-10 min-h-[140px] flex items-center justify-center">
+                          {isQrAutoLoading ? (
+                            <div className="flex flex-col items-center justify-center w-[120px] h-[120px]">
+                              <RefreshCw className="w-8 h-8 animate-spin text-primary mb-2" />
+                              <p className="text-[10px] font-bold text-gray-400">Securing...</p>
+                            </div>
+                          ) : (
+                            <QRCodeSVG 
+                              value={upiLink} 
+                              size={120}
+                              level="H"
+                              includeMargin={true}
+                            />
+                          )}
                         </div>
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className="rounded-full h-6 text-[9px] font-bold px-3"
-                          onClick={() => {
-                            navigator.clipboard.writeText(paymentSettings.upiId);
-                            toast.success("UPI ID copied!");
-                          }}
-                        >
-                          <Copy className="w-3 h-3 mr-1" />
-                          Copy UPI ID
-                        </Button>
+                        
+                        <div className="text-center relative z-10">
+                          <p className="text-xs font-bold text-primary">
+                            {isQrAuto && qrAutoData?.payment_url ? "Auto-Verify QR" : paymentSettings.merchantName}
+                          </p>
+                          <div className="flex items-center justify-center gap-2 mt-1">
+                            <code className="text-[10px] bg-white px-2 py-0.5 rounded-full border border-gray-100 font-mono text-gray-500">
+                              {isQrAuto && qrAutoData?.payment_url ? "Dynamic Gateway" : paymentSettings.upiId}
+                            </code>
+                            {!isQrAuto && (
+                              <button 
+                                onClick={() => {
+                                  navigator.clipboard.writeText(paymentSettings.upiId);
+                                  toast.success("UPI ID copied!");
+                                }}
+                                className="text-primary hover:scale-110 transition-transform"
+                              >
+                                <Copy className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
                       </div>
 
                       <div className="space-y-2">
@@ -1141,14 +1239,29 @@ export default function Courses() {
                           />
                         </div>
 
-                        <div className="relative">
-                          <div className="absolute inset-0 flex items-center">
-                            <span className="w-full border-t" />
+                        {paymentSettings?.qrAutoEnabled ? (
+                          <div className="flex flex-col items-center gap-2 p-3 bg-green-50 rounded-2xl border-2 border-green-100 mb-2 relative">
+                            {isQrAutoLoading && (
+                              <div className="absolute inset-0 bg-white/60 rounded-2xl flex items-center justify-center z-20">
+                                <RefreshCw className="w-5 h-5 animate-spin text-primary" />
+                              </div>
+                            )}
+                            <div className="flex items-center gap-2 text-green-700">
+                              <Zap className="w-4 h-4 fill-green-500 text-green-500 animate-pulse" />
+                              <span className="text-xs font-bold uppercase">QR Auto-Verify Active</span>
+                            </div>
+                            <p className="text-[9px] text-green-600 font-medium text-center">Pay & enter UTR for instant credit!</p>
                           </div>
-                          <div className="relative flex justify-center text-[10px] uppercase">
-                            <span className="bg-white px-2 text-gray-500 font-bold">AND MANDATORY SCREENSHOT</span>
+                        ) : (
+                          <div className="relative">
+                            <div className="absolute inset-0 flex items-center">
+                              <span className="w-full border-t" />
+                            </div>
+                            <div className="relative flex justify-center text-[10px] uppercase">
+                              <span className="bg-white px-2 text-gray-500 font-bold">AND MANDATORY SCREENSHOT</span>
+                            </div>
                           </div>
-                        </div>
+                        )}
 
                         <div className="space-y-1">
                           <input
@@ -1194,11 +1307,18 @@ export default function Courses() {
           {paymentMethod === "manual" && (
             <DialogFooter>
               <Button 
-                className="w-full h-12 rounded-xl text-lg font-bold" 
+                className={`w-full h-12 rounded-xl text-lg font-bold shadow-lg ${paymentSettings?.qrAutoEnabled ? 'bg-green-600 hover:bg-green-700' : 'bg-primary'}`} 
                 onClick={handleAddFunds}
-                disabled={isUploading || !depositAmount || Number(depositAmount) <= 0}
+                disabled={isUploading || !depositAmount || Number(depositAmount) <= 0 || (paymentMethod === "manual" && (!utr || utr.length < 12)) || (paymentMethod === "manual" && !paymentSettings?.qrAutoEnabled && !screenshotPreview)}
               >
-                {isUploading ? "Verifying..." : "Confirm Payment"}
+                {isUploading ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                    Verifying...
+                  </>
+                ) : (
+                  paymentSettings?.qrAutoEnabled ? "Verify & Add Balance" : "Confirm Payment"
+                )}
               </Button>
             </DialogFooter>
           )}

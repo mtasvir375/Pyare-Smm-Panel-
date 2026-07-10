@@ -15,7 +15,8 @@ import {
   Check,
   Gift,
   RefreshCw,
-  Zap
+  Zap,
+  AlertCircle
 } from "lucide-react";
 
 import axios from "axios";
@@ -72,7 +73,7 @@ const getYoutubeEmbedUrl = (url: string) => {
 };
 
 export default function Profile() {
-  const { user, userProfile: profile, loading: authLoading, isAdmin, isPaymentAdmin, signOut } = useAuth() as any;
+  const { user, userProfile: profile, loading: authLoading, isAdmin, isPaymentAdmin, signOut, updateUserProfileLocal } = useAuth() as any;
   const navigate = useNavigate();
   const [isAddFundsOpen, setIsAddFundsOpen] = useState(false);
   const [paymentStep, setPaymentStep] = useState<"amount" | "payment">("amount");
@@ -84,6 +85,8 @@ export default function Profile() {
   const [isRazorpayLoading, setIsRazorpayLoading] = useState(false);
   const [isPhonePeLoading, setIsPhonePeLoading] = useState(false);
   const [isPaytmLoading, setIsPaytmLoading] = useState(false);
+  const [qrAutoData, setQrAutoData] = useState<{ payment_url?: string; client_txn_id?: string } | null>(null);
+  const [isQrAutoLoading, setIsQrAutoLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<"auto" | "manual" | null>(null);
   const [paymentSettings, setPaymentSettings] = useState<{
     upiId: string;
@@ -303,6 +306,40 @@ export default function Profile() {
     setUtr("");
     setScreenshot(null);
     setScreenshotPreview(null);
+    setQrAutoData(null);
+  };
+
+  const handleAmountSubmit = async () => {
+    if (!amount || Number(amount) < 1) {
+      toast.error("Minimum amount is ₹1");
+      return;
+    }
+
+    if (paymentMethod === "manual" && paymentSettings?.qrAutoEnabled) {
+      setIsQrAutoLoading(true);
+      try {
+        const res = await axios.post("/api/deposits/create-qr-auto-order", {
+          userId: user.uid,
+          amount: Number(amount),
+          userEmail: user.email
+        });
+        if (res.data.success && res.data.payment_url) {
+          setQrAutoData({ 
+            payment_url: res.data.payment_url, 
+            client_txn_id: res.data.client_txn_id 
+          });
+        }
+        setPaymentStep("payment");
+      } catch (err: any) {
+        console.error("Auto pre-order failed:", err);
+        // If it fails, we still let them proceed to payment step with fallback to manual
+        setPaymentStep("payment");
+      } finally {
+        setIsQrAutoLoading(false);
+      }
+    } else {
+      setPaymentStep("payment");
+    }
   };
 
   const handleAddFunds = async () => {
@@ -348,7 +385,9 @@ export default function Profile() {
             toast.success("🎉 Payment verified automatically! ₹" + numAmount + " added to wallet.");
             resetAddFunds();
             // Refresh profile balance locally if possible
-            if (profile) profile.balance = response.data.newBalance;
+            if (updateUserProfileLocal) {
+              updateUserProfileLocal({ balance: response.data.newBalance });
+            }
             return;
           }
         } catch (autoError: any) {
@@ -413,9 +452,11 @@ export default function Profile() {
     }
   };
 
-  const upiLink = paymentSettings?.upiId 
+  const upiLink = qrAutoData?.payment_url || (paymentSettings?.upiId 
     ? `upi://pay?pa=${paymentSettings.upiId}&pn=${encodeURIComponent(paymentSettings.merchantName || "SMM Panel")}&am=${amount}&cu=INR&tr=TXN_${user?.uid}_${Date.now()}`
-    : "";
+    : "");
+
+  const isQrAuto = !!paymentSettings?.qrAutoEnabled;
 
   const menuItems = [
     { 
@@ -429,7 +470,7 @@ export default function Profile() {
           const settingsData = await getCachedSettings(true); // Force-refresh settings on open
           if (settingsData) {
             setPaymentSettings(settingsData);
-            const hasAuto = !!(settingsData.razorpayEnabled || settingsData.phonepeEnabled || settingsData.paytmEnabled);
+            const hasAuto = !!(settingsData.razorpayEnabled || settingsData.phonepeEnabled || settingsData.paytmEnabled || settingsData.qrAutoEnabled);
             setPaymentMethod(hasAuto ? "auto" : "manual");
           }
         } catch (error) {
@@ -535,12 +576,14 @@ export default function Profile() {
         <DialogContent className="max-w-[90vw] sm:max-w-md rounded-3xl p-4 sm:p-6 overflow-y-auto max-h-[90vh]">
           <DialogHeader className="pb-2">
             <DialogTitle className="text-lg sm:text-xl font-bold">
-              {paymentStep === "amount" ? "Add Funds to Wallet" : "Complete Payment"}
+              {paymentStep === "amount" ? "Add Funds to Wallet" : (paymentSettings?.qrAutoEnabled && paymentMethod === "manual" ? "Instant QR Verification" : "Complete Payment")}
             </DialogTitle>
             <DialogDescription className="text-xs font-medium text-gray-500">
               {paymentStep === "amount" 
                 ? "Enter the amount you want to add to your wallet." 
-                : `Scan the QR code to pay ₹${amount} and submit details.`}
+                : (paymentSettings?.qrAutoEnabled && paymentMethod === "manual" 
+                    ? "Scan, Pay & Enter 12-digit UTR for instant credit."
+                    : "Scan the QR code to pay ₹" + amount + " and submit details.")}
             </DialogDescription>
           </DialogHeader>
 
@@ -575,11 +618,12 @@ export default function Profile() {
 
                 <Button 
                   className="w-full h-14 rounded-2xl text-lg font-bold shadow-lg shadow-primary/20"
-                  disabled={!amount || Number(amount) < 1}
-                  onClick={() => setPaymentStep("payment")}
+                  disabled={!amount || Number(amount) < 1 || isQrAutoLoading}
+                  onClick={handleAmountSubmit}
                 >
-                  Pay Now
-                  <ChevronRight className="w-5 h-5 ml-2" />
+                  {isQrAutoLoading ? <RefreshCw className="w-5 h-5 animate-spin mr-2" /> : null}
+                  {isQrAutoLoading ? "Initializing..." : "Pay Now"}
+                  {!isQrAutoLoading && <ChevronRight className="w-5 h-5 ml-2" />}
                 </Button>
               </div>
             ) : (
@@ -595,13 +639,21 @@ export default function Profile() {
                           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center">Payment Methods</p>
                           <div className="flex flex-col gap-2">
                             {qrAutoEnabled && (
-                              <div className="flex flex-col items-center gap-2 p-3 bg-green-50 rounded-2xl border-2 border-green-100 mb-2">
-                                <div className="flex items-center gap-2 text-green-700">
-                                  <Zap className="w-4 h-4 fill-green-500 text-green-500 animate-pulse" />
-                                  <span className="text-xs font-bold uppercase">Instant QR Auto-Verify Active</span>
+                              <Button 
+                                onClick={() => setPaymentMethod("manual")}
+                                className="w-full h-16 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-bold flex items-center justify-between px-6 shadow-lg shadow-green-100 group transition-all"
+                              >
+                                <div className="flex items-center gap-4">
+                                  <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
+                                    <QrCode className="w-6 h-6" />
+                                  </div>
+                                  <div className="text-left">
+                                    <p className="text-sm">Pay via QR</p>
+                                    <p className="text-[10px] opacity-80 font-medium">Instant Auto-Verify</p>
+                                  </div>
                                 </div>
-                                <p className="text-[9px] text-green-600 font-medium text-center">Pay via QR and enter UTR for instant credit!</p>
-                              </div>
+                                <Zap className="w-5 h-5 fill-white animate-pulse" />
+                              </Button>
                             )}
                             {paymentSettings?.razorpayEnabled && (
                               <Button 
@@ -633,35 +685,56 @@ export default function Profile() {
 
                       {paymentSettings?.upiId && (
                         <div className="space-y-4">
+                          {paymentSettings?.qrAutoEnabled && (
+                            <div className="flex flex-col items-center gap-2 p-3 bg-green-50 rounded-2xl border-2 border-green-100 mb-0 animate-in zoom-in duration-300">
+                              <div className="flex items-center gap-2 text-green-700">
+                                <Zap className="w-4 h-4 fill-green-500 text-green-500 animate-pulse" />
+                                <span className="text-xs font-bold uppercase tracking-tight">Automatic Verification Active</span>
+                              </div>
+                              <p className="text-[9px] text-green-600 font-medium text-center">Our system will verify your UTR instantly!</p>
+                            </div>
+                          )}
+                          
                           <div className="flex flex-col items-center gap-2 p-4 bg-primary/5 rounded-3xl border-2 border-primary/10 relative overflow-hidden">
                             <div className="absolute top-0 right-0 p-2 opacity-5">
                               <QrCode className="w-20 h-20" />
                             </div>
                             
-                            <div className="bg-white p-2 rounded-2xl shadow-sm relative z-10">
-                              <QRCodeSVG 
-                                value={upiLink} 
-                                size={150}
-                                level="H"
-                                includeMargin={true}
-                              />
+                            <div className="bg-white p-2 rounded-2xl shadow-sm relative z-10 min-h-[140px] flex items-center justify-center">
+                              {isQrAutoLoading ? (
+                                <div className="flex flex-col items-center justify-center w-[120px] h-[120px]">
+                                  <RefreshCw className="w-8 h-8 animate-spin text-primary mb-2" />
+                                  <p className="text-[10px] font-bold text-gray-400">Securing...</p>
+                                </div>
+                              ) : (
+                                <QRCodeSVG 
+                                  value={upiLink} 
+                                  size={150}
+                                  level="H"
+                                  includeMargin={true}
+                                />
+                              )}
                             </div>
                             
                             <div className="text-center relative z-10">
-                              <p className="text-sm font-bold text-primary">{paymentSettings.merchantName}</p>
+                              <p className="text-sm font-bold text-primary">
+                                {isQrAuto && qrAutoData?.payment_url ? "Auto-Verify QR" : paymentSettings.merchantName}
+                              </p>
                               <div className="flex items-center justify-center gap-2 mt-1">
                                 <code className="text-[10px] bg-white px-2 py-0.5 rounded-full border border-gray-100 font-mono text-gray-500">
-                                  {paymentSettings.upiId}
+                                  {isQrAuto && qrAutoData?.payment_url ? "Dynamic Gateway" : paymentSettings.upiId}
                                 </code>
-                                <button 
-                                  onClick={() => {
-                                    navigator.clipboard.writeText(paymentSettings.upiId);
-                                    toast.success("UPI ID copied!");
-                                  }}
-                                  className="text-primary hover:scale-110 transition-transform"
-                                >
-                                  <Copy className="w-3 h-3" />
-                                </button>
+                                {!isQrAuto && (
+                                  <button 
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(paymentSettings.upiId);
+                                      toast.success("UPI ID copied!");
+                                    }}
+                                    className="text-primary hover:scale-110 transition-transform"
+                                  >
+                                    <Copy className="w-3 h-3" />
+                                  </button>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -678,50 +751,61 @@ export default function Profile() {
                               />
                             </div>
 
-                            <div className="space-y-1.5">
-                              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider ml-1">Step 2: Upload Screenshot</label>
-                              <input
-                                type="file"
-                                accept="image/*"
-                                onChange={handleImageChange}
-                                className="hidden"
-                                id="screenshot-upload"
-                              />
-                              <label
-                                htmlFor="screenshot-upload"
-                                className="flex items-center justify-between p-3 border-2 border-dashed border-gray-100 bg-gray-50/50 rounded-xl cursor-pointer hover:bg-gray-100 transition-colors"
-                              >
-                                {screenshotPreview ? (
-                                  <div className="flex items-center gap-3 w-full">
-                                    <img src={screenshotPreview} alt="Preview" className="w-10 h-10 object-cover rounded-lg border border-white shadow-sm" />
-                                    <span className="text-xs font-bold text-green-600 flex items-center">
-                                      <Check className="w-3 h-3 mr-1" /> Image Uploaded
-                                    </span>
-                                  </div>
-                                ) : (
-                                  <>
-                                    <div className="flex items-center gap-2">
-                                      <Upload className="w-4 h-4 text-gray-400" />
-                                      <span className="text-xs font-bold text-gray-500">Select payment proof</span>
+                            {!paymentSettings?.qrAutoEnabled ? (
+                              <div className="space-y-1.5">
+                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider ml-1">Step 2: Upload Screenshot</label>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  onChange={handleImageChange}
+                                  className="hidden"
+                                  id="screenshot-upload"
+                                />
+                                <label
+                                  htmlFor="screenshot-upload"
+                                  className="flex items-center justify-between p-3 border-2 border-dashed border-gray-100 bg-gray-50/50 rounded-xl cursor-pointer hover:bg-gray-100 transition-colors"
+                                >
+                                  {screenshotPreview ? (
+                                    <div className="flex items-center gap-3 w-full">
+                                      <img src={screenshotPreview} alt="Preview" className="w-10 h-10 object-cover rounded-lg border border-white shadow-sm" />
+                                      <span className="text-xs font-bold text-green-600 flex items-center">
+                                        <Check className="w-3 h-3 mr-1" /> Image Uploaded
+                                      </span>
                                     </div>
-                                    <span className="text-[10px] bg-white px-2 py-1 rounded-md border border-gray-100 font-bold text-gray-400">SELECT</span>
-                                  </>
-                                )}
-                              </label>
-                            </div>
+                                  ) : (
+                                    <>
+                                      <div className="flex items-center gap-2">
+                                        <Upload className="w-4 h-4 text-gray-400" />
+                                        <span className="text-xs font-bold text-gray-500">Select payment proof</span>
+                                      </div>
+                                      <span className="text-[10px] bg-white px-2 py-1 rounded-md border border-gray-100 font-bold text-gray-400">SELECT</span>
+                                    </>
+                                  )}
+                                </label>
+                              </div>
+                            ) : (
+                              <div className="p-3 bg-blue-50 rounded-xl border border-blue-100">
+                                <p className="text-[9px] text-blue-600 font-bold text-center leading-tight">
+                                  <AlertCircle className="w-3 h-3 inline mr-1" />
+                                  Screenshot is optional for Auto-Verification. Just enter UTR!
+                                </p>
+                              </div>
+                            )}
 
                             <div className="pt-2">
                               <Button 
-                                className="w-full h-12 rounded-xl text-base font-bold shadow-lg" 
+                                className={`w-full h-12 rounded-xl text-base font-bold shadow-lg ${paymentSettings?.qrAutoEnabled ? 'bg-green-600 hover:bg-green-700' : ''}`} 
                                 onClick={handleAddFunds}
-                                disabled={isUploading || !utr || utr.length < 12 || !screenshotPreview}
+                                disabled={isUploading || !utr || utr.length < 12 || (!paymentSettings?.qrAutoEnabled && !screenshotPreview)}
                               >
                                 {isUploading ? (
                                   <>
                                     <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                                    Verifying Payment...
+                                    Verifying...
                                   </>
-                                ) : "Confirm & Add Balance"}
+                                ) : (
+                                  paymentSettings?.qrAutoEnabled ? "Verify & Add Funds" : "Confirm & Add Balance"
+                                )}
                               </Button>
                               <button 
                                 onClick={() => setPaymentStep("amount")}

@@ -1409,9 +1409,65 @@ async function startServer() {
     }
   });
 
+  // 1. Create QR Auto Order (Pre-register transaction with provider)
+  app.post("/api/deposits/create-qr-auto-order", async (req, res) => {
+    const { userId, amount, userEmail } = req.body;
+    if (!userId || !amount) return res.status(400).json({ error: "Missing fields" });
+
+    try {
+      const settingsSnap = await getDocSafe("settings", "payment");
+      const settings = settingsSnap.data() || {};
+      
+      if (!settings.qrAutoEnabled) {
+        return res.status(400).json({ error: "Auto QR is disabled." });
+      }
+
+      const { qrAutoProvider, qrAutoApiKey, qrAutoUrl } = settings;
+      
+      if (qrAutoProvider === "upigateway") {
+        const createUrl = "https://api.upigateway.com/api/v1/create_order";
+        const client_txn_id = `DEP_${Date.now()}_${userId}`.slice(0, 30); // UPIGateway limit
+        
+        try {
+          const apiRes = await axios.post(createUrl, {
+            key: qrAutoApiKey,
+            client_txn_id: client_txn_id,
+            amount: amount,
+            p_info: "Wallet Deposit",
+            customer_name: userEmail?.split("@")[0] || "User",
+            customer_email: userEmail || "user@example.com",
+            customer_mobile: "9999999999",
+            redirect_url: `${req.headers.origin}/profile`
+          }, { timeout: 15000 });
+
+          if (apiRes.data.status === true || apiRes.data.msg?.toLowerCase().includes("success")) {
+            return res.json({ 
+              success: true, 
+              order_id: apiRes.data.data.order_id,
+              client_txn_id: client_txn_id,
+              payment_url: apiRes.data.data.payment_url 
+            });
+          } else {
+            console.error("[UPIGATEWAY-CREATE-ERR]", apiRes.data);
+            return res.status(400).json({ error: apiRes.data.msg || "Failed to create order on UPIGateway." });
+          }
+        } catch (apiErr: any) {
+          console.error("[UPIGATEWAY-API-ERR]", apiErr.message);
+          return res.status(500).json({ error: "Could not connect to UPIGateway. Please use manual payment." });
+        }
+      }
+
+      // Default fallback for other providers that don't need pre-order
+      res.json({ success: true, message: "No pre-order needed for this provider." });
+
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Verify QR Auto Payment (SMMQR/VPAAPI)
   app.post("/api/deposits/verify-qr-auto", async (req, res) => {
-    const { userId, amount, utr } = req.body;
+    const { userId, amount, utr, client_txn_id } = req.body;
     if (!userId || !amount || !utr) return res.status(400).json({ error: "Missing fields" });
 
     try {
@@ -1419,19 +1475,36 @@ async function startServer() {
       if (cleanUtr.length !== 12) return res.status(400).json({ error: "Invalid UTR format." });
 
       // 1. Check if UTR already used
-      const existing = await fdb.collection("deposits")
-        .where("utr", "==", cleanUtr)
-        .where("status", "==", "approved")
-        .limit(1)
-        .get();
+      let alreadyVerified = false;
+      if (!useRestFallback) {
+        try {
+          const existing = await fdb.collection("deposits")
+            .where("utr", "==", cleanUtr)
+            .where("status", "==", "approved")
+            .limit(1)
+            .get();
+          alreadyVerified = !existing.empty;
+        } catch (err: any) {
+          if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
+            useRestFallback = true;
+          } else {
+            throw err;
+          }
+        }
+      }
       
-      if (!existing.empty) {
+      if (useRestFallback) {
+        const queryRes = await findDepositByUtrREST(cleanUtr, "approved");
+        alreadyVerified = queryRes.length > 0;
+      }
+      
+      if (alreadyVerified) {
         return res.status(400).json({ error: "This UTR has already been used and verified." });
       }
 
       // 2. Get Settings
-      const settingsDoc = await fdb.collection("settings").doc("payment").get();
-      const settings = settingsDoc.data() || {};
+      const settingsSnap = await getDocSafe("settings", "payment");
+      const settings = settingsSnap.data() || {};
 
       if (!settings.qrAutoEnabled) {
         return res.status(400).json({ error: "Automatic QR verification is disabled by admin." });
@@ -1483,7 +1556,8 @@ async function startServer() {
         try {
           const apiRes = await axios.post(verifyUrl, {
             key: qrAutoApiKey,
-            utr: cleanUtr
+            utr: cleanUtr,
+            client_txn_id: client_txn_id // Use provided client_txn_id if we created one
           }, { timeout: 15000 });
           providerResponse = apiRes.data;
           // UPIGateway usually returns { status: true, data: { amount: 100, ... } }
@@ -1499,7 +1573,7 @@ async function startServer() {
           }
         } catch (apiErr: any) {
           console.error("[QR-AUTO-UPIGATEWAY-ERR]", apiErr.message);
-          return res.status(500).json({ error: "UPIGateway connection failed." });
+          return res.status(500).json({ error: "UPIGateway verification failed. Please check UTR or use manual proof." });
         }
       } else {
         if (qrAutoUrl) {
@@ -1521,33 +1595,44 @@ async function startServer() {
       }
 
       if (isVerified) {
-        // 4. Update User Balance
-        const userDoc = await fdb.collection("users").doc(userId).get();
-        if (!userDoc.exists) return res.status(404).json({ error: "User not found" });
+        console.log(`[QR-AUTO-SUCCESS] Verified ₹${amount} for user ${userId} (UTR: ${cleanUtr})`);
         
-        const userData = userDoc.data() || {};
-        const currentBalance = Number(userData.balance) || 0;
-        const depositAmount = Number(amount);
-        
-        await fdb.collection("users").doc(userId).update({
-          balance: currentBalance + depositAmount
-        });
+        const success = await adjustUserBalanceSafe(userId, Number(amount));
+        if (!success) {
+          return res.status(500).json({ error: "Payment verified but failed to update wallet. Contact support." });
+        }
 
-        // 5. Create Approved Deposit Record
+        // Get new balance
+        const userSnap = await getDocSafe("users", userId);
+        const newBalance = userSnap.data()?.balance || 0;
+
         const depositId = `dep_auto_${Date.now()}`;
-        await fdb.collection("deposits").doc(depositId).set({
+        await addDocSafe("deposits", {
           id: depositId,
           userId,
-          amount: depositAmount,
+          amount: Number(amount),
           utr: cleanUtr,
           status: "approved",
           type: "auto_qr_verify",
-          provider: qrAutoProvider,
-          providerResponse: JSON.stringify(providerResponse),
-          createdAt: new Date().toISOString()
+          provider: qrAutoProvider || "unknown",
+          timestamp: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          client_txn_id: client_txn_id || ""
         });
 
-        return res.json({ success: true, newBalance: currentBalance + depositAmount });
+        // Log transaction
+        await addDocSafe("transactions", {
+          userId,
+          amount: Number(amount),
+          type: "deposit",
+          method: "qr-auto",
+          status: "success",
+          utr: cleanUtr,
+          timestamp: new Date().toISOString(),
+          description: `QR Auto Deposit (UTR: ${cleanUtr})`
+        });
+        
+        return res.json({ success: true, amount: Number(amount), newBalance });
       } else {
         return res.status(400).json({ 
           error: "Payment not found or not yet processed. Please wait 1-2 minutes and try again.",
