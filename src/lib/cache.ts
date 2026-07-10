@@ -4,7 +4,7 @@ import { collection, doc, getDocs, getDoc } from "firebase/firestore";
 
 let cachedCourses: any = null;
 let lastCoursesFetch = 0;
-const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes to save massive reads
+const CACHE_DURATION = 1 * 60 * 1000; // Reduced to 1 minute for faster updates during debugging
 
 // Clear cache (useful for admin when they update something)
 export const clearCache = () => {
@@ -40,37 +40,110 @@ export const getCachedCourses = async (forceRefresh = false) => {
         const lsData = localStorage.getItem("cached_courses");
         if (lsData) {
           const parsed = JSON.parse(lsData);
-          // Always ensure sorting on retrieval
-          const categoryOrder = ["Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Twitter", "Other"];
-          const getTimestamp = (item: any) => {
-            const val = item.updatedAt || item.updated_at || item.createdAt || item.created_at;
-            if (!val) return 0;
-            if (typeof val.toDate === "function") return val.toDate().getTime();
-            if (typeof val.seconds === "number") return val.seconds * 1000;
-            if (val._seconds !== undefined) return val._seconds * 1000;
-            const t = new Date(val).getTime();
-            return isNaN(t) ? 0 : t;
-          };
+          // If cache is empty, force a refresh instead of showing nothing
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            // Always ensure sorting on retrieval
+            const categoryOrder = ["Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Twitter", "Other"];
+            const getTimestamp = (item: any) => {
+              const val = item.updatedAt || item.updated_at || item.createdAt || item.created_at;
+              if (!val) return 0;
+              if (typeof val.toDate === "function") return val.toDate().getTime();
+              if (typeof val.seconds === "number") return val.seconds * 1000;
+              if (val._seconds !== undefined) return val._seconds * 1000;
+              const t = new Date(val).getTime();
+              return isNaN(t) ? 0 : t;
+            };
 
-          parsed.sort((a: any, b: any) => {
-            const orderA = categoryOrder.indexOf(a.category) === -1 ? 99 : categoryOrder.indexOf(a.category);
-            const orderB = categoryOrder.indexOf(b.category) === -1 ? 99 : categoryOrder.indexOf(b.category);
-            if (orderA !== orderB) return orderA - orderB;
-            
-            const timeA = getTimestamp(a);
-            const timeB = getTimestamp(b);
-            return timeB - timeA;
-          });
-          cachedCourses = parsed;
-          lastCoursesFetch = parseInt(lsTime);
-          return cachedCourses;
+            parsed.sort((a: any, b: any) => {
+              const orderA = categoryOrder.indexOf(a.category) === -1 ? 99 : categoryOrder.indexOf(a.category);
+              const orderB = categoryOrder.indexOf(b.category) === -1 ? 99 : categoryOrder.indexOf(b.category);
+              if (orderA !== orderB) return orderA - orderB;
+              
+              const timeA = getTimestamp(a);
+              const timeB = getTimestamp(b);
+              return timeB - timeA;
+            });
+            cachedCourses = parsed;
+            lastCoursesFetch = parseInt(lsTime);
+            return cachedCourses;
+          }
         }
       }
     } catch(e) {}
   }
   
-  // Try fetching from Express API proxy first.
-  // Express serves this from backend memory cache (24h TTL) to prevent Firestore read quota consumption!
+  // FORCED BYPASS: Always use direct Web SDK query because backend API is having permission issues
+  try {
+    console.log("[CACHE] Bypassing backend API, fetching directly from Firestore Web SDK...");
+    // Direct Web SDK Query - Added limit to prevent timeout if there are many courses
+    const { query, limit, orderBy } = await import("firebase/firestore");
+    const q = query(collection(db, "courses"), orderBy("createdAt", "desc"), limit(100));
+    const querySnapshot = await getDocs(q);
+    const fetchedCourses = querySnapshot.docs.map(gdoc => {
+      const data = gdoc.data();
+      return {
+        id: gdoc.id,
+        ...data,
+        price: data.pricePerThousand !== undefined ? Number(data.pricePerThousand) : (data.price !== undefined ? Number(data.price) : 0),
+        pricePerThousand: data.pricePerThousand !== undefined ? Number(data.pricePerThousand) : (data.price !== undefined ? Number(data.price) : 0),
+        minLimit: data.minLimit !== undefined ? Number(data.minLimit) : (data.min_limit !== undefined ? Number(data.min_limit) : 1000),
+        min_limit: data.minLimit !== undefined ? Number(data.minLimit) : (data.min_limit !== undefined ? Number(data.min_limit) : 1000),
+        providerServiceId: data.providerServiceId !== undefined ? String(data.providerServiceId) : (data.provider_service_id !== undefined ? String(data.provider_service_id) : "0"),
+        provider_service_id: data.providerServiceId !== undefined ? String(data.providerServiceId) : (data.provider_service_id !== undefined ? String(data.provider_service_id) : "0"),
+        isPackage: data.isPackage !== undefined ? !!data.isPackage : !!data.is_package,
+        is_package: data.isPackage !== undefined ? !!data.isPackage : !!data.is_package,
+        packagePrice: data.packagePrice !== undefined ? Number(data.packagePrice) : (data.package_price !== undefined ? Number(data.package_price) : 0),
+        package_price: data.packagePrice !== undefined ? Number(data.packagePrice) : (data.package_price !== undefined ? Number(data.package_price) : 0),
+        packageQuantity: data.packageQuantity !== undefined ? Number(data.packageQuantity) : (data.package_quantity !== undefined ? Number(data.package_quantity) : 1000),
+        package_quantity: data.packageQuantity !== undefined ? Number(data.packageQuantity) : (data.package_quantity !== undefined ? Number(data.package_quantity) : 1000),
+        iconUrl: data.iconUrl || data.icon_url || null,
+        icon_url: data.iconUrl || data.icon_url || null,
+      };
+    });
+
+    const activeServices = fetchedCourses.filter((s: any) => {
+      const status = (s.status || "").toLowerCase();
+      return status !== "archived" && status !== "hidden";
+    });
+
+    if (activeServices.length > 0 || fetchedCourses.length > 0) {
+      const categoryOrder = ["Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Twitter", "Other"];
+    const getTimestamp = (item: any) => {
+      const val = item.updatedAt || item.updated_at || item.createdAt || item.created_at;
+      if (!val) return 0;
+      if (typeof val.toDate === "function") return val.toDate().getTime();
+      if (typeof val.seconds === "number") return val.seconds * 1000;
+      if (val._seconds !== undefined) return val._seconds * 1000;
+      const t = new Date(val).getTime();
+      return isNaN(t) ? 0 : t;
+    };
+
+    activeServices.sort((a: any, b: any) => {
+      const orderA = categoryOrder.indexOf(a.category) === -1 ? 99 : categoryOrder.indexOf(a.category);
+      const orderB = categoryOrder.indexOf(b.category) === -1 ? 99 : categoryOrder.indexOf(b.category);
+      if (orderA !== orderB) return orderA - orderB;
+      
+      const timeA = getTimestamp(a);
+      const timeB = getTimestamp(b);
+      return timeB - timeA;
+    });
+
+    cachedCourses = activeServices;
+    lastCoursesFetch = now;
+    try {
+      localStorage.setItem("cached_courses_time", now.toString());
+      localStorage.setItem("cached_courses", JSON.stringify(cachedCourses));
+    } catch(e) {}
+    }
+    
+    // If we get here, it means the results were empty, but we successfully queried.
+    // We should continue to fallback or return empty if appropriate.
+    console.warn("[CACHE] No courses found in direct Web SDK query.");
+  } catch (sdkErr) {
+    console.error("[CACHE] Direct Web SDK query failed:", sdkErr);
+  }
+  
+  // Original logic below as final fallback
   try {
     const res = await axios.get("/api/courses");
     const activeServices = res.data.map((data: any) => ({
@@ -189,8 +262,53 @@ export const getCachedSettings = async (forceRefresh = false) => {
     } catch(e) {}
   }
   
-  // Try fetching from Express API proxy first.
-  // Express serves this from backend memory cache (24h TTL) to prevent Firestore read quota consumption!
+  // FORCED BYPASS: Always use direct Web SDK query because backend API is having permission issues
+  try {
+    console.log("[CACHE] Bypassing backend API, fetching settings directly from Firestore Web SDK...");
+    // Direct Web SDK Query Fallback
+    const docRef = doc(db, "settings", "payment");
+    const docSnap = await getDoc(docRef);
+    let settingsData = docSnap.exists() ? docSnap.data() : null;
+
+    if (!settingsData) {
+      throw new Error("Settings document does not exist");
+    }
+
+    const cleanedSettings = {
+      ...settingsData,
+      upiId: settingsData.upiId || "",
+      paymentQrUrl: settingsData.paymentQrUrl || "",
+      merchantName: settingsData.merchantName || "",
+      razorpayEnabled: !!settingsData.razorpayEnabled,
+      razorpayKeyId: settingsData.razorpayKeyId || "",
+      razorpayKeySecret: settingsData.razorpayKeySecret || "",
+      phonepeEnabled: !!settingsData.phonepeEnabled,
+      phonepeMerchantId: settingsData.phonepeMerchantId || "",
+      phonepeSaltKey: settingsData.phonepeSaltKey || "",
+      phonepeSaltIndex: settingsData.phonepeSaltIndex || "1",
+      phonepeEnv: settingsData.phonepeEnv || "sandbox",
+      paytmEnabled: !!settingsData.paytmEnabled,
+      paytmMid: settingsData.paytmMid || "",
+      paytmMerchantKey: settingsData.paytmMerchantKey || "",
+      paytmEnv: settingsData.paytmEnv || "sandbox",
+      whatsappLink: settingsData.whatsappLink || "",
+      whatsappChatNumber: settingsData.whatsappChatNumber || "",
+      backendApiUrl: settingsData.backendApiUrl || "",
+      qrAutoEnabled: !!settingsData.qrAutoEnabled,
+    };
+
+    cachedSettings = cleanedSettings;
+    lastSettingsFetch = now;
+    try {
+      localStorage.setItem("cached_settings_time", now.toString());
+      localStorage.setItem("cached_settings", JSON.stringify(cachedSettings));
+    } catch(e) {}
+    return cachedSettings;
+  } catch (sdkErr) {
+    console.error("[CACHE] Direct Web SDK query for settings failed:", sdkErr);
+  }
+
+  // Original logic below as final fallback
   try {
     const res = await axios.get("/api/settings");
     const settingsData = {

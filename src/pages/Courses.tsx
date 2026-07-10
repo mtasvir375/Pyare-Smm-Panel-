@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { dbClient } from "@/lib/dbClient";
+import { orderBy, where } from "firebase/firestore";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/context/AuthContext";
 import { useSearchParams, useNavigate } from "react-router-dom";
@@ -68,24 +69,54 @@ export default function Courses() {
   useEffect(() => {
     const fetchCourses = async () => {
       try {
-        const { getCachedCourses } = await import("@/lib/cache");
-        const coursesData = await getCachedCourses();
-        setCourses(coursesData);
+        setLoading(true);
+        // Clear local storage cache to ensure fresh data
+        localStorage.removeItem("cached_courses");
+        localStorage.removeItem("cached_courses_time");
+        
+        // Fetch without orderBy to avoid potential index issues (though verified working)
+        const coursesData = await dbClient.getDocs("courses");
+        
+        // Sort in memory
+        const getTimestamp = (item: any) => {
+          const val = item.updatedAt || item.updated_at || item.createdAt || item.created_at;
+          if (!val) return 0;
+          if (typeof val.toDate === "function") return val.toDate().getTime();
+          if (typeof val.seconds === "number") return val.seconds * 1000;
+          if (val._seconds !== undefined) return val._seconds * 1000;
+          const t = new Date(val).getTime();
+          return isNaN(t) ? 0 : t;
+        };
+        coursesData.sort((a: any, b: any) => getTimestamp(b) - getTimestamp(a));
+
+        // Ensure every course has a category and lowercase status check
+        const activeServices = coursesData.filter((s: any) => {
+          const status = (s.status || "").toLowerCase();
+          return status !== "archived" && status !== "hidden";
+        }).map(c => ({
+          ...c,
+          category: c.category || "Other"
+        }));
+        
+        setCourses(activeServices);
         setLoading(false);
         
-        if (coursesData.length > 0) {
-          // Priority to previous selection, then query param, then first available
-          const queryCategory = searchParams.get("category");
+        if (activeServices.length > 0) {
+          // Priority to query param, then current selection, then first available
+          const queryCategory = searchParams.get("category")?.toLowerCase();
+          
           if (queryCategory) {
-            const match = coursesData.find(c => c.category && c.category.toLowerCase() === queryCategory.toLowerCase());
+            const match = activeServices.find(c => c.category && c.category.toLowerCase() === queryCategory);
             if (match) {
               setSelectedCategory(match.category);
               return;
             }
           }
           
-          if (!selectedCategory) {
-            setSelectedCategory(coursesData[0].category || "Other");
+          // If current selection is invalid or empty, pick the first one
+          const categories = Array.from(new Set(activeServices.map(c => c.category)));
+          if (!selectedCategory || !categories.includes(selectedCategory)) {
+            setSelectedCategory(activeServices[0].category);
           }
         }
       } catch (error) {

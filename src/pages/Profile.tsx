@@ -328,10 +328,13 @@ export default function Profile() {
             payment_url: res.data.payment_url, 
             client_txn_id: res.data.client_txn_id 
           });
+          toast.success("Payment Gateway Initialized!");
         }
         setPaymentStep("payment");
       } catch (err: any) {
         console.error("Auto pre-order failed:", err);
+        const errMsg = err.response?.data?.error || err.message || "Connection failed";
+        toast.error(`Payment Initialization Error: ${errMsg}`);
         // If it fails, we still let them proceed to payment step with fallback to manual
         setPaymentStep("payment");
       } finally {

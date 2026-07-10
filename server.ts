@@ -51,16 +51,14 @@ axios.defaults.httpAgent = keepAliveHttpAgent;
       try {
         admin.initializeApp({
           credential: admin.credential.applicationDefault(),
-          projectId: projectId,
-          databaseId: databaseId
-        } as any);
-        console.log(`[FIREBASE] Admin SDK initialized for project ${projectId} (db: ${databaseId}) with default credentials.`);
+          projectId: projectId
+        });
+        console.log(`[FIREBASE] Admin SDK initialized for project ${projectId} with default credentials.`);
       } catch (error) {
         admin.initializeApp({
-          projectId: projectId,
-          databaseId: databaseId
-        } as any);
-        console.log(`[FIREBASE] Admin SDK initialized for project ${projectId} (db: ${databaseId}) with minimal config.`);
+          projectId: projectId
+        });
+        console.log(`[FIREBASE] Admin SDK initialized for project ${projectId} with minimal config.`);
       }
     }
 
@@ -158,7 +156,7 @@ async function startServer() {
   
   seedMemoryOrders();
 
-  let useRestFallback = true; // Force REST fallback due to environment permissions issues
+  let useRestFallback = false; // Try Admin SDK first
 
   // Helper to wrap REST fields
   function wrapRestFields(obj: any): any {
@@ -328,8 +326,9 @@ async function startServer() {
     try {
       const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${dbId}/documents:runQuery?key=${apiKey}`;
       const res = await axios.post(url, queryPayload, { timeout: 10000 });
+      console.log(`[REST-QUERY] Payload: ${JSON.stringify(queryPayload)} Result count: ${res.data?.length || 0}`);
       if (res.data && Array.isArray(res.data)) {
-        return res.data
+        const results = res.data
           .filter((item: any) => item.document)
           .map((item: any) => {
             const doc = item.document;
@@ -341,6 +340,8 @@ async function startServer() {
               data: () => fields
             };
           });
+        console.log(`[REST-QUERY] Mapped ${results.length} documents.`);
+        return results;
       }
     } catch (err: any) {
       console.error("[REST-QUERY-ERR] Run query failed:", err.response?.data || err.message);
@@ -605,21 +606,14 @@ async function startServer() {
     return deleteDocREST(col, id);
   };
 
-  // Activate auto-ensure on startup
+  // Activate auto-ensure on startup only if absolutely missing
   const ensureBackendUrlIsSet = async () => {
-    const ACTIVE_BACKEND_URL = "https://ais-dev-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
     try {
-      console.log(`[INIT] Auto-ensuring backend URL in database: ${ACTIVE_BACKEND_URL}`);
       const snap = await getDocSafe("settings", "payment");
-      
-      if (snap.exists) {
-        const data = snap.data();
-        if (data?.backendApiUrl !== ACTIVE_BACKEND_URL) {
-          await updateDocSafe("settings", "payment", { backendApiUrl: ACTIVE_BACKEND_URL });
-          console.log(`[INIT] ✅ Firebase backendApiUrl updated.`);
-        }
-      } else {
-        await setDocSafe("settings", "payment", { backendApiUrl: ACTIVE_BACKEND_URL });
+      if (!snap.exists || !snap.data()?.backendApiUrl) {
+        const DEFAULT_BACKEND = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
+        await setDocSafe("settings", "payment", { backendApiUrl: DEFAULT_BACKEND });
+        console.log(`[INIT] ✅ Set default backendApiUrl as it was missing.`);
       }
     } catch (err: any) {
       console.warn(`[INIT] ⚠️ Auto-updating backendApiUrl failed: ${err.message}`);
@@ -697,7 +691,7 @@ async function startServer() {
   let serverCachedSettings: any = null;
   let serverCachedSettingsTime = 0;
   
-  const BACKEND_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in-memory cache TTL by default
+  const BACKEND_CACHE_DURATION = 10 * 60 * 1000; // 10 minutes in-memory cache TTL by default
 
   // API endpoint to programmatically clear backend cache when an admin updates courses/settings
   app.post("/api/clear-cache", (req, res) => {

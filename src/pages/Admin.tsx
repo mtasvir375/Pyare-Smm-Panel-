@@ -335,8 +335,8 @@ export default function Admin() {
           setQrAutoUrl(settingsData.qrAutoUrl || "");
           
           const savedBackendUrl = settingsData.backendApiUrl || "";
-          const activeBackendUrl = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
-          if (!savedBackendUrl || savedBackendUrl.includes("ais-dev-")) {
+          const activeBackendUrl = window.location.origin;
+          if (!savedBackendUrl || savedBackendUrl.includes("ais-dev-") || savedBackendUrl.includes("ais-pre-")) {
             setBackendApiUrl(activeBackendUrl);
           } else {
             setBackendApiUrl(savedBackendUrl);

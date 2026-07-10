@@ -20,8 +20,10 @@ export default function Layout() {
     );
   }
 
-  // Allow unrestricted access to Login and SEO Landing Pages (/p/:slug)
+  // Allow unrestricted access to Home, Courses, Login and SEO Landing Pages (/p/:slug)
   const isPublicPath = 
+    location.pathname === "/" || 
+    location.pathname === "/courses" || 
     location.pathname === "/login" || 
     location.pathname.startsWith("/p/");
 
