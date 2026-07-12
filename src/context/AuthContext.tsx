@@ -15,6 +15,7 @@ interface AuthContextType {
   isPaymentAdmin: boolean;
   signOut: () => Promise<void>;
   updateUserProfileLocal?: (updatedFields: Partial<UserProfile>) => void;
+  refreshUserProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -25,6 +26,7 @@ const AuthContext = createContext<AuthContextType>({
   isPaymentAdmin: false,
   signOut: async () => {},
   updateUserProfileLocal: () => {},
+  refreshUserProfile: async () => {},
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -33,6 +35,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const refreshUserProfile = async () => {
+    if (user) {
+      try {
+        const profile = await dbClient.getUserProfile(user.uid);
+        if (profile) setUserProfile(profile);
+      } catch (error) {
+        console.error("Error refreshing user profile:", error);
+      }
+    }
+  };
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -44,6 +57,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           let profile = await dbClient.getUserProfile(firebaseUser.uid);
           
           if (!profile) {
+            console.log("[AUTH] Profile not found, attempting to create...");
             // Create profile if it doesn't exist
             const newProfile: any = {
               uid: firebaseUser.uid,
@@ -53,13 +67,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               role: 'student', // Default role
               balance: 1, // Welcome bonus ₹1
             };
-            await dbClient.createUserProfile(firebaseUser.uid, newProfile);
-            profile = { ...newProfile, createdAt: new Date() }; // Optimize: avoid extra read, use local data
+            
+            try {
+              await dbClient.createUserProfile(firebaseUser.uid, newProfile);
+              profile = { ...newProfile, createdAt: new Date() };
+              console.log("[AUTH] Profile created successfully.");
+            } catch (createErr) {
+              console.error("[AUTH] Error creating profile, using local fallback:", createErr);
+              // Set local profile so user can use the app, backend will auto-create if needed
+              profile = { ...newProfile, createdAt: new Date() };
+            }
           }
           
           setUserProfile(profile);
         } catch (error) {
           console.error("Error fetching/creating user profile:", error);
+          // Fallback to minimal profile if everything fails to avoid blocking the app
+          setUserProfile({
+            uid: firebaseUser.uid,
+            email: firebaseUser.email || '',
+            displayName: firebaseUser.displayName || 'User',
+            photoURL: firebaseUser.photoURL || '',
+            role: 'student',
+            balance: 1,
+            createdAt: new Date()
+          });
         }
       } else {
         setUserProfile(null);
@@ -101,7 +133,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     isAdmin: userProfile?.role === 'admin' || user?.email === 'mtasvir375@gmail.com',
     isPaymentAdmin: userProfile?.role === 'payment_admin' || user?.email === 'mtasvir375@gmail.com' || user?.email === 'mdsaudalam621@gmail.com',
     signOut,
-    updateUserProfileLocal
+    updateUserProfileLocal,
+    refreshUserProfile
   };
 
   return (

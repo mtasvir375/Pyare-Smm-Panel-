@@ -32,10 +32,25 @@ export interface UserProfile {
 export const dbClient = {
   // Generic helpers
   async getDoc(table: string, id: string): Promise<any> {
-    const docRef = doc(db, table, id);
-    const snap = await getDoc(docRef);
-    if (!snap.exists()) return null;
-    return { id: snap.id, ...snap.data() };
+    try {
+      const docRef = doc(db, table, id);
+      const snap = await getDoc(docRef);
+      if (snap.exists()) return { id: snap.id, ...snap.data() };
+      
+      // Fallback to server-side proxy
+      const res = await axios.post('/api/db/get', { collection: table, id });
+      if (res.data.success) return { id, ...res.data.data };
+      return null;
+    } catch (err) {
+      console.warn(`[DB-CLIENT] Direct getDoc failed for ${table}/${id}, trying proxy...`);
+      try {
+        const res = await axios.post('/api/db/get', { collection: table, id });
+        if (res.data.success) return { id, ...res.data.data };
+      } catch (proxyErr) {
+        console.error(`[DB-CLIENT] Proxy getDoc also failed for ${table}/${id}`);
+      }
+      return null;
+    }
   },
 
   async getDocs(table: string, constraints: any[] = []): Promise<any[]> {
@@ -46,17 +61,24 @@ export const dbClient = {
   },
 
   async setDoc(table: string, id: string, data: any): Promise<void> {
-    if (table === 'orders') {
-      try {
+    try {
+      // For critical collections or when client SDK fails, use the proxy
+      if (table === 'settings' || table === 'providers' || table === 'orders') {
         await axios.post('/api/db/set', { collection: table, id, data });
         return;
-      } catch (e) {
-        console.warn("[DB-CLIENT] Memory order set failed.");
-        return;
+      }
+
+      const docRef = doc(db, table, id);
+      await setDoc(docRef, { ...data, updatedAt: serverTimestamp() }, { merge: true });
+    } catch (err) {
+      console.warn(`[DB-CLIENT] Direct setDoc failed for ${table}/${id}, trying proxy...`);
+      try {
+        await axios.post('/api/db/set', { collection: table, id, data });
+      } catch (proxyErr) {
+        console.error(`[DB-CLIENT] Proxy setDoc also failed for ${table}/${id}`);
+        throw proxyErr;
       }
     }
-    const docRef = doc(db, table, id);
-    await setDoc(docRef, { ...data, updatedAt: serverTimestamp() }, { merge: true });
   },
 
   async updateDoc(table: string, id: string, data: any): Promise<void> {

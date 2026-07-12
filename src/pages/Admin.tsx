@@ -1192,7 +1192,7 @@ export default function Admin() {
                               <span className="text-xs text-gray-500 font-medium">₹{course.packagePrice || course.package_price} / {course.packageQuantity || course.package_quantity} qty</span>
                             ) : (
                               <>
-                                <span className="text-xs text-gray-500 font-medium">₹{course.price}/1k</span>
+                                <span className="text-xs text-gray-500 font-medium">₹{course.pricePerThousand || course.price || 0}/1k</span>
                                 <span className="text-xs text-gray-500 font-medium">•</span>
                                 <span className="text-xs text-gray-500 font-medium">Min: {course.minLimit || course.min_limit}</span>
                               </>
