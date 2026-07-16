@@ -67,7 +67,7 @@ export default function Home() {
           <motion.div 
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
-            className="flex-1 bg-indigo-600 text-white p-4 rounded-2xl flex items-center justify-between shadow-lg"
+            className="flex-1 bg-primary text-primary-foreground p-4 rounded-2xl flex items-center justify-between shadow-lg"
           >
             <div className="flex items-center gap-3">
               <PlusCircle className="w-5 h-5" />
@@ -77,7 +77,7 @@ export default function Home() {
             </div>
             <Button 
               size="sm" 
-              className="bg-white text-indigo-600 hover:bg-indigo-50 rounded-full h-8 text-xs font-bold"
+              className="bg-white text-primary hover:bg-gray-100 rounded-full h-8 text-xs font-bold"
               onClick={handleInstall}
             >
               Install
@@ -90,7 +90,7 @@ export default function Home() {
           onClick={handleShare}
           className="bg-white border border-gray-200 p-4 rounded-2xl flex items-center gap-2 shadow-sm text-gray-700 font-medium text-sm"
         >
-          <Share2 className="w-5 h-5 text-indigo-600" />
+          <Share2 className="w-5 h-5 text-primary" />
           Share App
         </motion.button>
       </div>

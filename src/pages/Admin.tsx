@@ -28,7 +28,9 @@ import {
   Music2,
   AlertCircle,
   Database,
-  ShieldCheck
+  ShieldCheck,
+  Palette,
+  Check
 } from "lucide-react";
 import CategoryIcon from "@/components/CategoryIcon";
 import { Button } from "@/components/ui/button";
@@ -127,6 +129,7 @@ export default function Admin() {
   const [whatsappLink, setWhatsappLink] = useState("");
   const [whatsappChatNumber, setWhatsappChatNumber] = useState("");
   const [guideVideoUrl, setGuideVideoUrl] = useState("");
+  const [selectedTheme, setSelectedTheme] = useState("charcoal");
   const [razorpayEnabled, setRazorpayEnabled] = useState(false);
   const [razorpayKeyId, setRazorpayKeyId] = useState("");
   const [razorpayKeySecret, setRazorpayKeySecret] = useState("");
@@ -303,6 +306,7 @@ export default function Admin() {
           setWhatsappLink(settingsData.whatsappLink || "");
           setWhatsappChatNumber(settingsData.whatsappChatNumber || "");
           setGuideVideoUrl(settingsData.guideVideoUrl || "");
+          setSelectedTheme(settingsData.selectedTheme || "charcoal");
           setRazorpayEnabled(settingsData.razorpayEnabled || false);
           setRazorpayKeyId(settingsData.razorpayKeyId || "");
           setRazorpayKeySecret(settingsData.razorpayKeySecret || "");
@@ -483,6 +487,7 @@ export default function Admin() {
         whatsappLink: whatsappLink.trim(),
         whatsappChatNumber: whatsappChatNumber.trim(),
         guideVideoUrl: guideVideoUrl.trim(),
+        selectedTheme: selectedTheme,
         razorpayEnabled: razorpayEnabled,
         razorpayKeyId: razorpayKeyId.trim(),
         razorpayKeySecret: razorpayKeySecret.trim(),
@@ -1834,6 +1839,55 @@ export default function Admin() {
                           className="rounded-xl h-12"
                         />
                         <p className="text-[10px] text-gray-500">YouTube video to show on the Profile page as a guide.</p>
+                      </div>
+
+                      <div className="border-t pt-6 mt-4 space-y-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Palette className="w-5 h-5 text-primary shrink-0" />
+                          <div>
+                            <h3 className="font-bold text-sm">Website Theme Color Accent (वेबसाइट थीम का मुख्य रंग)</h3>
+                            <p className="text-[10px] text-gray-500">Select a unique and beautiful theme color for the entire website. All primary accents, buttons, and visual details will dynamically adapt.</p>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                          {[
+                            { id: "charcoal", name: "Default Charcoal", hindi: "क्लासिक चारकोल", color: "#1e293b", desc: "Original deep graphite/charcoal look" },
+                            { id: "indigo", name: "Royal Indigo", hindi: "शाही इंडिगो", color: "#4f46e5", desc: "Vibrant and trendy brand blue" },
+                            { id: "emerald", name: "Emerald Garden", hindi: "पन्ना हरा", color: "#059669", desc: "Fresh, secure, and trust-inspiring green" },
+                            { id: "teal", name: "Ocean Teal", hindi: "महासागर चैती", color: "#0d9488", desc: "Cool, clean, and modern ocean style" },
+                            { id: "rose", name: "Crimson Rose", hindi: "सिंदूरी लाल", color: "#e11d48", desc: "Passionate, elegant crimson accent" },
+                            { id: "amber", name: "Golden Amber", hindi: "सुनहरा एम्बर", color: "#d97706", desc: "Warm and classy solar glow" },
+                            { id: "violet", name: "Midnight Violet", hindi: "बैंगनी ड्रीम", color: "#7c3aed", desc: "Classic wholesale panel design" }
+                          ].map((t) => (
+                            <button
+                              key={t.id}
+                              type="button"
+                              onClick={() => setSelectedTheme(t.id)}
+                              className={cn(
+                                "relative flex flex-col items-start p-3 rounded-2xl border-2 text-left transition-all duration-300 hover:scale-[1.02] cursor-pointer",
+                                selectedTheme === t.id 
+                                  ? "border-primary bg-primary/5 shadow-md shadow-primary/5" 
+                                  : "border-gray-150 bg-white hover:border-gray-300"
+                              )}
+                            >
+                              <div className="flex items-center justify-between w-full mb-2">
+                                <span 
+                                  className="w-6 h-6 rounded-full border shadow-sm shrink-0" 
+                                  style={{ backgroundColor: t.color }}
+                                />
+                                {selectedTheme === t.id && (
+                                  <div className="p-0.5 bg-primary rounded-full text-white">
+                                    <Check className="w-3.5 h-3.5" />
+                                  </div>
+                                )}
+                              </div>
+                              <h4 className="font-bold text-xs text-gray-900 leading-tight">{t.name}</h4>
+                              <p className="text-[9px] font-bold text-primary mb-1">{t.hindi}</p>
+                              <p className="text-[8px] text-gray-400 leading-normal">{t.desc}</p>
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     </div>
                     <div className="border-t pt-6 mt-6">

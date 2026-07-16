@@ -753,7 +753,7 @@ export default function Courses() {
             <h2 className="text-2xl font-bold">₹{Number(profile?.balance || 0).toFixed(2)}</h2>
             <Button 
               size="sm" 
-              className="mb-0.5 rounded-full h-9 text-xs font-bold uppercase bg-blue-600 hover:bg-blue-700 text-white border-none shadow-sm px-5"
+              className="mb-0.5 rounded-full h-9 text-xs font-bold uppercase bg-primary hover:bg-primary/90 text-primary-foreground border-none shadow-sm px-5 transition-all duration-300"
               onClick={async () => {
                 setIsAddFundsOpen(true);
                 try {
@@ -775,14 +775,14 @@ export default function Courses() {
         </CardContent>
       </Card>
 
-      <Card className="border-none shadow-sm rounded-[1.5rem] overflow-hidden">
+      <Card className="border border-border bg-card shadow-sm rounded-[1.5rem] overflow-hidden transition-all duration-300">
         <CardContent className="p-4 space-y-4">
           <div className="space-y-1.5">
             <Label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Category</Label>
             <div className="relative">
               <button
                 onClick={() => setIsCategoryOpen(!isCategoryOpen)}
-                className="w-full h-12 pl-11 pr-10 rounded-xl border bg-gray-50 flex items-center text-sm transition-all hover:bg-gray-100 text-left"
+                className="w-full h-12 pl-11 pr-10 rounded-xl border border-border bg-muted/40 flex items-center text-sm transition-all hover:bg-muted/70 text-left transition-colors duration-300"
               >
                 <div className="absolute left-3.5 top-1/2 -translate-y-1/2">
                   <CategoryIcon 
@@ -803,7 +803,7 @@ export default function Courses() {
                   <motion.div 
                     initial={{ opacity: 0, y: -10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="absolute z-50 w-full mt-2 bg-white border rounded-2xl shadow-xl max-h-60 overflow-y-auto p-1.5"
+                    className="absolute z-50 w-full mt-2 bg-card border border-border rounded-2xl shadow-xl max-h-60 overflow-y-auto p-1.5 transition-all duration-300"
                   >
                     {categories.map((cat) => (
                       <button
@@ -813,7 +813,7 @@ export default function Courses() {
                           setIsCategoryOpen(false);
                         }}
                         className={cn(
-                          "w-full flex items-center gap-3 p-3 rounded-xl text-sm transition-all hover:bg-gray-50",
+                          "w-full flex items-center gap-3 p-3 rounded-xl text-sm transition-all hover:bg-muted/50",
                           selectedCategory === cat ? "bg-primary/5 text-primary font-bold" : "text-gray-600"
                         )}
                       >
@@ -836,7 +836,7 @@ export default function Courses() {
             <div className="relative">
               <button
                 onClick={() => setIsServiceOpen(!isServiceOpen)}
-                className="w-full min-h-12 py-2 pl-11 pr-10 rounded-xl border bg-gray-50 flex items-center text-sm transition-all hover:bg-gray-100 text-left"
+                className="w-full min-h-12 py-2 pl-11 pr-10 rounded-xl border border-border bg-muted/40 flex items-center text-sm transition-all hover:bg-muted/70 text-left transition-colors duration-300"
                 disabled={!selectedCategory}
               >
                 <div className="absolute left-3.5 top-1/2 -translate-y-1/2">
@@ -874,7 +874,7 @@ export default function Courses() {
                   <motion.div 
                     initial={{ opacity: 0, y: -10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="absolute z-50 w-full mt-2 bg-white border rounded-2xl shadow-xl max-h-60 overflow-y-auto p-1.5"
+                    className="absolute z-50 w-full mt-2 bg-card border border-border rounded-2xl shadow-xl max-h-60 overflow-y-auto p-1.5 transition-all duration-300"
                   >
                     {filteredServices.map((service) => (
                       <button
@@ -884,7 +884,7 @@ export default function Courses() {
                           setIsServiceOpen(false);
                         }}
                         className={cn(
-                          "w-full flex items-center gap-3 p-3 rounded-xl text-sm transition-all hover:bg-gray-50 text-left",
+                          "w-full flex items-center gap-3 p-3 rounded-xl text-sm transition-all hover:bg-muted/50 text-left",
                           selectedCourseId === service.id ? "bg-primary/5 text-primary font-bold" : "text-gray-600"
                         )}
                       >
@@ -924,7 +924,7 @@ export default function Courses() {
             <Label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Link</Label>
             <Input 
               placeholder="https://instagram.com/p/..." 
-              className="rounded-xl h-10 bg-gray-50 text-sm"
+              className="rounded-xl h-10 bg-muted/20 border-border text-sm focus-visible:bg-card transition-all duration-300"
               value={targetLink}
               onChange={(e) => setTargetLink(e.target.value)}
             />
@@ -940,7 +940,7 @@ export default function Courses() {
             <Input 
               type="number"
               placeholder={selectedCourse?.isPackage ? "Fixed quantity" : "Enter quantity"} 
-              className="rounded-xl h-10 bg-gray-50 text-sm"
+              className="rounded-xl h-10 bg-muted/20 border-border text-sm focus-visible:bg-card transition-all duration-300"
               value={quantity}
               onChange={(e) => setQuantity(e.target.value)}
               disabled={selectedCourse?.isPackage}

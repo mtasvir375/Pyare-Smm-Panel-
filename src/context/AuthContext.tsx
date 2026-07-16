@@ -6,6 +6,7 @@ import {
 } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { dbClient, UserProfile } from '@/lib/dbClient';
+import axios from 'axios';
 
 interface AuthContextType {
   user: FirebaseUser | null;
@@ -48,6 +49,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   useEffect(() => {
+    // Add request interceptor to automatically inject the user's ID token in the Authorization header
+    const interceptor = axios.interceptors.request.use(async (config) => {
+      const currentUser = auth.currentUser;
+      if (currentUser) {
+        try {
+          const token = await currentUser.getIdToken();
+          config.headers['Authorization'] = `Bearer ${token}`;
+        } catch (e) {
+          console.warn("[AXIOS-INTERCEPTOR] Failed to retrieve or refresh ID token:", e);
+        }
+      }
+      return config;
+    }, (error) => {
+      return Promise.reject(error);
+    });
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
       
@@ -100,7 +117,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      axios.interceptors.request.eject(interceptor);
+    };
   }, []);
 
   const signOut = async () => {

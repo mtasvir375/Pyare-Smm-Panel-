@@ -295,6 +295,7 @@ export const getCachedSettings = async (forceRefresh = false) => {
       whatsappChatNumber: settingsData.whatsappChatNumber || "",
       backendApiUrl: settingsData.backendApiUrl || "",
       qrAutoEnabled: !!settingsData.qrAutoEnabled,
+      selectedTheme: settingsData.selectedTheme || "charcoal",
     };
 
     cachedSettings = cleanedSettings;
@@ -332,6 +333,7 @@ export const getCachedSettings = async (forceRefresh = false) => {
       whatsappChatNumber: res.data.whatsappChatNumber || "",
       backendApiUrl: res.data.backendApiUrl || "",
       qrAutoEnabled: !!res.data.qrAutoEnabled,
+      selectedTheme: res.data.selectedTheme || "charcoal",
     };
 
     cachedSettings = settingsData;
@@ -374,6 +376,7 @@ export const getCachedSettings = async (forceRefresh = false) => {
         whatsappChatNumber: settingsData.whatsappChatNumber || "",
         backendApiUrl: settingsData.backendApiUrl || "",
         qrAutoEnabled: !!settingsData.qrAutoEnabled,
+        selectedTheme: settingsData.selectedTheme || "charcoal",
       };
 
       cachedSettings = settingsData;

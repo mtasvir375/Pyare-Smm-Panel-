@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Outlet, Link, useLocation, Navigate } from "react-router-dom";
 import Navbar from "./Navbar";
 import { Toaster } from "sonner";
@@ -7,6 +8,23 @@ import { useAuth } from "@/context/AuthContext";
 export default function Layout() {
   const location = useLocation();
   const { user, loading } = useAuth() as any;
+
+  useEffect(() => {
+    const applyTheme = async () => {
+      try {
+        const { getCachedSettings } = await import("@/lib/cache");
+        const settings = await getCachedSettings();
+        if (settings && settings.selectedTheme) {
+          document.documentElement.setAttribute("data-theme", settings.selectedTheme);
+        } else {
+          document.documentElement.setAttribute("data-theme", "charcoal");
+        }
+      } catch (err) {
+        console.error("Failed to load layout theme:", err);
+      }
+    };
+    applyTheme();
+  }, [location.pathname]);
 
   // While checking auth status, render a modern loading animation
   if (loading) {
@@ -33,7 +51,7 @@ export default function Layout() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-20 md:pb-0 md:pt-16 flex flex-col justify-between">
+    <div className="min-h-screen bg-background text-foreground transition-colors duration-500 pb-20 md:pb-0 md:pt-16 flex flex-col justify-between">
       <div>
         <Navbar />
         <main className="w-full max-w-7xl mx-auto px-4 py-6">
@@ -41,7 +59,7 @@ export default function Layout() {
         </main>
       </div>
 
-      <footer id="global-smm-footer" className="w-full bg-white border-t border-gray-200 py-6 px-4 mt-12 text-center text-xs text-gray-400">
+      <footer id="global-smm-footer" className="w-full bg-card border-t border-border py-6 px-4 mt-12 text-center text-xs text-gray-400 transition-colors duration-500">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           <span>© 2026 Pyare SMM Panel. All rights reserved. Wholesale Direct SMM Provider Node.</span>
           <div className="flex flex-wrap items-center justify-center gap-3 md:gap-5 font-semibold text-gray-500">

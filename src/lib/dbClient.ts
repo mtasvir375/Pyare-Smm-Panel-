@@ -54,26 +54,43 @@ export const dbClient = {
   },
 
   async getDocs(table: string, constraints: any[] = []): Promise<any[]> {
-    const colRef = collection(db, table);
-    const q = query(colRef, ...constraints);
-    const snap = await getDocs(q);
-    return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    try {
+      const colRef = collection(db, table);
+      const q = query(colRef, ...constraints);
+      const snap = await getDocs(q);
+      return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    } catch (err) {
+      console.warn(`[DB-CLIENT] Direct getDocs failed for ${table}, trying proxy...`);
+      try {
+        const res = await axios.post('/api/db/list', { collection: table });
+        if (res.data.success) return res.data.data;
+      } catch (proxyErr) {
+        console.error(`[DB-CLIENT] Proxy getDocs also failed for ${table}`);
+      }
+      return [];
+    }
   },
 
   async setDoc(table: string, id: string, data: any): Promise<void> {
     try {
       // For critical collections or when client SDK fails, use the proxy
-      if (table === 'settings' || table === 'providers' || table === 'orders') {
-        await axios.post('/api/db/set', { collection: table, id, data });
+      if (table === 'settings' || table === 'providers' || table === 'orders' || table === 'courses' || table === 'services') {
+        const res = await axios.post('/api/db/set', { collection: table, id, data });
+        if (res.data && res.data.success === false) {
+          throw new Error(res.data.error || `Failed to set ${table}/${id} via proxy`);
+        }
         return;
       }
 
       const docRef = doc(db, table, id);
       await setDoc(docRef, { ...data, updatedAt: serverTimestamp() }, { merge: true });
-    } catch (err) {
+    } catch (err: any) {
       console.warn(`[DB-CLIENT] Direct setDoc failed for ${table}/${id}, trying proxy...`);
       try {
-        await axios.post('/api/db/set', { collection: table, id, data });
+        const res = await axios.post('/api/db/set', { collection: table, id, data });
+        if (res.data && res.data.success === false) {
+          throw new Error(res.data.error || `Failed to set ${table}/${id} via fallback proxy`);
+        }
       } catch (proxyErr) {
         console.error(`[DB-CLIENT] Proxy setDoc also failed for ${table}/${id}`);
         throw proxyErr;
@@ -82,13 +99,17 @@ export const dbClient = {
   },
 
   async updateDoc(table: string, id: string, data: any): Promise<void> {
-    if (table === 'orders') {
+    if (table === 'orders' || table === 'settings' || table === 'providers' || table === 'courses' || table === 'services' || table === 'users') {
       try {
-        await axios.post('/api/db/update', { collection: table, id, data });
+        const res = await axios.post('/api/db/update', { collection: table, id, data });
+        if (res.data && res.data.success === false) {
+          throw new Error(res.data.error || `Failed to update ${table}/${id} via proxy`);
+        }
         return;
-      } catch (e) {
-        console.warn("[DB-CLIENT] Memory order update failed.");
-        return;
+      } catch (e: any) {
+        console.warn(`[DB-CLIENT] Proxy update failed for ${table}/${id}.`);
+        if (table === 'orders') return;
+        throw e;
       }
     }
     const docRef = doc(db, table, id);
@@ -96,12 +117,17 @@ export const dbClient = {
   },
 
   async addDoc(table: string, data: any): Promise<any> {
-    if (table === 'orders') {
+    if (table === 'orders' || table === 'courses' || table === 'services' || table === 'providers') {
       try {
         const res = await axios.post('/api/db/add', { collection: table, data });
+        if (res.data && res.data.success === false) {
+          throw new Error(res.data.error || `Failed to add ${table} via proxy`);
+        }
         return { id: res.data.id, ...data };
-      } catch (e) {
-        return { id: 'temp_' + Date.now(), ...data };
+      } catch (e: any) {
+        if (table === 'orders') return { id: 'temp_' + Date.now(), ...data };
+        console.warn(`[DB-CLIENT] Proxy add failed for ${table}.`);
+        throw e;
       }
     }
     const colRef = collection(db, table);
