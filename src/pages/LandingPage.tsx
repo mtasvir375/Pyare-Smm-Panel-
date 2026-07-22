@@ -58,6 +58,25 @@ export default function LandingPage() {
     }
     metaKeywords.setAttribute('content', pageConfig.keywords.join(', '));
 
+    // Update Canonical URL
+    let canonical = document.querySelector('link[rel="canonical"]');
+    if (!canonical) {
+      canonical = document.createElement('link');
+      canonical.setAttribute('rel', 'canonical');
+      document.head.appendChild(canonical);
+    }
+    canonical.setAttribute('href', `https://pyaresmmpanel.online/p/${pageConfig.slug}`);
+
+    // Update OpenGraph Title & Description
+    let ogTitle = document.querySelector('meta[property="og:title"]');
+    if (ogTitle) ogTitle.setAttribute('content', pageConfig.title);
+    
+    let ogDesc = document.querySelector('meta[property="og:description"]');
+    if (ogDesc) ogDesc.setAttribute('content', pageConfig.metaDesc);
+
+    let ogUrl = document.querySelector('meta[property="og:url"]');
+    if (ogUrl) ogUrl.setAttribute('href', `https://pyaresmmpanel.online/p/${pageConfig.slug}`);
+
     // Scroll to top of the page
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, [pageConfig]);

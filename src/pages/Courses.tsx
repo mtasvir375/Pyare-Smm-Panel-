@@ -62,6 +62,10 @@ export default function Courses() {
   const [isCategoryOpen, setIsCategoryOpen] = useState(false);
   const [isServiceOpen, setIsServiceOpen] = useState(false);
 
+  useEffect(() => {
+    document.title = "Pyare SMM Panel - #1 Cheapest SMM Panel for Instagram, YouTube, Facebook & Telegram";
+  }, []);
+
   const categories = Array.from(new Set(courses.map(c => c.category || "Other")));
   const filteredServices = courses.filter(c => c.category === selectedCategory);
   const selectedCourse = courses.find(c => c.id === selectedCourseId);
