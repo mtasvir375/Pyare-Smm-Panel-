@@ -4,7 +4,7 @@ import { collection, doc, getDocs, getDoc } from "firebase/firestore";
 
 let cachedCourses: any = null;
 let lastCoursesFetch = 0;
-const CACHE_DURATION = 1 * 60 * 1000; // Reduced to 1 minute for faster updates during debugging
+const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes cache for optimal Firestore read quota savings
 
 // Clear cache (useful for admin when they update something)
 export const clearCache = () => {
@@ -75,9 +75,9 @@ export const getCachedCourses = async (forceRefresh = false) => {
   // FORCED BYPASS: Always use direct Web SDK query because backend API is having permission issues
   try {
     console.log("[CACHE] Bypassing backend API, fetching directly from Firestore Web SDK...");
-    // Direct Web SDK Query - Added limit to prevent timeout if there are many courses
-    const { query, limit, orderBy } = await import("firebase/firestore");
-    const q = query(collection(db, "courses"), orderBy("createdAt", "desc"), limit(100));
+    // Direct Web SDK Query - Increased limit to 500 and removed orderBy to prevent silent omission of documents with missing/different createdAt field types
+    const { query, limit } = await import("firebase/firestore");
+    const q = query(collection(db, "courses"), limit(500));
     const querySnapshot = await getDocs(q);
     const fetchedCourses = querySnapshot.docs.map(gdoc => {
       const data = gdoc.data();
@@ -108,32 +108,33 @@ export const getCachedCourses = async (forceRefresh = false) => {
 
     if (activeServices.length > 0 || fetchedCourses.length > 0) {
       const categoryOrder = ["Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Twitter", "Other"];
-    const getTimestamp = (item: any) => {
-      const val = item.updatedAt || item.updated_at || item.createdAt || item.created_at;
-      if (!val) return 0;
-      if (typeof val.toDate === "function") return val.toDate().getTime();
-      if (typeof val.seconds === "number") return val.seconds * 1000;
-      if (val._seconds !== undefined) return val._seconds * 1000;
-      const t = new Date(val).getTime();
-      return isNaN(t) ? 0 : t;
-    };
+      const getTimestamp = (item: any) => {
+        const val = item.updatedAt || item.updated_at || item.createdAt || item.created_at;
+        if (!val) return 0;
+        if (typeof val.toDate === "function") return val.toDate().getTime();
+        if (typeof val.seconds === "number") return val.seconds * 1000;
+        if (val._seconds !== undefined) return val._seconds * 1000;
+        const t = new Date(val).getTime();
+        return isNaN(t) ? 0 : t;
+      };
 
-    activeServices.sort((a: any, b: any) => {
-      const orderA = categoryOrder.indexOf(a.category) === -1 ? 99 : categoryOrder.indexOf(a.category);
-      const orderB = categoryOrder.indexOf(b.category) === -1 ? 99 : categoryOrder.indexOf(b.category);
-      if (orderA !== orderB) return orderA - orderB;
-      
-      const timeA = getTimestamp(a);
-      const timeB = getTimestamp(b);
-      return timeB - timeA;
-    });
+      activeServices.sort((a: any, b: any) => {
+        const orderA = categoryOrder.indexOf(a.category) === -1 ? 99 : categoryOrder.indexOf(a.category);
+        const orderB = categoryOrder.indexOf(b.category) === -1 ? 99 : categoryOrder.indexOf(b.category);
+        if (orderA !== orderB) return orderA - orderB;
+        
+        const timeA = getTimestamp(a);
+        const timeB = getTimestamp(b);
+        return timeB - timeA;
+      });
 
-    cachedCourses = activeServices;
-    lastCoursesFetch = now;
-    try {
-      localStorage.setItem("cached_courses_time", now.toString());
-      localStorage.setItem("cached_courses", JSON.stringify(cachedCourses));
-    } catch(e) {}
+      cachedCourses = activeServices;
+      lastCoursesFetch = now;
+      try {
+        localStorage.setItem("cached_courses_time", now.toString());
+        localStorage.setItem("cached_courses", JSON.stringify(cachedCourses));
+      } catch(e) {}
+      return cachedCourses;
     }
     
     // If we get here, it means the results were empty, but we successfully queried.

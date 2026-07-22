@@ -107,11 +107,13 @@ async function startServer() {
   });
 
   let systemAccessToken = "";
-  getAccessToken().then(token => {
+  getAccessToken().then(async (token) => {
     if (token) {
       console.log("[STARTUP] Detected system access token.");
       systemAccessToken = token;
     }
+    // Seed initial orders into memory after we've checked/retrieved the token
+    await seedMemoryOrders();
   });
   
   app.use(express.json({ limit: "50mb" }));
@@ -149,6 +151,52 @@ async function startServer() {
     latestOrders: [] as any[] // Globally tracked latest orders in memory
   };
 
+  // Keep track of which users have had their orders synced from DB to memory (prevents double reading)
+  const checkedUserOrders = new Set<string>();
+
+  // Helper to parse dates/timestamps robustly in both ISO, Epoch, and DD/MM/YYYY formats
+  function getTimestampMs(val: any): number {
+    if (!val) return 0;
+    if (typeof val === "number") return val;
+    if (val instanceof Date) return val.getTime();
+    
+    // Firestore Timestamp in Admin SDK
+    if (typeof val.toDate === "function") {
+      try {
+        return val.toDate().getTime();
+      } catch (e) {}
+    }
+    // Serialized Timestamp object ({ seconds, nanoseconds } or { _seconds, _nanoseconds })
+    if (typeof val.seconds === "number") {
+      return val.seconds * 1000 + Math.floor((val.nanoseconds || 0) / 1000000);
+    }
+    if (typeof val._seconds === "number") {
+      return val._seconds * 1000 + Math.floor((val._nanoseconds || 0) / 1000000);
+    }
+
+    const str = String(val).trim();
+    
+    // Try parsing directly (ISO string, UTC format etc.)
+    let parsed = Date.parse(str);
+    if (!isNaN(parsed)) return parsed;
+
+    // Handle DD/MM/YYYY or DD-MM-YYYY formats (e.g., "13/07/2026, 01:54:52" or "13-07-2026")
+    const dmyRegex = /^(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})(?:,\s*(\d{1,2}):(\d{2}):(\d{2}))?/;
+    const match = str.match(dmyRegex);
+    if (match) {
+      const day = parseInt(match[1], 10);
+      const month = parseInt(match[2], 10) - 1; // 0-indexed
+      const year = parseInt(match[3], 10);
+      const hour = match[4] ? parseInt(match[4], 10) : 0;
+      const min = match[5] ? parseInt(match[5], 10) : 0;
+      const sec = match[6] ? parseInt(match[6], 10) : 0;
+      const date = new Date(year, month, day, hour, min, sec);
+      if (!isNaN(date.getTime())) return date.getTime();
+    }
+
+    return 0;
+  }
+
   // Add order to memory only
   function addOrderToMemory(id: string, data: any) {
     const now = new Date().toISOString();
@@ -164,11 +212,18 @@ async function startServer() {
     const exists = serverCache.latestOrders.find(o => o.id === id);
     if (!exists) {
       serverCache.latestOrders.unshift(orderData);
-      // Sort by createdAt just in case they come in out of order
-      serverCache.latestOrders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    } else {
+      // Update existing record
+      const idx = serverCache.latestOrders.findIndex(o => o.id === id);
+      if (idx !== -1) {
+        serverCache.latestOrders[idx] = { ...serverCache.latestOrders[idx], ...orderData };
+      }
     }
+
+    // Sort by createdAt just in case they come in out of order
+    serverCache.latestOrders.sort((a, b) => getTimestampMs(b.createdAt) - getTimestampMs(a.createdAt));
     
-    if (serverCache.latestOrders.length > 500) {
+    if (serverCache.latestOrders.length > 1000) {
       serverCache.latestOrders.pop();
     }
   }
@@ -178,25 +233,52 @@ async function startServer() {
   async function seedMemoryOrders() {
     try {
       console.log("[MEMORY] Seeding initial orders from Firestore...");
-      const snap = await fdb.collection("orders").orderBy("createdAt", "desc").limit(50).get();
-      snap.docs.forEach(doc => {
-        const data = doc.data();
-        // Convert Firestore timestamp to ISO string for consistency
-        if (data.createdAt && data.createdAt.toDate) {
-          data.createdAt = data.createdAt.toDate().toISOString();
+      if (!useRestFallback) {
+        try {
+          const snap = await fdb.collection("orders").orderBy("createdAt", "desc").limit(10).get();
+          snap.docs.forEach(doc => {
+            const data = doc.data();
+            // Convert Firestore timestamp to ISO string for consistency
+            if (data.createdAt && data.createdAt.toDate) {
+              data.createdAt = data.createdAt.toDate().toISOString();
+            }
+            if (data.updatedAt && data.updatedAt.toDate) {
+              data.updatedAt = data.updatedAt.toDate().toISOString();
+            }
+            addOrderToMemory(doc.id, data);
+          });
+          console.log(`[MEMORY] Seeded ${snap.size} orders via Admin SDK.`);
+          return;
+        } catch (adminErr: any) {
+          console.warn("[MEMORY] Admin SDK seed failed, trying REST fallback:", adminErr.message);
         }
-        if (data.updatedAt && data.updatedAt.toDate) {
-          data.updatedAt = data.updatedAt.toDate().toISOString();
+      }
+
+      // REST Fallback for seeding
+      const queryRes = await runQueryREST({
+        structuredQuery: {
+          from: [{ collectionId: "orders" }],
+          orderBy: [{
+            field: { fieldPath: "createdAt" },
+            direction: "DESCENDING"
+          }],
+          limit: 10
         }
-        addOrderToMemory(doc.id, data);
-      });
-      console.log(`[MEMORY] Seeded ${snap.size} orders.`);
-    } catch (e) {
-      console.error("[MEMORY] Failed to seed orders:", e);
+      }, systemAccessToken);
+
+      if (queryRes && queryRes.length > 0) {
+        queryRes.forEach(doc => {
+          const data = doc.data();
+          addOrderToMemory(doc.id, data);
+        });
+        console.log(`[MEMORY] Seeded ${queryRes.length} orders via REST fallback.`);
+      } else {
+        console.log("[MEMORY] No orders found to seed via REST fallback.");
+      }
+    } catch (e: any) {
+      console.error("[MEMORY] Failed to seed orders:", e.message);
     }
   }
-  
-  seedMemoryOrders();
 
   let useRestFallback = false; // Try Admin SDK first
 
@@ -491,10 +573,10 @@ async function startServer() {
     return runQueryREST(payload);
   };
 
-  const adjustUserBalanceREST = async (user_id: string, change: number) => {
+  const adjustUserBalanceREST = async (user_id: string, change: number, token?: string) => {
     console.log(`[BALANCE-REST] Adjusting balance for ${user_id} by ${change}`);
     try {
-      const userRef = await getDocREST("users", user_id);
+      const userRef = await getDocREST("users", user_id, token);
       if (!userRef.exists) throw new Error("User not found");
       
       const userData = userRef.data();
@@ -505,7 +587,7 @@ async function startServer() {
         ...userData,
         balance: newBalance,
         updatedAt: new Date().toISOString()
-      });
+      }, token);
       return success;
     } catch (err: any) {
       console.error(`[BALANCE-REST] Error: ${err.message}`);
@@ -537,19 +619,27 @@ async function startServer() {
     // Shorter cache for dynamic data like users and orders to ensure balance/status updates aren't stale
     const DYNAMIC_CACHE_TTL = 30 * 1000; // 30 seconds
 
-    if (!token) { // Only use cache for unauthenticated requests or common settings
-      if (collect === "settings" && id === "payment" && serverCache.settings && now - serverCache.settings.time < CACHE_TTL) {
-        return { exists: true, data: () => serverCache.settings.data };
+    // Cache lookup for common static/global configurations (always safe to cache regardless of user auth tokens)
+    if (collect === "settings" && id === "payment" && serverCache.settings && now - serverCache.settings.time < CACHE_TTL) {
+      return { exists: true, data: () => serverCache.settings.data };
+    }
+    if (collect === "courses" && id && serverCache.courses && serverCache.courses.has(id)) {
+      const cached = serverCache.courses.get(id);
+      if (now - cached.time < CACHE_TTL) {
+        return { exists: true, data: () => cached.data };
       }
-      if (collect === "courses" && id && serverCache.courses && serverCache.courses.has(id)) {
-        const cached = serverCache.courses.get(id);
-        if (now - cached.time < CACHE_TTL) {
-          return { exists: true, data: () => cached.data };
-        }
+    }
+    if (collect === "providers" && id && serverCache.providers && serverCache.providers.has(id)) {
+      const cached = serverCache.providers.get(id);
+      if (now - cached.time < CACHE_TTL) {
+        return { exists: true, data: () => cached.data };
       }
-      if (collect === "providers" && id && serverCache.providers && serverCache.providers.has(id)) {
-        const cached = serverCache.providers.get(id);
-        if (now - cached.time < CACHE_TTL) {
+    }
+
+    if (!token) { // Only use cache for other dynamic data when unauthenticated
+      if (collect === "users" && id && serverCache.users && serverCache.users.has(id)) {
+        const cached = serverCache.users.get(id);
+        if (now - cached.time < DYNAMIC_CACHE_TTL) {
           return { exists: true, data: () => cached.data };
         }
       }
@@ -577,8 +667,8 @@ async function startServer() {
       result = await getDocREST(collect, id, token);
     }
 
-    // Cache the successful read result (only for public data)
-    if (result.exists && !token) {
+    // Cache the successful read result
+    if (result.exists) {
       const data = result.data();
       if (collect === "settings" && id === "payment") {
         serverCache.settings = { data, time: now };
@@ -586,9 +676,9 @@ async function startServer() {
         serverCache.courses.set(id, { data, time: now });
       } else if (collect === "providers" && id) {
         serverCache.providers.set(id, { data, time: now });
-      } else if (collect === "users" && id) {
+      } else if (collect === "users" && id && !token) { // Only cache dynamic user profiles when loaded without token to prevent stale balance
         serverCache.users.set(id, { data, time: now });
-      } else if (collect === "orders" && id) {
+      } else if (collect === "orders" && id && !token) {
         serverCache.orders.set(id, { data, time: now });
       }
     }
@@ -596,9 +686,30 @@ async function startServer() {
     return result;
   };
 
+  // Aggressive backend-side cache to protect database read limits
+  let serverCachedCourses: any[] | null = null;
+  let serverCachedCoursesTime = 0;
+  let serverCachedSettings: any = null;
+  let serverCachedSettingsTime = 0;
+
+  const invalidateCachesForCollection = (col: string) => {
+    if (col === "courses" || col === "services") {
+      serverCachedCourses = null;
+      serverCachedCoursesTime = 0;
+      serverCache.courses.clear();
+      console.log(`[CACHE-INVALIDATE] Invalidated server courses/services cache for collection change on "${col}"`);
+    } else if (col === "settings") {
+      serverCachedSettings = null;
+      serverCachedSettingsTime = 0;
+      serverCache.settings = null;
+      console.log(`[CACHE-INVALIDATE] Invalidated server settings cache for collection change on "${col}"`);
+    }
+  };
+
   const updateDocSafe = async (col: string, id: string, data: any, token?: string) => {
+    invalidateCachesForCollection(col);
     if (col === "orders") {
-      console.log(`[MEMORY-UPDATE] Updating order ${id} in memory.`);
+      console.log(`[MEMORY-UPDATE] Syncing memory cache for order ${id}.`);
       const cached = serverCache.orders.get(id);
       const existingData = cached ? cached.data : {};
       const newData = { ...existingData, ...data, updatedAt: new Date().toISOString() };
@@ -607,7 +718,6 @@ async function startServer() {
       if (idx !== -1) {
         serverCache.latestOrders[idx] = { ...serverCache.latestOrders[idx], ...data };
       }
-      return true;
     }
     if (!useRestFallback) {
       try {
@@ -628,10 +738,10 @@ async function startServer() {
   };
 
   const setDocSafe = async (col: string, id: string, data: any, token?: string) => {
+    invalidateCachesForCollection(col);
     if (col === "orders") {
-      console.log(`[MEMORY-ONLY] Saving order ${id} to memory only.`);
+      console.log(`[MEMORY-SET] Syncing memory cache for order ${id}.`);
       addOrderToMemory(id, data);
-      return true; 
     }
     if (!useRestFallback) {
       try {
@@ -652,14 +762,19 @@ async function startServer() {
   };
 
   const addDocSafe = async (col: string, data: any, token?: string) => {
+    invalidateCachesForCollection(col);
+    let generatedId: string | undefined;
     if (col === "orders") {
-      const id = "ord_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
+      generatedId = "ord_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
       const now = new Date().toISOString();
-      addOrderToMemory(id, { ...data, createdAt: now });
-      return id;
+      addOrderToMemory(generatedId, { ...data, createdAt: now });
     }
     if (!useRestFallback) {
       try {
+        if (col === "orders" && generatedId) {
+          await fdb.collection(col).doc(generatedId).set({ ...data, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+          return generatedId;
+        }
         const docRef = await fdb.collection(col).add({ ...data, createdAt: admin.firestore.FieldValue.serverTimestamp() });
         return docRef.id;
       } catch (err: any) {
@@ -673,6 +788,10 @@ async function startServer() {
       }
     }
 
+    if (col === "orders" && generatedId) {
+      const success = await setDocREST(col, generatedId, data, token);
+      return success ? generatedId : null;
+    }
     return addDocREST(col, data, token);
   };
 
@@ -689,6 +808,7 @@ async function startServer() {
   };
 
   const deleteDocSafe = async (col: string, id: string) => {
+    invalidateCachesForCollection(col);
     if (!useRestFallback) {
       try {
         await fdb.collection(col).doc(id).delete();
@@ -722,7 +842,7 @@ async function startServer() {
   };
   ensureBackendUrlIsSet();
 
-  const adjustUserBalanceSafe = async (user_id: string, change: number) => {
+  const adjustUserBalanceSafe = async (user_id: string, change: number, token?: string) => {
     console.log(`[BALANCE-SAFE] Adjusting balance for ${user_id} by ${change}`);
     if (!useRestFallback) {
       try {
@@ -751,7 +871,7 @@ async function startServer() {
       }
     }
 
-    return adjustUserBalanceREST(user_id, change);
+    return adjustUserBalanceREST(user_id, change, token);
   };
   
   // Health check
@@ -786,12 +906,6 @@ async function startServer() {
       useRestFallback
     }));
 
-  // Aggressive backend-side cache to protect database read limits
-  let serverCachedCourses: any[] | null = null;
-  let serverCachedCoursesTime = 0;
-  let serverCachedSettings: any = null;
-  let serverCachedSettingsTime = 0;
-  
   const BACKEND_CACHE_DURATION = 10 * 60 * 1000; // 10 minutes in-memory cache TTL by default
 
   // API endpoint to programmatically clear backend cache when an admin updates courses/settings
@@ -902,14 +1016,148 @@ async function startServer() {
     }
   });
 
-  app.get("/api/user-orders/:userId", (req, res) => {
+  app.get("/api/user-orders/:userId", async (req, res) => {
     const { userId } = req.params;
-    const limit = parseInt(req.query.limit as string) || 10;
-    console.log(`[API] Fetching memory orders for user: ${userId}`);
-    const userOrders = serverCache.latestOrders
-      .filter(o => o.userId === userId)
-      .slice(0, limit);
-    res.json(userOrders);
+    const limit = parseInt(req.query.limit as string) || 15;
+    console.log(`[API] Fetching orders on-demand from Firestore for user: ${userId}`);
+    
+    // Add super strict validation for invalid or placeholder user IDs
+    if (!userId || userId === "undefined" || userId === "null" || userId === "placeholder" || userId.trim() === "") {
+      console.warn(`[API] Rejected invalid or placeholder userId: "${userId}"`);
+      return res.json([]);
+    }
+    
+    try {
+      let docs: any[] = [];
+      if (!useRestFallback) {
+        try {
+          const snap = await fdb.collection("orders").where("userId", "==", userId).get();
+          docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        } catch (err: any) {
+          console.warn("[API] Admin fetch for user orders failed, trying REST:", err.message);
+          if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
+            useRestFallback = true;
+          }
+        }
+      }
+
+      if (useRestFallback) {
+        const queryRes = await runQueryREST({
+          structuredQuery: {
+            from: [{ collectionId: "orders" }],
+            where: {
+              fieldFilter: {
+                field: { fieldPath: "userId" },
+                op: "EQUAL",
+                value: { stringValue: userId }
+              }
+            }
+          }
+        }, req.headers.authorization as string || systemAccessToken);
+        
+        if (queryRes) {
+          docs = queryRes.map(doc => ({ id: doc.id, ...doc.data() }));
+        }
+      }
+
+      // Filter strictly to ensure only orders belonging to the specified userId are returned.
+      // This prevents any leakage or "fake" orders belonging to other users.
+      // Also filter out aborted "Failed" orders that do not have a valid provider ID (e.g. they failed before transmission).
+      const filteredDocs = docs.filter(item => {
+        const orderUserId = item.userId || item.user_id;
+        const isMatchedUser = orderUserId === userId && userId !== "undefined" && userId !== "null";
+        if (!isMatchedUser) return false;
+        
+        // Skip failed aborted/unplaced orders (without a valid provider order ID)
+        const pId = item.providerOrderId || item.provider_order_id;
+        const isFailedAborted = item.status?.toLowerCase() === 'failed' && (!pId || pId === 'N/A');
+        return !isFailedAborted;
+      });
+
+      // Convert timestamp formats to ISO strings robustly and keep in memory cache in sync
+      const processedDocs = filteredDocs.map(item => {
+        let createdAtIso = new Date().toISOString();
+        if (item.createdAt) {
+          if (typeof item.createdAt === "string") {
+            createdAtIso = item.createdAt;
+          } else if (item.createdAt.toDate) {
+            createdAtIso = item.createdAt.toDate().toISOString();
+          } else if (typeof item.createdAt.seconds === "number") {
+            createdAtIso = new Date(item.createdAt.seconds * 1000).toISOString();
+          }
+        }
+        let updatedAtIso = createdAtIso;
+        if (item.updatedAt) {
+          if (typeof item.updatedAt === "string") {
+            updatedAtIso = item.updatedAt;
+          } else if (item.updatedAt.toDate) {
+            updatedAtIso = item.updatedAt.toDate().toISOString();
+          } else if (typeof item.updatedAt.seconds === "number") {
+            updatedAtIso = new Date(item.updatedAt.seconds * 1000).toISOString();
+          }
+        }
+        const normalizedItem = {
+          ...item,
+          createdAt: createdAtIso,
+          updatedAt: updatedAtIso
+        };
+        addOrderToMemory(item.id, normalizedItem);
+        return normalizedItem;
+      });
+
+      // Sort by createdAt descending robustly
+      processedDocs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+      // Limit response to requested amount (strictly 15 orders limit)
+      const userOrders = processedDocs.slice(0, limit);
+      res.json(userOrders);
+    } catch (apiErr: any) {
+      console.error("[API] Failed to get user orders on-demand:", userId, apiErr.message);
+      res.status(500).json({ error: "Failed to fetch orders" });
+    }
+  });
+
+  // Securely delete an order belonging to the requesting user to clear fake/failed orders from their dashboard
+  app.post("/api/orders/delete", async (req, res) => {
+    const { orderId, userId } = req.body;
+    if (!orderId || !userId) {
+      return res.status(400).json({ error: "Missing orderId or userId" });
+    }
+    
+    try {
+      console.log(`[API-DELETE-ORDER] Request to delete order: ${orderId} by user: ${userId}`);
+      
+      // 1. Fetch order to verify ownership
+      const orderSnap = await getDocSafe("orders", orderId);
+      if (!orderSnap.exists) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+      
+      const orderData = orderSnap.data();
+      const orderUserId = orderData?.userId || orderData?.user_id;
+      
+      // Verify that this order belongs to the requesting user to prevent unauthorized deletions
+      if (orderUserId !== userId) {
+        console.warn(`[API-DELETE-ORDER] Unauthorized delete attempt for order ${orderId} by user ${userId} (actual owner is ${orderUserId})`);
+        return res.status(403).json({ error: "Unauthorized to delete this order" });
+      }
+      
+      // 2. Delete the order from database
+      await deleteDocSafe("orders", orderId);
+      console.log(`[API-DELETE-ORDER] Successfully deleted order: ${orderId} from Firestore`);
+      
+      // 3. Remove from memory cache if present
+      serverCache.orders.delete(orderId);
+      const idx = serverCache.latestOrders.findIndex(o => o.id === orderId);
+      if (idx !== -1) {
+        serverCache.latestOrders.splice(idx, 1);
+      }
+      
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error(`[API-DELETE-ORDER] Failed to delete order ${orderId}:`, err.message);
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.get("/api/admin/all-orders", (req, res) => {
@@ -1054,7 +1302,7 @@ async function startServer() {
       const secret = sS.data()?.razorpayKeySecret;
       const hmac = crypto.createHmac("sha256", secret).update(req.body.razorpay_order_id + "|" + req.body.razorpay_payment_id).digest("hex");
       if (hmac === req.body.razorpay_signature) {
-        await adjustUserBalanceSafe(req.body.user_id || req.body.userId, Number(req.body.amount));
+        await adjustUserBalanceSafe(req.body.user_id || req.body.userId, Number(req.body.amount), req.headers.authorization as string);
         await addDocSafe("deposits", { ...req.body, status: "approved", createdAt: new Date() });
         res.json({ success: true });
       } else res.status(400).json({ error: "Invalid sig" });
@@ -1753,7 +2001,7 @@ async function startServer() {
       if (isVerified) {
         console.log(`[QR-AUTO-SUCCESS] Verified ₹${amount} for user ${userId} (UTR: ${cleanUtr})`);
         
-        const success = await adjustUserBalanceSafe(userId, Number(amount));
+        const success = await adjustUserBalanceSafe(userId, Number(amount), req.headers.authorization as string);
         if (!success) {
           return res.status(500).json({ error: "Payment verified but failed to update wallet. Contact support." });
         }
@@ -2062,6 +2310,18 @@ async function startServer() {
       let userId = currentOrderData?.userId || currentOrderData?.user_id;
       let serviceId = currentOrderData?.serviceId || currentOrderData?.service_id;
 
+      const refundIfDeducted = async (uid: string, oId: string, amt: number) => {
+        try {
+          if (currentOrderData?.balanceAlreadyDeducted && uid && amt > 0) {
+            console.log(`[REFUND-PROCESS] Refunding ₹${amt} to user ${uid} for order ${oId}`);
+            await adjustUserBalanceSafe(uid, amt, token);
+            await logToDb("BALANCE_REFUND", { userId: uid, amount: amt, orderId: oId, reason: "Provider transmission failure/rejection" });
+          }
+        } catch (refundErr: any) {
+          console.error(`[REFUND-CRITICAL-ERROR] Failed to automatically refund ₹${amt} to user ${uid} for order ${oId}:`, refundErr.message);
+        }
+      };
+
       if (!currentOrderData || !userId || !serviceId) {
         console.log(`[TRANSMIT] Fetching order document ${orderId} (slow path fallback)`);
         const snapObj = await getDocSafe("orders", orderId, token);
@@ -2090,7 +2350,7 @@ async function startServer() {
       let [userSnap, cS, sS] = await Promise.all([
         getDocSafe("users", userId, token),
         getDocSafe("courses", serviceId, token),
-        getDocSafe("settings", "payment", token)
+        getDocSafe("settings", "payment")
       ]);
 
       // Fallback for service collection naming
@@ -2162,8 +2422,9 @@ async function startServer() {
         };
       }
       const userBalance = Number(userSnap.data().balance || 0);
+      const isDeducted = currentOrderData?.balanceAlreadyDeducted || false;
 
-      if (userBalance < orderAmount) {
+      if (!isDeducted && userBalance < orderAmount) {
         throw new Error(`Insufficient balance (Current: ₹${userBalance}, Required: ₹${orderAmount}). Order rejected.`);
       }
 
@@ -2200,7 +2461,7 @@ async function startServer() {
       let providerName = "Global Settings";
 
       if (c.providerId && c.providerId !== "global") {
-        const pS = await getDocSafe("providers", c.providerId, token);
+        const pS = await getDocSafe("providers", c.providerId);
         if (pS && pS.exists) {
           const pData = pS.data() || {};
           providerName = pData.name || c.providerId;
@@ -2405,6 +2666,7 @@ async function startServer() {
               });
             }
 
+            await refundIfDeducted(userId, orderId, orderAmount);
             return { success: false, error: stringErr };
           } else {
             const backoff = attempts < 3 ? 500 : (attempts - 1) * 2000;
@@ -2446,53 +2708,59 @@ async function startServer() {
         const oId = providerOrderId ? String(providerOrderId) : "SENT_NO_ID";
         console.log(`[TRANSMIT] Successfully ordered from SMM panel. Provider Order ID: ${oId}`);
 
-        // DEDUCT BALANCE NOW - Order was successful with provider
-        try {
-          const orderSnap = await getDocSafe("orders", orderId);
-          let needsDeduction = false;
-          let price = Number(currentOrderData.totalPrice || currentOrderData.total_price || 0);
-          let oUserId = currentOrderData.userId || currentOrderData.user_id;
+        // DEDUCT BALANCE AND UPDATE DATABASE IN BACKGROUND FOR INSTANT RESPONSE TIME
+        (async () => {
+          try {
+            const orderSnap = await getDocSafe("orders", orderId, token);
+            let needsDeduction = false;
+            let price = Number(currentOrderData.totalPrice || currentOrderData.total_price || 0);
+            let oUserId = currentOrderData.userId || currentOrderData.user_id;
 
-          if (orderSnap.exists) {
-            const currentData = orderSnap.data();
-            needsDeduction = ["Pending", "Processing", "Failed", "Refunded", "Awaiting-Validation"].includes(currentData.status);
-            price = Number(currentData.totalPrice || currentData.total_price || price);
-            oUserId = currentData.userId || currentData.user_id || oUserId;
-          } else {
-            needsDeduction = true; 
-          }
-
-          if (needsDeduction && oUserId && price > 0) {
-            console.log(`[DEDUCTION-START] Attempting to deduct ₹${price} from User ${oUserId} for order ${orderId}`);
-            const deductionSuccess = await adjustUserBalanceSafe(oUserId, -price);
-            if (deductionSuccess) {
-              console.log(`[DEDUCTION-SUCCESS] Deducted ₹${price} from User ${oUserId} after successful provider response.`);
-              await logToDb("BALANCE_DEDUCTION", { userId: oUserId, amount: price, orderId, success: true });
-            } else {
-              console.error(`[DEDUCTION-FAIL] Could not deduct balance for user ${oUserId} despite provider success!`);
-              await logToDb("BALANCE_DEDUCTION", { userId: oUserId, amount: price, orderId, success: false });
-            }
-          }
-
-          if (skipStoreCompleted) {
-            console.log(`[TRANSMIT] skipStoreCompleted is enabled. Deleting any transient/pending order doc and skipping completed doc save.`);
             if (orderSnap.exists) {
-              await deleteDocSafe("orders", orderId);
+              const currentData = orderSnap.data();
+              needsDeduction = ["Pending", "Processing", "Failed", "Refunded", "Awaiting-Validation"].includes(currentData.status);
+              price = Number(currentData.totalPrice || currentData.total_price || price);
+              oUserId = currentData.userId || currentData.user_id || oUserId;
+            } else {
+              needsDeduction = true; 
             }
-          } else {
-            await updateDocSafe("orders", orderId, {
-              status: "Completed",
-              providerOrderId: oId,
-              needsProviderTransmission: false,
-              providerTransmissionStatus: "completed",
-              error: null,
-              updatedAt: new Date().toISOString(),
-              providerRawResponse: JSON.stringify(resData).substring(0, 800)
-            });
+
+            const alreadyDeducted = currentOrderData?.balanceAlreadyDeducted || false;
+            if (needsDeduction && oUserId && price > 0 && !alreadyDeducted) {
+              console.log(`[DEDUCTION-START] Attempting to deduct ₹${price} from User ${oUserId} for order ${orderId}`);
+              const deductionSuccess = await adjustUserBalanceSafe(oUserId, -price, token);
+              if (deductionSuccess) {
+                console.log(`[DEDUCTION-SUCCESS] Deducted ₹${price} from User ${oUserId} after successful provider response.`);
+                await logToDb("BALANCE_DEDUCTION", { userId: oUserId, amount: price, orderId, success: true });
+              } else {
+                console.error(`[DEDUCTION-FAIL] Could not deduct balance for user ${oUserId} despite provider success!`);
+                await logToDb("BALANCE_DEDUCTION", { userId: oUserId, amount: price, orderId, success: false });
+              }
+            } else if (alreadyDeducted) {
+              console.log(`[DEDUCTION-SKIP] Balance was already deducted synchronously for order ${orderId}`);
+            }
+
+            if (skipStoreCompleted) {
+              console.log(`[TRANSMIT] skipStoreCompleted is enabled. Deleting any transient/pending order doc and skipping completed doc save.`);
+              if (orderSnap.exists) {
+                await deleteDocSafe("orders", orderId);
+              }
+            } else {
+              await updateDocSafe("orders", orderId, {
+                status: "Completed",
+                providerOrderId: oId,
+                needsProviderTransmission: false,
+                providerTransmissionStatus: "completed",
+                error: null,
+                updatedAt: new Date().toISOString(),
+                providerRawResponse: JSON.stringify(resData).substring(0, 800)
+              }, token);
+            }
+          } catch (updateErr: any) {
+            console.warn(`[TRANSMIT-BACKGROUND] Could not process success outputs or update db: ${updateErr.message}`);
           }
-        } catch (updateErr: any) {
-          console.warn(`[TRANSMIT] Could not process success outputs or update db: ${updateErr.message}`);
-        }
+        })();
+
         return { success: true, providerOrderId: oId };
       } else {
         // Collect rejection errors
@@ -2543,6 +2811,7 @@ async function startServer() {
           });
         }
 
+        await refundIfDeducted(userId, orderId, orderAmount);
         return { success: false, error: finalErrorStr };
       }
     } catch (e: any) {
@@ -2568,6 +2837,18 @@ async function startServer() {
         }).catch(err => {
           console.error(`[TRANSMIT] Failed to set order status to Failed after severe exception: ${err.message}`);
         });
+      }
+
+      try {
+        let userId = currentOrderData?.userId || currentOrderData?.user_id;
+        let orderAmount = Number(currentOrderData?.totalPrice || currentOrderData?.total_price || 0);
+        if (currentOrderData?.balanceAlreadyDeducted && userId && orderAmount > 0) {
+          console.log(`[REFUND-SEVERE] Severe exception refunding ₹${orderAmount} to user ${userId} for order ${orderId}`);
+          await adjustUserBalanceSafe(userId, orderAmount, token);
+          await logToDb("BALANCE_REFUND", { userId, amount: orderAmount, orderId, reason: "Severe exception during transmission: " + e.message });
+        }
+      } catch (refundErr: any) {
+        console.error(`[REFUND-CRITICAL-ERROR] Failed to refund on severe exception:`, refundErr.message);
       }
       return { success: false, error: e.message || "Unknown internal processing error" };
     } finally {
@@ -2676,8 +2957,18 @@ async function startServer() {
 
       if (req.body.isAsync) {
         console.log(`[HTTP Proxy] Dispatching asynchronous background order transit for order: ${orderId}`);
+
+        // Instant database balance deduction
+        if (final_user_id && final_total_price > 0) {
+          console.log(`[ASYNC-DEDUCTION] Deducting ₹${final_total_price} instantly from user ${final_user_id} in DB for order ${orderId}`);
+          const deductionSuccess = await adjustUserBalanceSafe(final_user_id, -Number(final_total_price), req.headers.authorization as string);
+          if (!deductionSuccess) {
+            return res.status(400).json({ success: false, error: "Insufficient balance or user profile not found." });
+          }
+        }
+
         // Run background transmittal immediately and return milliseconds response to client
-        transmitOrderToProviderDirect(orderId, payloadData, skipStoreCompleted, req.headers.authorization as string).catch(err => {
+        transmitOrderToProviderDirect(orderId, { ...payloadData, balanceAlreadyDeducted: true }, skipStoreCompleted, req.headers.authorization as string).catch(err => {
           console.error(`[ASYNC-TRANSMIT-ERROR] Background transmission exception for ${orderId}:`, err.message);
         });
         return res.json({ success: true, isAsync: true, providerOrderId: "PENDING", orderId });
@@ -2849,7 +3140,7 @@ async function startServer() {
       }
 
       const pOrderId = order.providerOrderId || order.provider_order_id;
-      if (!pOrderId) {
+      if (!pOrderId || pOrderId === "PENDING") {
         return res.json({ success: true, status: currentStatus, message: "No provider ID yet" });
       }
 

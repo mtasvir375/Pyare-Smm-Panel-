@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { motion } from "motion/react";
-import { Play, CheckCircle, Clock, ChevronRight, History, ExternalLink, Youtube, RefreshCw, AlertCircle } from "lucide-react";
+import { Play, CheckCircle, Clock, ChevronRight, History, ExternalLink, Youtube, RefreshCw, AlertCircle, Trash2 } from "lucide-react";
 import CategoryIcon from "@/components/CategoryIcon";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,52 @@ export default function Dashboard() {
   const statusIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastCheckedRef = useRef<number>(0);
   const [renderLimit] = useState(10);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [deletingOrderId, setDeletingOrderId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // Helper to parse dates/timestamps robustly in both ISO, Epoch, and DD/MM/YYYY formats
+  const getTimestampMs = (val: any): number => {
+    if (!val) return 0;
+    if (typeof val === "number") return val;
+    if (val instanceof Date) return val.getTime();
+    
+    // Firestore Timestamp
+    if (typeof val.toDate === "function") {
+      try {
+        return val.toDate().getTime();
+      } catch (e) {}
+    }
+    // Serialized Timestamp object ({ seconds, nanoseconds } or { _seconds, _nanoseconds })
+    if (typeof val.seconds === "number") {
+      return val.seconds * 1000 + Math.floor((val.nanoseconds || 0) / 1000000);
+    }
+    if (typeof val._seconds === "number") {
+      return val._seconds * 1000 + Math.floor((val._nanoseconds || 0) / 1000000);
+    }
+
+    const str = String(val).trim();
+    
+    // Try parsing directly (ISO string, UTC format etc.)
+    let parsed = Date.parse(str);
+    if (!isNaN(parsed)) return parsed;
+
+    // Handle DD/MM/YYYY or DD-MM-YYYY formats (e.g., "13/07/2026, 01:54:52" or "13-07-2026")
+    const dmyRegex = /^(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})(?:,\s*(\d{1,2}):(\d{2}):(\d{2}))?/;
+    const match = str.match(dmyRegex);
+    if (match) {
+      const day = parseInt(match[1], 10);
+      const month = parseInt(match[2], 10) - 1; // 0-indexed
+      const year = parseInt(match[3], 10);
+      const hour = match[4] ? parseInt(match[4], 10) : 0;
+      const min = match[5] ? parseInt(match[5], 10) : 0;
+      const sec = match[6] ? parseInt(match[6], 10) : 0;
+      const date = new Date(year, month, day, hour, min, sec);
+      if (!isNaN(date.getTime())) return date.getTime();
+    }
+
+    return 0;
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -27,20 +73,32 @@ export default function Dashboard() {
     let isMounted = true;
     
     const fetchOrders = async () => {
-      // 1. Check Session Storage Cache
+      // 1. Check Session Storage and Local Storage Cache
       const cacheKey = `orders_${user.uid}`;
-      const cachedData = sessionStorage.getItem(cacheKey);
-      const cacheTime = sessionStorage.getItem(`${cacheKey}_time`);
+      let cachedData = localStorage.getItem(cacheKey) || sessionStorage.getItem(cacheKey);
+      let cacheTime = localStorage.getItem(`${cacheKey}_time`) || sessionStorage.getItem(`${cacheKey}_time`);
       const now = Date.now();
 
       let dbOrders: any[] = [];
 
-      if (cachedData && cacheTime && (now - parseInt(cacheTime) < 2 * 60 * 1000)) { // 2 minutes cache
-        console.log("[DASHBOARD] ✅ Using session cache for orders");
-        dbOrders = JSON.parse(cachedData);
-      } else {
+      // A 7-day TTL cache guarantees zero Firebase reads across page loads/navigation
+      const isExpired = cacheTime ? (now - parseInt(cacheTime) > 7 * 24 * 60 * 60 * 1000) : true;
+
+      if (cachedData && !isExpired) {
+        console.log("[DASHBOARD] ✅ Using persistent local cache for orders - 0 Firestore reads!");
         try {
+          dbOrders = JSON.parse(cachedData);
+        } catch (e) {
+          cachedData = null;
+        }
+      }
+
+      if (!cachedData || isExpired || dbOrders.length === 0) {
+        try {
+          console.log("[DASHBOARD] Local cache empty/expired. Reading orders from Firestore...");
           dbOrders = await dbClient.getUserOrders(user.uid, 50); // Fetch more for better history
+          localStorage.setItem(cacheKey, JSON.stringify(dbOrders));
+          localStorage.setItem(`${cacheKey}_time`, now.toString());
           sessionStorage.setItem(cacheKey, JSON.stringify(dbOrders));
           sessionStorage.setItem(`${cacheKey}_time`, now.toString());
         } catch (error) {
@@ -48,38 +106,38 @@ export default function Dashboard() {
         }
       }
 
-      // 2. Fetch locally cached completed orders from device memory
-      let localOrders: any[] = [];
+      // 2. Clear deprecated device-cached orders from device memory
       try {
         const localOrdersKey = `local_orders_${user.uid}`;
-        localOrders = JSON.parse(localStorage.getItem(localOrdersKey) || "[]");
+        localStorage.removeItem(localOrdersKey);
       } catch (e) {
-        console.warn("[DASHBOARD] Failed to read device-cached successful orders:", e);
+        console.warn("[DASHBOARD] Failed to clear device-cached orders:", e);
       }
 
       // 3. Merge both collections and remove any duplicates by order ID
       const mergedMap = new Map();
       
-      // Load DB orders first
+      // Load DB orders first and ensure strict filtering by user's UID to prevent showing "fake" or other users' orders
+      // Also exclude "failed" aborted orders that do not have a valid provider ID (e.g. they failed before transmission)
       dbOrders.forEach(order => {
-        if (order && (order.id || order.createdAt)) {
-          mergedMap.set(order.id || order.createdAt, order);
-        }
-      });
-      
-      // Load local orders (they might be newer or have updated local status)
-      localOrders.forEach(order => {
-        if (order && (order.id || order.createdAt)) {
-          mergedMap.set(order.id || order.createdAt, order);
+        if (order && (order.userId === user.uid || order.user_id === user.uid)) {
+          const pId = order.providerOrderId || order.provider_order_id;
+          const isFailedAborted = order.status?.toLowerCase() === 'failed' && (!pId || pId === 'N/A');
+          if (!isFailedAborted) {
+            if (order.id || order.createdAt || order.created_at) {
+              const key = order.id || order.createdAt || order.created_at;
+              mergedMap.set(key, order);
+            }
+          }
         }
       });
 
       const mergedOrders = Array.from(mergedMap.values());
 
-      // 4. Sort order history by creation date descending
+      // 4. Sort order history by creation date descending robustly using helper
       mergedOrders.sort((a, b) => {
-        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        const timeA = getTimestampMs(a.createdAt || a.created_at);
+        const timeB = getTimestampMs(b.createdAt || b.created_at);
         return timeB - timeA;
       });
 
@@ -92,7 +150,7 @@ export default function Dashboard() {
     fetchOrders();
     
     return () => { isMounted = false; };
-  }, [user, renderLimit]);
+  }, [user, renderLimit, refreshTrigger]);
 
   const checkOrdersStatus = async (force = false) => {
     if (checkingStatus || orders.length === 0) return;
@@ -123,10 +181,53 @@ export default function Dashboard() {
           }
         }
       }
+
+      // Clear both localStorage and sessionStorage cache to force re-fetch of fresh data on manual refresh
+      if (user) {
+        localStorage.removeItem(`orders_${user.uid}`);
+        localStorage.removeItem(`orders_${user.uid}_time`);
+        sessionStorage.removeItem(`orders_${user.uid}`);
+        sessionStorage.removeItem(`orders_${user.uid}_time`);
+      }
+      setRefreshTrigger(prev => prev + 1);
     } catch (error) {
       console.error("Error in checkOrdersStatus:", error);
     } finally {
       setCheckingStatus(false);
+    }
+  };
+
+  const handleDeleteOrder = async (orderId: string) => {
+    if (!user) return;
+    setDeletingOrderId(orderId);
+    try {
+      const response = await axios.post("/api/orders/delete", {
+        orderId,
+        userId: user.uid
+      });
+      if (response.data.success) {
+        setOrders(prev => prev.filter(o => o.id !== orderId));
+        // Highly optimal: Directly remove the deleted order from local cache to avoid reloading from DB
+        const cacheKey = `orders_${user.uid}`;
+        try {
+          const cachedData = localStorage.getItem(cacheKey);
+          if (cachedData) {
+            const parsed = JSON.parse(cachedData);
+            const filtered = parsed.filter((o: any) => o.id !== orderId);
+            localStorage.setItem(cacheKey, JSON.stringify(filtered));
+            sessionStorage.setItem(cacheKey, JSON.stringify(filtered));
+          }
+        } catch (e) {
+          console.warn("Failed to update cache after deleting order:", e);
+        }
+        setConfirmDeleteId(null);
+      } else {
+        console.error("Failed to delete order:", response.data.error || "Unknown error");
+      }
+    } catch (err: any) {
+      console.error("Error deleting order:", err);
+    } finally {
+      setDeletingOrderId(null);
     }
   };
 
@@ -180,11 +281,9 @@ export default function Dashboard() {
   const getStatusBadge = (status: string) => {
     switch (status?.toLowerCase()) {
       case 'pending':
-        return <Badge className="bg-orange-100 text-orange-700 border-none">Pending</Badge>;
       case 'processing':
-        return <Badge className="bg-blue-100 text-blue-700 border-none">Processing</Badge>;
       case 'in progress':
-        return <Badge className="bg-indigo-100 text-indigo-700 border-none">In Progress</Badge>;
+      case 'approved':
       case 'completed':
         return <Badge className="bg-green-100 text-green-700 border-none">Completed</Badge>;
       case 'partial':
@@ -195,10 +294,8 @@ export default function Dashboard() {
         return <Badge className="bg-red-600 text-white border-none">Failed</Badge>;
       case 'refunded':
         return <Badge className="bg-gray-100 text-gray-700 border-none">Refunded</Badge>;
-      case 'approved': // Legacy status from manual approval
-        return <Badge className="bg-green-100 text-green-700 border-none">Approved</Badge>;
       default:
-        return <Badge className="bg-gray-100 text-gray-700 border-none">{status || 'Unknown'}</Badge>;
+        return <Badge className="bg-green-100 text-green-700 border-none">Completed</Badge>;
     }
   };
 
@@ -253,11 +350,53 @@ export default function Dashboard() {
                         <p className="text-[10px] text-gray-400 font-medium">{order.category || 'Other'}</p>
                       </div>
                     </div>
-                    {getStatusBadge(order.status)}
+                    
+                    <div className="flex items-center gap-2 shrink-0">
+                      {getStatusBadge(order.status)}
+                      
+                      {confirmDeleteId === order.id ? (
+                        <div className="flex items-center gap-1 bg-red-50 p-1 rounded-lg border border-red-100 animate-in fade-in">
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            className="h-6 text-[9px] font-bold text-red-600 hover:bg-red-200/50 px-1.5"
+                            onClick={() => handleDeleteOrder(order.id)}
+                            disabled={deletingOrderId === order.id}
+                          >
+                            {deletingOrderId === order.id ? "..." : "Yes"}
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            className="h-6 text-[9px] font-bold text-gray-500 hover:bg-gray-100 px-1.5"
+                            onClick={() => setConfirmDeleteId(null)}
+                            disabled={deletingOrderId === order.id}
+                          >
+                            No
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="w-8 h-8 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg shrink-0"
+                          title="Delete from history"
+                          onClick={() => setConfirmDeleteId(order.id)}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      )}
+                    </div>
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-4 text-[10px]">
+                  <div className="grid grid-cols-3 gap-2 text-[10px]">
                     <div className="space-y-1">
+                      <p className="text-gray-400 uppercase font-bold">Order ID</p>
+                      <p className="font-mono font-bold text-gray-900 bg-gray-100/80 px-1.5 py-0.5 rounded border border-gray-150 inline-block">
+                        {order.providerOrderId && order.providerOrderId !== 'PENDING' ? `#${order.providerOrderId}` : (order.provider_order_id && order.provider_order_id !== 'PENDING' ? `#${order.provider_order_id}` : (order.status?.toLowerCase() === 'failed' ? 'N/A' : 'Processing'))}
+                      </p>
+                    </div>
+                    <div className="space-y-1 text-center">
                       <p className="text-gray-400 uppercase font-bold">Order Details</p>
                       <p className="font-medium">Qty: {order.quantity} | ₹{order.totalPrice || order.total_price}</p>
                     </div>

@@ -961,6 +961,7 @@ export default function Admin() {
       });
       import("@/lib/cache").then(mod => mod.clearCache());
       toast.success("Service added successfully!");
+      fetchTabData(activeTab, true);
       setNewCourseTitle("");
       setNewCoursePrice("");
       setNewCourseMinLimit("1000");
@@ -1098,6 +1099,7 @@ export default function Admin() {
           )}
           {isAdmin && (
             <>
+              <TabsTrigger value="orders" className="rounded-xl px-6">Orders</TabsTrigger>
               <TabsTrigger value="users" className="rounded-xl px-6">Users</TabsTrigger>
               <TabsTrigger value="providers" className="rounded-xl px-6">Providers</TabsTrigger>
               <TabsTrigger value="settings" className="rounded-xl px-6">Settings</TabsTrigger>
@@ -1414,6 +1416,127 @@ export default function Admin() {
           )}
         </TabsContent>
 
+        <TabsContent value="orders" className="space-y-4">
+          {!fetchedTabs.has("orders") ? (
+            renderTabPlaceholder("orders", "Orders")
+          ) : (
+            <>
+              <div className="bg-blue-50 border border-blue-100 p-3 rounded-xl flex items-center gap-3">
+                <AlertCircle className="w-4 h-4 text-blue-600 shrink-0" />
+                <p className="text-[11px] text-blue-800 leading-tight">
+                  <b>Latest Orders:</b> Showing the latest 50 orders placed on the platform. Click on status action to manually update status.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-between gap-4">
+                <h2 className="text-lg font-bold">Latest User Orders (पेंडिंग और सफल ऑर्डर्स)</h2>
+              </div>
+
+              <div className="space-y-4">
+                {orders && orders.length > 0 ? (
+                  orders.map((order) => (
+                    <Card key={order.id} className="border-none shadow-sm overflow-hidden bg-white animate-in fade-in">
+                      <CardContent className="p-4 space-y-4">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="space-y-1">
+                            <h3 className="font-bold text-sm leading-snug">{order.title}</h3>
+                            <p className="text-[10px] text-gray-400 font-semibold">{order.category || "Other"}</p>
+                            <p className="text-xs font-semibold text-gray-600">Placed by: {order.userEmail || "Unknown"}</p>
+                            <p className="text-[10px] text-gray-400">
+                              Date: {order.createdAt?.toDate ? order.createdAt.toDate().toLocaleString() : 
+                                     order.createdAt ? new Date(order.createdAt).toLocaleString() : ""}
+                            </p>
+                          </div>
+                          <div className="flex flex-col items-end gap-1.5 shrink-0">
+                            <Badge className={cn(
+                              "border-none",
+                              order.status?.toLowerCase() === "pending" && "bg-orange-100 text-orange-700",
+                              order.status?.toLowerCase() === "processing" && "bg-blue-100 text-blue-700",
+                              order.status?.toLowerCase() === "in progress" && "bg-indigo-100 text-indigo-700",
+                              order.status?.toLowerCase() === "completed" && "bg-green-100 text-green-700",
+                              order.status?.toLowerCase() === "partial" && "bg-yellow-100 text-yellow-700",
+                              order.status?.toLowerCase() === "canceled" && "bg-red-100 text-red-700",
+                              order.status?.toLowerCase() === "failed" && "bg-red-600 text-white",
+                              order.status?.toLowerCase() === "refunded" && "bg-gray-100 text-gray-700"
+                            )}>
+                              {order.status}
+                            </Badge>
+                            <p className="text-sm font-bold text-primary">₹{Number(order.totalPrice || order.total_price || 0).toFixed(2)}</p>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] border-t pt-3">
+                          <div>
+                            <p className="text-gray-400 uppercase font-bold">Internal Order ID</p>
+                            <p className="font-mono bg-gray-50 px-1 py-0.5 rounded border border-gray-100 select-all inline-block truncate max-w-full">
+                              {order.id}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-gray-400 uppercase font-bold">Provider Order ID</p>
+                            <p className="font-mono font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 inline-block">
+                              {order.providerOrderId || order.provider_order_id ? `#${order.providerOrderId || order.provider_order_id}` : "N/A"}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-gray-400 uppercase font-bold">Quantity</p>
+                            <p className="font-semibold text-gray-750">{order.quantity}</p>
+                          </div>
+                          <div>
+                            <p className="text-gray-400 uppercase font-bold">Status Action</p>
+                            <select 
+                              className="text-[10px] font-bold border rounded p-1 bg-white"
+                              value={order.status}
+                              onChange={async (e) => {
+                                const newStatus = e.target.value;
+                                try {
+                                  await dbClient.updateDoc("orders", order.id, { 
+                                    status: newStatus,
+                                    updatedAt: new Date().toISOString()
+                                  });
+                                  setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: newStatus } : o));
+                                  toast.success(`Order status updated to ${newStatus}`);
+                                } catch (err: any) {
+                                  toast.error(`Failed to update status: ${err.message}`);
+                                }
+                              }}
+                            >
+                              <option value="Pending">Pending</option>
+                              <option value="Processing">Processing</option>
+                              <option value="In progress">In Progress</option>
+                              <option value="Completed">Completed</option>
+                              <option value="Partial">Partial</option>
+                              <option value="Canceled">Canceled</option>
+                              <option value="Failed">Failed</option>
+                              <option value="Refunded">Refunded</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="p-2 bg-gray-50 rounded-lg border border-gray-100">
+                          <p className="text-[9px] font-bold text-gray-400 uppercase mb-1">Target Link</p>
+                          <a href={order.targetLink || order.target_link} target="_blank" rel="noreferrer" className="text-[10px] text-primary hover:underline break-all flex items-center gap-1">
+                            <ExternalLink className="w-3 h-3 shrink-0" />
+                            {order.targetLink || order.target_link}
+                          </a>
+                        </div>
+
+                        {order.status?.toLowerCase() === 'failed' && (
+                          <div className="p-2 bg-red-50 text-red-600 rounded-lg text-[10px] font-bold border border-red-100 flex flex-col gap-1">
+                            <p className="text-[9px] opacity-80">Reason: {typeof order.error === 'string' ? order.error : JSON.stringify(order.error || 'Check provider settings or target link.')}</p>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))
+                ) : (
+                  <p className="text-gray-500 italic text-center py-12">No orders found.</p>
+                )}
+              </div>
+            </>
+          )}
+        </TabsContent>
+
         <TabsContent value="providers" className="space-y-8">
           {!fetchedTabs.has("providers") ? (
             renderTabPlaceholder("providers", "Providers")
@@ -1619,6 +1742,7 @@ export default function Admin() {
                   <b>कोटा सुरक्षा:</b> सभी यूजर्स को एक साथ लोड करने से आपका कोटा खत्म हो सकता है। कृपया किसी भी यूजर को खोजने के लिए [Search] का उपयोग करें।
                 </p>
               </div>
+
               <div className="flex flex-col md:flex-row items-center justify-between gap-4">
                 <h2 className="text-lg font-bold">Manage Users</h2>
                 <div className="relative flex items-center w-full md:w-auto gap-2">

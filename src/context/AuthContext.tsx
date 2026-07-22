@@ -107,7 +107,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             photoURL: firebaseUser.photoURL || '',
             role: 'student',
             balance: 1,
-            createdAt: new Date()
+            createdAt: new Date(),
+            isFallback: true
           });
         }
       } else {

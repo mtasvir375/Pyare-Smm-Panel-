@@ -7,7 +7,7 @@ import { useAuth } from "@/context/AuthContext";
 
 export default function Layout() {
   const location = useLocation();
-  const { user, loading } = useAuth() as any;
+  const { user, userProfile, loading } = useAuth() as any;
 
   useEffect(() => {
     const applyTheme = async () => {
@@ -53,6 +53,14 @@ export default function Layout() {
   return (
     <div className="min-h-screen bg-background text-foreground transition-colors duration-500 pb-20 md:pb-0 md:pt-16 flex flex-col justify-between">
       <div>
+        {userProfile?.isFallback && (
+          <div className="bg-red-600 text-white text-xs font-bold py-2.5 px-4 text-center sticky top-0 z-50 flex items-center justify-center gap-2 animate-pulse shadow-sm">
+            <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <span>कनेक्शन त्रुटि: ऑफ़लाइन डेटा दिखाया जा रहा है। कृपया पेज रीफ्रेश करें। (Connection Issue: Displaying offline data. Please refresh the page.)</span>
+          </div>
+        )}
         <Navbar />
         <main className="w-full max-w-7xl mx-auto px-4 py-6">
           <Outlet />

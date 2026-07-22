@@ -66,66 +66,46 @@ export default function Courses() {
   const filteredServices = courses.filter(c => c.category === selectedCategory);
   const selectedCourse = courses.find(c => c.id === selectedCourseId);
 
-  useEffect(() => {
-    const fetchCourses = async () => {
-      try {
-        setLoading(true);
-        // Clear local storage cache to ensure fresh data
+  const fetchCourses = async (forceRefresh = false) => {
+    try {
+      setLoading(true);
+      if (forceRefresh) {
         localStorage.removeItem("cached_courses");
         localStorage.removeItem("cached_courses_time");
+      }
+      
+      const { getCachedCourses } = await import("@/lib/cache");
+      const activeServices = await getCachedCourses(forceRefresh);
+      
+      setCourses(activeServices);
+      setLoading(false);
+      
+      if (activeServices.length > 0) {
+        // Priority to query param, then current selection, then first available
+        const queryCategory = searchParams.get("category")?.toLowerCase();
         
-        // Fetch without orderBy to avoid potential index issues (though verified working)
-        const coursesData = await dbClient.getDocs("courses");
-        
-        // Sort in memory
-        const getTimestamp = (item: any) => {
-          const val = item.updatedAt || item.updated_at || item.createdAt || item.created_at;
-          if (!val) return 0;
-          if (typeof val.toDate === "function") return val.toDate().getTime();
-          if (typeof val.seconds === "number") return val.seconds * 1000;
-          if (val._seconds !== undefined) return val._seconds * 1000;
-          const t = new Date(val).getTime();
-          return isNaN(t) ? 0 : t;
-        };
-        coursesData.sort((a: any, b: any) => getTimestamp(b) - getTimestamp(a));
-
-        // Ensure every course has a category and lowercase status check
-        const activeServices = coursesData.filter((s: any) => {
-          const status = (s.status || "").toLowerCase();
-          return status !== "archived" && status !== "hidden";
-        }).map(c => ({
-          ...c,
-          category: c.category || "Other",
-          price: Number(c.pricePerThousand || c.price || 0)
-        }));
-        
-        setCourses(activeServices);
-        setLoading(false);
-        
-        if (activeServices.length > 0) {
-          // Priority to query param, then current selection, then first available
-          const queryCategory = searchParams.get("category")?.toLowerCase();
-          
-          if (queryCategory) {
-            const match = activeServices.find(c => c.category && c.category.toLowerCase() === queryCategory);
-            if (match) {
-              setSelectedCategory(match.category);
-              return;
-            }
-          }
-          
-          // If current selection is invalid or empty, pick the first one
-          const categories = Array.from(new Set(activeServices.map(c => c.category)));
-          if (!selectedCategory || !categories.includes(selectedCategory)) {
-            setSelectedCategory(activeServices[0].category);
+        if (queryCategory) {
+          const match = activeServices.find(c => c.category && c.category.toLowerCase() === queryCategory);
+          if (match) {
+            setSelectedCategory(match.category);
+            return;
           }
         }
-      } catch (error) {
-        console.error(error);
-        setLoading(false);
+        
+        // If current selection is invalid or empty, pick the first one
+        const categories = Array.from(new Set(activeServices.map(c => c.category)));
+        if (!selectedCategory || !categories.includes(selectedCategory)) {
+          setSelectedCategory(activeServices[0].category);
+        }
       }
-    };
-    fetchCourses();
+    } catch (error) {
+      console.error(error);
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchCourses(false);
   }, [searchParams]);
 
   useEffect(() => {
@@ -274,7 +254,7 @@ export default function Courses() {
         targetLink: targetLink.trim(),
         totalPrice: Number(totalPrice),
         status: "Pending",
-        providerOrderId: "PENDING", 
+        providerOrderId: "", 
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
@@ -349,7 +329,7 @@ export default function Courses() {
             else if (resData?.error) throw new Error(resData.error);
           }
         } else {
-          // Native Host: Use Server Proxy (Secure deduction)
+          // Native Host: Use Server Proxy with ultra-optimized Synchronous Processing (Blazing Fast + Returns actual Provider Order ID!)
           const response = await axios.post("/api/proxy-provider", {
             orderId,
             userId: user.uid,
@@ -365,6 +345,13 @@ export default function Courses() {
 
           if (response.data?.success) {
             finalProviderOrderId = response.data.providerOrderId || "SENT";
+            
+            // Deduct locally instantly so UI wallet balance is updated immediately
+            const currentBal = Number(profile?.balance || 0);
+            const newBal = Math.max(0, currentBal - totalPrice);
+            if (updateUserProfileLocal) {
+              updateUserProfileLocal({ balance: newBal });
+            }
           } else {
             throw new Error(response.data?.error || "Provider rejected the order.");
           }
@@ -378,33 +365,77 @@ export default function Courses() {
           const newBal = Math.max(0, currentBal - totalPrice);
           await dbClient.updateUserProfile(user.uid, { balance: newBal });
           if (updateUserProfileLocal) updateUserProfileLocal({ balance: newBal });
-          
-          await dbClient.updateDoc("orders", orderId, {
-            status: "Completed",
-            providerOrderId: finalProviderOrderId,
-            updatedAt: new Date().toISOString()
-          });
         }
 
+        // Always update order status to Completed and store the actual provider order ID immediately on success
+        await dbClient.updateDoc("orders", orderId, {
+          status: "Completed",
+          providerOrderId: finalProviderOrderId,
+          updatedAt: new Date().toISOString()
+        });
+
         // 6. Update local cache and show success
-        await refreshUserProfile();
+        refreshUserProfile().catch(() => {});
         setLastOrder({ ...orderData, status: "Completed", providerOrderId: finalProviderOrderId });
         setIsOrderSuccessOpen(true);
         toast.success("Order Placed Successfully!");
         
         setTargetLink("");
         setQuantity(String(selectedCourse.minLimit || 1000));
-        sessionStorage.removeItem(`orders_${user.uid}`);
+        
+        // Highly optimal: Prepend the new order directly into local storage & session storage cache
+        try {
+          const cacheKey = `orders_${user.uid}`;
+          const cachedData = localStorage.getItem(cacheKey) || sessionStorage.getItem(cacheKey);
+          let cachedOrders: any[] = [];
+          if (cachedData) {
+            try {
+              cachedOrders = JSON.parse(cachedData);
+            } catch (e) {}
+          }
+          
+          const newOrderObj = {
+            id: orderId,
+            userId: user.uid,
+            courseId: selectedCourse.id,
+            courseTitle: selectedCourse.title,
+            category: selectedCourse.category || "Other",
+            quantity: Math.floor(Number(savedQuantity)),
+            targetLink: savedTargetLink.trim(),
+            totalPrice: Number(totalPrice),
+            status: "Completed",
+            providerOrderId: finalProviderOrderId,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+          
+          // Deduplicate and prepend
+          cachedOrders = cachedOrders.filter(o => o.id !== orderId);
+          cachedOrders.unshift(newOrderObj);
+          
+          // Cap at 50 to avoid bloated storage
+          cachedOrders = cachedOrders.slice(0, 50);
+          
+          localStorage.setItem(cacheKey, JSON.stringify(cachedOrders));
+          localStorage.setItem(`${cacheKey}_time`, Date.now().toString());
+          sessionStorage.setItem(cacheKey, JSON.stringify(cachedOrders));
+          sessionStorage.setItem(`${cacheKey}_time`, Date.now().toString());
+          console.log("[CACHE-APPEND] Local cache updated with new order. Zero reads required next time!");
+        } catch (cacheErr) {
+          console.warn("Failed to update orders local cache:", cacheErr);
+        }
 
       } catch (err: any) {
         transmissionError = err.response?.data?.error || err.message || "Provider error";
         console.error("Order transmission failed:", transmissionError);
         
-        await dbClient.updateDoc("orders", orderId, {
-          status: "Failed",
-          error: transmissionError,
-          updatedAt: new Date().toISOString()
-        });
+        if (!isNativeHost) {
+          await dbClient.updateDoc("orders", orderId, {
+            status: "Failed",
+            error: transmissionError,
+            updatedAt: new Date().toISOString()
+          });
+        }
         
         toast.error(`Order Failed: ${transmissionError}`);
       }
@@ -1346,6 +1377,14 @@ export default function Courses() {
                   <span className="text-gray-400 font-bold uppercase">Service</span>
                   <span className="font-bold text-gray-700 line-clamp-2 leading-tight">{lastOrder.title}</span>
                 </div>
+                {lastOrder.providerOrderId && (
+                  <div className="flex justify-between text-xs items-center">
+                    <span className="text-gray-400 font-bold uppercase">Order ID</span>
+                    <span className="font-mono font-bold text-gray-900 bg-gray-200/50 px-2 py-0.5 rounded-md text-[11px]">
+                      #{lastOrder.providerOrderId}
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between text-xs">
                   <span className="text-gray-400 font-bold uppercase">Quantity</span>
                   <span className="font-bold text-gray-700">{lastOrder.quantity}</span>

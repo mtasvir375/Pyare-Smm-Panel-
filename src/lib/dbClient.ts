@@ -27,6 +27,7 @@ export interface UserProfile {
   role: 'student' | 'instructor' | 'admin' | 'payment_admin';
   balance: number;
   createdAt: any;
+  isFallback?: boolean;
 }
 
 export const dbClient = {
@@ -37,19 +38,24 @@ export const dbClient = {
       const snap = await getDoc(docRef);
       if (snap.exists()) return { id: snap.id, ...snap.data() };
       
-      // Fallback to server-side proxy
-      const res = await axios.post('/api/db/get', { collection: table, id });
-      if (res.data.success) return { id, ...res.data.data };
+      // If we got here, direct read succeeded and document definitely does NOT exist in Firestore.
+      // There is no reason to fall back to the proxy because direct read successfully confirmed non-existence.
       return null;
-    } catch (err) {
+    } catch (err: any) {
       console.warn(`[DB-CLIENT] Direct getDoc failed for ${table}/${id}, trying proxy...`);
       try {
         const res = await axios.post('/api/db/get', { collection: table, id });
-        if (res.data.success) return { id, ...res.data.data };
-      } catch (proxyErr) {
-        console.error(`[DB-CLIENT] Proxy getDoc also failed for ${table}/${id}`);
+        if (res.data && res.data.success) {
+          return { id, ...res.data.data };
+        }
+        if (res.data && res.data.error === "Document not found") {
+          return null;
+        }
+        throw new Error(res.data?.error || "Proxy getDoc returned unsuccessful status");
+      } catch (proxyErr: any) {
+        console.error(`[DB-CLIENT] Proxy getDoc also failed for ${table}/${id}:`, proxyErr.message);
+        throw new Error(`Failed to fetch document ${table}/${id} (Direct: ${err.message}, Proxy: ${proxyErr.message})`);
       }
-      return null;
     }
   },
 
