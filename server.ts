@@ -82,20 +82,33 @@ async function startServer() {
     }
   };
 
-  const getAccessToken = async () => {
+  let systemAccessToken = "";
+  let tokenExpiryTime = 0;
+
+  const getValidSystemAccessToken = async () => {
+    const now = Date.now();
+    // If we have a cached token and it's valid for at least another 5 minutes, return it
+    if (systemAccessToken && now < tokenExpiryTime - 5 * 60 * 1000) {
+      return systemAccessToken;
+    }
+
     try {
+      console.log("[TOKEN] Refreshing system access token from metadata server...");
       const res = await axios.get(
         "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
-        { headers: { "Metadata-Flavor": "Google" }, timeout: 2000 }
+        { headers: { "Metadata-Flavor": "Google" }, timeout: 2500 }
       );
       if (res.data?.access_token) {
-        return res.data.access_token;
+        systemAccessToken = res.data.access_token;
+        const expiresIn = res.data.expires_in || 3600; // default to 1 hour
+        tokenExpiryTime = now + expiresIn * 1000;
+        console.log(`[TOKEN] Successfully refreshed system access token. Expires in ${expiresIn}s.`);
+        return systemAccessToken;
       }
-      return null;
     } catch (err: any) {
-      console.warn("[TOKEN-ERR] Failed to get metadata token:", err.message);
-      return null;
+      console.warn("[TOKEN-ERR] Failed to refresh metadata token dynamically:", err.message);
     }
+    return systemAccessToken;
   };
 
   // Try to detect environment identity
@@ -106,15 +119,16 @@ async function startServer() {
     }
   });
 
-  let systemAccessToken = "";
-  getAccessToken().then(async (token) => {
+  // Perform initial fetch and keep systemAccessToken updated
+  const initializeSystemToken = async () => {
+    const token = await getValidSystemAccessToken();
     if (token) {
-      console.log("[STARTUP] Detected system access token.");
-      systemAccessToken = token;
+      console.log("[STARTUP] Initialized system access token successfully.");
     }
     // Seed initial orders into memory after we've checked/retrieved the token
     await seedMemoryOrders();
-  });
+  };
+  initializeSystemToken();
   
   app.use(express.json({ limit: "50mb" }));
   
@@ -150,6 +164,59 @@ async function startServer() {
     orders: new Map<string, any>(),
     latestOrders: [] as any[] // Globally tracked latest orders in memory
   };
+
+  const cacheFilePath = path.join(process.cwd(), "persistent_cache.json");
+
+  // Load persistent cache from disk
+  const loadPersistentCache = () => {
+    try {
+      if (fs.existsSync(cacheFilePath)) {
+        const fileContent = fs.readFileSync(cacheFilePath, "utf-8");
+        const parsed = JSON.parse(fileContent);
+        
+        if (parsed.settings) {
+          serverCache.settings = parsed.settings;
+          console.log("[PERSISTENT-CACHE] Loaded settings from disk.");
+        }
+        
+        if (parsed.providers && Array.isArray(parsed.providers)) {
+          serverCache.providers.clear();
+          parsed.providers.forEach(([id, cacheObj]: [string, any]) => {
+            serverCache.providers.set(id, cacheObj);
+          });
+          console.log(`[PERSISTENT-CACHE] Loaded ${serverCache.providers.size} providers from disk.`);
+        }
+
+        if (parsed.courses && Array.isArray(parsed.courses)) {
+          serverCache.courses.clear();
+          parsed.courses.forEach(([id, cacheObj]: [string, any]) => {
+            serverCache.courses.set(id, cacheObj);
+          });
+          console.log(`[PERSISTENT-CACHE] Loaded ${serverCache.courses.size} courses from disk.`);
+        }
+      }
+    } catch (err: any) {
+      console.error("[PERSISTENT-CACHE-ERR] Failed to load persistent cache:", err.message);
+    }
+  };
+
+  // Save persistent cache to disk
+  const savePersistentCache = () => {
+    try {
+      const dataToSave = {
+        settings: serverCache.settings,
+        providers: Array.from(serverCache.providers.entries()),
+        courses: Array.from(serverCache.courses.entries())
+      };
+      fs.writeFileSync(cacheFilePath, JSON.stringify(dataToSave, null, 2), "utf-8");
+      console.log("[PERSISTENT-CACHE] Saved settings and providers cache to disk.");
+    } catch (err: any) {
+      console.error("[PERSISTENT-CACHE-ERR] Failed to save persistent cache:", err.message);
+    }
+  };
+
+  // Run the disk cache loader right away
+  loadPersistentCache();
 
   // Keep track of which users have had their orders synced from DB to memory (prevents double reading)
   const checkedUserOrders = new Set<string>();
@@ -281,6 +348,7 @@ async function startServer() {
   }
 
   let useRestFallback = false; // Try Admin SDK first
+  let adminSdkSucceeded = false;
 
   // Helper to wrap REST fields
   function wrapRestFields(obj: any): any {
@@ -365,7 +433,7 @@ async function startServer() {
     const targetProject = getTargetProject();
     try {
       const headers: any = {};
-      const authToken = token || systemAccessToken;
+      const authToken = token || (await getValidSystemAccessToken());
       if (authToken) {
         headers["Authorization"] = authToken.startsWith("Bearer ") ? authToken : `Bearer ${authToken}`;
       }
@@ -400,7 +468,7 @@ async function startServer() {
     const targetProject = getTargetProject();
     try {
       const headers: any = {};
-      const authToken = token || systemAccessToken;
+      const authToken = token || (await getValidSystemAccessToken());
       if (authToken) {
         headers["Authorization"] = authToken.startsWith("Bearer ") ? authToken : `Bearer ${authToken}`;
       }
@@ -437,7 +505,7 @@ async function startServer() {
     const targetProject = getTargetProject();
     try {
       const headers: any = {};
-      const authToken = token || systemAccessToken;
+      const authToken = token || (await getValidSystemAccessToken());
       if (authToken) {
         headers["Authorization"] = authToken.startsWith("Bearer ") ? authToken : `Bearer ${authToken}`;
       }
@@ -472,7 +540,7 @@ async function startServer() {
     const targetProject = getTargetProject();
     try {
       const headers: any = {};
-      const authToken = token || systemAccessToken;
+      const authToken = token || (await getValidSystemAccessToken());
       if (authToken) {
         headers["Authorization"] = authToken.startsWith("Bearer ") ? authToken : `Bearer ${authToken}`;
       }
@@ -512,7 +580,7 @@ async function startServer() {
     try {
       const targetProject = getTargetProject();
       const headers: any = {};
-      const authToken = token || systemAccessToken;
+      const authToken = token || (await getValidSystemAccessToken());
       if (authToken) {
         headers["Authorization"] = authToken.startsWith("Bearer ") ? authToken : `Bearer ${authToken}`;
       }
@@ -600,6 +668,8 @@ async function startServer() {
     console.log("[STARTUP] Testing Firebase Admin SDK permissions...");
     await fdb.collection("settings").doc("payment").get();
     console.log("[STARTUP] Firebase Admin SDK permissions checked successfully!");
+    adminSdkSucceeded = true;
+    useRestFallback = false;
   } catch (err: any) {
     if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
       console.warn(`[STARTUP] Firebase Admin SDK is unauthorized (PERMISSION_DENIED).`);
@@ -610,8 +680,42 @@ async function startServer() {
     }
   }
 
+  const syncProvidersToSettingsInternal = async () => {
+    try {
+      console.log(`[SYNC-PROVIDERS-STARTUP] Syncing providers to settings/providers via Admin SDK...`);
+      const results: any[] = [];
+      const snap = await fdb.collection("providers").get();
+      snap.forEach(doc => {
+        results.push({ id: doc.id, ...doc.data() });
+      });
+      
+      console.log(`[SYNC-PROVIDERS-STARTUP] Found ${results.length} providers from Firestore.`);
+      
+      const providersMap: any = {};
+      results.forEach(p => {
+        if (p.id) {
+          providersMap[p.id] = {
+            id: p.id,
+            name: p.name || p.id,
+            apiUrl: p.apiUrl || p.api_url || "",
+            apiKey: p.apiKey || p.api_key || ""
+          };
+        }
+      });
+
+      await fdb.collection("settings").doc("providers").set(providersMap, { merge: true });
+      console.log(`[SYNC-PROVIDERS-STARTUP] ✅ Successfully wrote settings/providers backup document.`);
+    } catch (err: any) {
+      console.error(`[SYNC-PROVIDERS-STARTUP-ERROR] Failed to sync on startup:`, err.message);
+    }
+  };
+
+  if (adminSdkSucceeded) {
+    syncProvidersToSettingsInternal().catch(console.error);
+  }
+
   // Firebase-Firestore Helpers that replace Supabase ones
-  const getDocSafe = async (collect: string, id: string, token?: string) => {
+  const getDocSafe = async (collect: string, id: string, token?: string, forceFresh?: boolean) => {
     const now = Date.now();
     
     // 10 minutes in-memory caching to optimize and protect Firestore read quota
@@ -619,24 +723,42 @@ async function startServer() {
     // Shorter cache for dynamic data like users and orders to ensure balance/status updates aren't stale
     const DYNAMIC_CACHE_TTL = 30 * 1000; // 30 seconds
 
-    // Cache lookup for common static/global configurations (always safe to cache regardless of user auth tokens)
-    if (collect === "settings" && id === "payment" && serverCache.settings && now - serverCache.settings.time < CACHE_TTL) {
-      return { exists: true, data: () => serverCache.settings.data };
-    }
-    if (collect === "courses" && id && serverCache.courses && serverCache.courses.has(id)) {
-      const cached = serverCache.courses.get(id);
-      if (now - cached.time < CACHE_TTL) {
-        return { exists: true, data: () => cached.data };
+    // Bypassing Firestore read completely for SMM providers, Global settings, and services if called internally (no token) and already cached
+    if (!token && !forceFresh) {
+      if (collect === "settings" && id === "payment" && serverCache.settings) {
+        console.log(`[GET-SAFE-INTERNAL] Serving settings/payment from persistent cache (no token).`);
+        return { exists: true, data: () => serverCache.settings.data };
       }
-    }
-    if (collect === "providers" && id && serverCache.providers && serverCache.providers.has(id)) {
-      const cached = serverCache.providers.get(id);
-      if (now - cached.time < CACHE_TTL) {
-        return { exists: true, data: () => cached.data };
+      if (collect === "providers" && id && serverCache.providers.has(id)) {
+        console.log(`[GET-SAFE-INTERNAL] Serving providers/${id} from persistent cache (no token).`);
+        return { exists: true, data: () => serverCache.providers.get(id).data };
+      }
+      if (collect === "courses" && id && serverCache.courses.has(id)) {
+        console.log(`[GET-SAFE-INTERNAL] Serving courses/${id} from persistent cache (no token).`);
+        return { exists: true, data: () => serverCache.courses.get(id).data };
       }
     }
 
-    if (!token) { // Only use cache for other dynamic data when unauthenticated
+    // Cache lookup for common static/global configurations (always safe to cache regardless of user auth tokens)
+    if (!forceFresh) {
+      if (collect === "settings" && id === "payment" && serverCache.settings && now - serverCache.settings.time < CACHE_TTL) {
+        return { exists: true, data: () => serverCache.settings.data };
+      }
+      if (collect === "courses" && id && serverCache.courses && serverCache.courses.has(id)) {
+        const cached = serverCache.courses.get(id);
+        if (now - cached.time < CACHE_TTL) {
+          return { exists: true, data: () => cached.data };
+        }
+      }
+      if (collect === "providers" && id && serverCache.providers && serverCache.providers.has(id)) {
+        const cached = serverCache.providers.get(id);
+        if (now - cached.time < CACHE_TTL) {
+          return { exists: true, data: () => cached.data };
+        }
+      }
+    }
+
+    if (!token && !forceFresh) { // Only use cache for other dynamic data when unauthenticated
       if (collect === "users" && id && serverCache.users && serverCache.users.has(id)) {
         const cached = serverCache.users.get(id);
         if (now - cached.time < DYNAMIC_CACHE_TTL) {
@@ -647,7 +769,9 @@ async function startServer() {
 
     let result = { exists: false, data: () => null as any };
 
-    if (!useRestFallback) {
+    const isCoreColl = collect === "providers" || collect === "settings" || collect === "courses" || collect === "services";
+
+    if (!useRestFallback || (adminSdkSucceeded && isCoreColl)) {
       try {
         const snap = await fdb.collection(collect).doc(id).get();
         if (snap.exists) {
@@ -657,14 +781,69 @@ async function startServer() {
       } catch (err: any) {
         console.warn(`[FIREBASE-GET] Failed for ${collect}/${id}: ${err.message}`);
         if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
-          console.warn("[FIREBASE] Permission denied. Engaging REST Fallback.");
-          useRestFallback = true;
+          if (!adminSdkSucceeded) {
+            console.warn("[FIREBASE] Permission denied. Engaging REST Fallback.");
+            useRestFallback = true;
+          }
         }
       }
     }
 
-    if (useRestFallback || !result.exists) {
-      result = await getDocREST(collect, id, token);
+    if ((useRestFallback && !(adminSdkSucceeded && isCoreColl)) || !result.exists) {
+      try {
+        result = await getDocREST(collect, id, token);
+      } catch (restErr: any) {
+        console.warn(`[FIREBASE-REST-GET] Failed for ${collect}/${id}: ${restErr.message}`);
+      }
+    }
+
+    // --- SECONDARY FALLBACK: IF FETCH FAILED BUT WE HAVE ANY CACHED COPY (EVEN IF EXPIRED) ---
+    if (!result.exists) {
+      if (collect === "settings" && id === "payment" && serverCache.settings) {
+        console.log(`[GET-SAFE-FALLBACK] Live fetch failed for settings/payment. Falling back to cached copy and updating timestamp.`);
+        serverCache.settings.time = now;
+        savePersistentCache();
+        return { exists: true, data: () => serverCache.settings.data };
+      }
+      if (collect === "providers" && id && serverCache.providers.has(id)) {
+        console.log(`[GET-SAFE-FALLBACK] Live fetch failed for providers/${id}. Falling back to cached copy and updating timestamp.`);
+        const cached = serverCache.providers.get(id);
+        cached.time = now;
+        savePersistentCache();
+        return { exists: true, data: () => cached.data };
+      }
+      if (collect === "courses" && id && serverCache.courses.has(id)) {
+        console.log(`[GET-SAFE-FALLBACK] Live fetch failed for courses/${id}. Falling back to cached copy and updating timestamp.`);
+        const cached = serverCache.courses.get(id);
+        cached.time = now;
+        savePersistentCache();
+        return { exists: true, data: () => cached.data };
+      }
+
+      // --- THIRD LEVEL FALLBACK: RESOLVE FROM PUBLIC BACKUP ON FIRESTORE ---
+      if (collect === "providers" && id) {
+        console.log(`[GET-SAFE-FALLBACK] Live fetch failed for providers/${id}. Attempting to resolve from public backup (settings/providers)...`);
+        try {
+          const backupRes = await getDocREST("settings", "providers", token);
+          if (backupRes && backupRes.exists) {
+            const backupData = backupRes.data() || {};
+            const providerData = backupData[id];
+            if (providerData) {
+              console.log(`[GET-SAFE-FALLBACK] Successfully resolved providers/${id} from public backup!`);
+              // Cache it so we have it
+              serverCache.providers.set(id, { data: providerData, time: now });
+              savePersistentCache();
+              return { exists: true, data: () => providerData };
+            } else {
+              console.warn(`[GET-SAFE-FALLBACK] Provider ${id} not found in public settings/providers backup.`);
+            }
+          } else {
+            console.warn(`[GET-SAFE-FALLBACK] Public settings/providers backup document does not exist.`);
+          }
+        } catch (backupErr: any) {
+          console.warn(`[GET-SAFE-FALLBACK] Failed to resolve from settings/providers backup:`, backupErr.message);
+        }
+      }
     }
 
     // Cache the successful read result
@@ -672,10 +851,13 @@ async function startServer() {
       const data = result.data();
       if (collect === "settings" && id === "payment") {
         serverCache.settings = { data, time: now };
+        savePersistentCache();
       } else if (collect === "courses" && id) {
         serverCache.courses.set(id, { data, time: now });
+        savePersistentCache();
       } else if (collect === "providers" && id) {
         serverCache.providers.set(id, { data, time: now });
+        savePersistentCache();
       } else if (collect === "users" && id && !token) { // Only cache dynamic user profiles when loaded without token to prevent stale balance
         serverCache.users.set(id, { data, time: now });
       } else if (collect === "orders" && id && !token) {
@@ -686,28 +868,88 @@ async function startServer() {
     return result;
   };
 
+  const syncProvidersToSettings = async (token?: string) => {
+    try {
+      console.log(`[SYNC-PROVIDERS] Syncing providers to settings/providers...`);
+      const results: any[] = [];
+      const targetProject = getTargetProject();
+      const headers: any = {};
+      const authToken = token || (await getValidSystemAccessToken());
+      if (authToken) {
+        headers["Authorization"] = authToken.startsWith("Bearer ") ? authToken : `Bearer ${authToken}`;
+      }
+      
+      const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/providers?key=${apiKey}&pageSize=100`;
+      const resRest = await axios.get(url, { headers, timeout: 10000 });
+      if (resRest.data && resRest.data.documents) {
+        resRest.data.documents.forEach((doc: any) => {
+          results.push({ id: doc.name.split("/").pop(), ...unwrapRestFields(doc.fields || {}) });
+        });
+      }
+
+      console.log(`[SYNC-PROVIDERS] Found ${results.length} providers from Firestore.`);
+      
+      // Build a map of provider ID to provider details
+      const providersMap: any = {};
+      results.forEach(p => {
+        if (p.id) {
+          providersMap[p.id] = {
+            id: p.id,
+            name: p.name || p.id,
+            apiUrl: p.apiUrl || p.api_url || "",
+            apiKey: p.apiKey || p.api_key || ""
+          };
+        }
+      });
+
+      // Save the map to settings/providers document
+      const success = await setDocSafe("settings", "providers", providersMap, token);
+      if (success) {
+        console.log(`[SYNC-PROVIDERS] ✅ Successfully synced and wrote settings/providers document.`);
+      } else {
+        console.warn(`[SYNC-PROVIDERS] ⚠️ Failed to write settings/providers document.`);
+      }
+    } catch (syncErr: any) {
+      console.error(`[SYNC-PROVIDERS-ERROR] Failed to sync providers to settings/providers:`, syncErr.response?.data || syncErr.message);
+    }
+  };
+
   // Aggressive backend-side cache to protect database read limits
   let serverCachedCourses: any[] | null = null;
   let serverCachedCoursesTime = 0;
   let serverCachedSettings: any = null;
   let serverCachedSettingsTime = 0;
 
-  const invalidateCachesForCollection = (col: string) => {
+  const invalidateCachesForCollection = (col: string, id?: string) => {
     if (col === "courses" || col === "services") {
       serverCachedCourses = null;
       serverCachedCoursesTime = 0;
-      serverCache.courses.clear();
-      console.log(`[CACHE-INVALIDATE] Invalidated server courses/services cache for collection change on "${col}"`);
+      if (id) {
+        serverCache.courses.delete(id);
+      } else {
+        serverCache.courses.clear();
+      }
+      console.log(`[CACHE-INVALIDATE] Invalidated courses cache (id: ${id || 'all'})`);
+      savePersistentCache();
     } else if (col === "settings") {
       serverCachedSettings = null;
       serverCachedSettingsTime = 0;
       serverCache.settings = null;
-      console.log(`[CACHE-INVALIDATE] Invalidated server settings cache for collection change on "${col}"`);
+      console.log(`[CACHE-INVALIDATE] Invalidated settings cache`);
+      savePersistentCache();
+    } else if (col === "providers") {
+      if (id) {
+        serverCache.providers.delete(id);
+      } else {
+        serverCache.providers.clear();
+      }
+      console.log(`[CACHE-INVALIDATE] Invalidated providers cache (id: ${id || 'all'})`);
+      savePersistentCache();
     }
   };
 
   const updateDocSafe = async (col: string, id: string, data: any, token?: string) => {
-    invalidateCachesForCollection(col);
+    invalidateCachesForCollection(col, id);
     if (col === "orders") {
       console.log(`[MEMORY-UPDATE] Syncing memory cache for order ${id}.`);
       const cached = serverCache.orders.get(id);
@@ -719,15 +961,18 @@ async function startServer() {
         serverCache.latestOrders[idx] = { ...serverCache.latestOrders[idx], ...data };
       }
     }
-    if (!useRestFallback) {
+    const isCore = col === "providers" || col === "settings" || col === "courses" || col === "services";
+    if (!useRestFallback || (adminSdkSucceeded && isCore)) {
       try {
         await fdb.collection(col).doc(id).update({ ...data, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
         return true;
       } catch (err: any) {
         console.warn(`[FIREBASE-UPDATE] Error updating ${col}/${id}:`, err.message);
         if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
-          console.warn("[FIREBASE] Permission denied. Engaging REST Fallback.");
-          useRestFallback = true;
+          if (!adminSdkSucceeded) {
+            console.warn("[FIREBASE] Permission denied. Engaging REST Fallback.");
+            useRestFallback = true;
+          }
         } else {
           return false;
         }
@@ -738,20 +983,23 @@ async function startServer() {
   };
 
   const setDocSafe = async (col: string, id: string, data: any, token?: string) => {
-    invalidateCachesForCollection(col);
+    invalidateCachesForCollection(col, id);
     if (col === "orders") {
       console.log(`[MEMORY-SET] Syncing memory cache for order ${id}.`);
       addOrderToMemory(id, data);
     }
-    if (!useRestFallback) {
+    const isCore = col === "providers" || col === "settings" || col === "courses" || col === "services";
+    if (!useRestFallback || (adminSdkSucceeded && isCore)) {
       try {
         await fdb.collection(col).doc(id).set({ ...data, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
         return true;
       } catch (err: any) {
         console.warn(`[FIREBASE-SET] Error upserting ${col}/${id}:`, err.message);
         if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
-          console.warn("[FIREBASE] Permission denied. Engaging REST Fallback.");
-          useRestFallback = true;
+          if (!adminSdkSucceeded) {
+            console.warn("[FIREBASE] Permission denied. Engaging REST Fallback.");
+            useRestFallback = true;
+          }
         } else {
           return false;
         }
@@ -808,7 +1056,7 @@ async function startServer() {
   };
 
   const deleteDocSafe = async (col: string, id: string) => {
-    invalidateCachesForCollection(col);
+    invalidateCachesForCollection(col, id);
     if (!useRestFallback) {
       try {
         await fdb.collection(col).doc(id).delete();
@@ -1168,7 +1416,9 @@ async function startServer() {
   app.post("/api/db/get", async (req, res) => {
     const { collection, id } = req.body;
     if (!collection || !id) return res.status(400).json({ error: "Missing collection or id" });
-    const snap = await getDocSafe(collection, id);
+    // Bypassing cache for settings and providers to ensure the Admin UI always gets real-time, accurate API details
+    const forceFresh = collection === "settings" || collection === "providers";
+    const snap = await getDocSafe(collection, id, req.headers.authorization as string, forceFresh);
     if (snap.exists) {
       res.json({ success: true, data: snap.data() });
     } else {
@@ -1182,16 +1432,17 @@ async function startServer() {
     
     try {
       const results: any[] = [];
-      if (!useRestFallback) {
+      const isCore = collect === "providers" || collect === "settings" || collect === "courses" || collect === "services";
+      if (!useRestFallback || (adminSdkSucceeded && isCore)) {
         try {
           const snap = await fdb.collection(collect).limit(pageSize).get();
           snap.forEach(doc => results.push({ id: doc.id, ...doc.data() }));
         } catch (err) {
-          useRestFallback = true;
+          if (!adminSdkSucceeded) useRestFallback = true;
         }
       }
       
-      if (useRestFallback || results.length === 0) {
+      if ((useRestFallback && !(adminSdkSucceeded && isCore)) || results.length === 0) {
         const targetProject = getTargetProject();
         const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/${collect}?key=${apiKey}&pageSize=${pageSize}`;
         const resRest = await axios.get(url);
@@ -1202,6 +1453,27 @@ async function startServer() {
         }
       }
       res.json({ success: true, data: results });
+
+      const nowTime = Date.now();
+      if (collect === "providers" && results.length > 0) {
+        results.forEach(p => {
+          if (p.id) {
+            serverCache.providers.set(p.id, { data: p, time: nowTime });
+          }
+        });
+        savePersistentCache();
+      } else if (collect === "courses" && results.length > 0) {
+        results.forEach(c => {
+          if (c.id) {
+            serverCache.courses.set(c.id, { data: c, time: nowTime });
+          }
+        });
+        savePersistentCache();
+      }
+
+      if (collect === "providers" && req.headers.authorization) {
+        syncProvidersToSettings(req.headers.authorization as string).catch(console.error);
+      }
     } catch (err: any) {
       console.error(`[REST-LIST-ERR] Failed to list ${collect}:`, err.response?.data || err.message);
       res.status(500).json({ success: false, error: err.message });
@@ -1228,6 +1500,9 @@ async function startServer() {
     try {
       const success = await setDocSafe(collection, id, data, req.headers.authorization as string);
       res.json({ success });
+      if (collection === "providers" && req.headers.authorization) {
+        syncProvidersToSettings(req.headers.authorization as string).catch(console.error);
+      }
     } catch (err: any) {
       console.error(`[DB-SET-ERR] Failed to set ${collection}/${id}:`, err.message);
       res.status(500).json({ error: err.message });
@@ -1241,6 +1516,9 @@ async function startServer() {
     try {
       const success = await updateDocSafe(collection, id, data, req.headers.authorization as string);
       res.json({ success });
+      if (collection === "providers" && req.headers.authorization) {
+        syncProvidersToSettings(req.headers.authorization as string).catch(console.error);
+      }
     } catch (err: any) {
       console.error(`[DB-UPDATE-ERR] Failed to update ${collection}/${id}:`, err.message);
       res.status(500).json({ error: err.message });
@@ -2350,7 +2628,7 @@ async function startServer() {
       let [userSnap, cS, sS] = await Promise.all([
         getDocSafe("users", userId, token),
         getDocSafe("courses", serviceId, token),
-        getDocSafe("settings", "payment")
+        getDocSafe("settings", "payment", token, true) // Force fresh load for real-time SMM credentials
       ]);
 
       // Fallback for service collection naming
@@ -2461,9 +2739,21 @@ async function startServer() {
       let providerName = "Global Settings";
 
       if (c.providerId && c.providerId !== "global") {
-        const pS = await getDocSafe("providers", c.providerId);
+        // Force fresh load for custom SMM providers as well to ensure latest API URL & key
+        const pS = await getDocSafe("providers", c.providerId, token, true);
+        let pData = null;
         if (pS && pS.exists) {
-          const pData = pS.data() || {};
+          pData = pS.data() || {};
+        } else {
+          // Direct local cache/disk fallback to bypass Firestore 403 Permission Denied on non-admin client tokens
+          const cachedProvider = serverCache.providers.get(c.providerId);
+          if (cachedProvider && cachedProvider.data) {
+            console.log(`[TRANSMIT] Live provider fetch failed, but successfully resolved from local cache for: ${c.providerId}`);
+            pData = cachedProvider.data;
+          }
+        }
+
+        if (pData) {
           providerName = pData.name || c.providerId;
           const resolvedUrl = (pData.api_url || pData.apiUrl || "").trim();
           const resolvedKey = (pData.api_key || pData.apiKey || "").trim();
@@ -2474,7 +2764,7 @@ async function startServer() {
           console.log(`[TRANSMIT] Resolved Provider: ${providerName} (URL: ${pUrl})`);
           await logToDb("PROVIDER_RESOLVED", { providerName, pUrl, orderId });
         } else {
-          console.warn(`[TRANSMIT] Custom provider ${c.providerId} not found. Falling back to global settings.`);
+          console.warn(`[TRANSMIT] Custom provider ${c.providerId} not found in Firestore or local cache. Falling back to global settings.`);
           await logToDb("PROVIDER_MISSING", { providerId: c.providerId, orderId });
         }
       }
@@ -2482,22 +2772,39 @@ async function startServer() {
       // If key is still missing, try to find the VERY FIRST provider that has a key as a desperate fallback
       if (!pKey) {
         try {
-          const allProvidersSnap = await fdb.collection("providers").limit(5).get();
-          if (!allProvidersSnap.empty) {
-            for (const doc of allProvidersSnap.docs) {
-              const d = doc.data();
+          console.log(`[TRANSMIT] Key is missing. Scanning local memory/disk cache for any provider with a valid API key...`);
+          for (const [id, cacheObj] of serverCache.providers.entries()) {
+            const d = cacheObj.data;
+            if (d) {
               const possibleKey = (d.api_key || d.apiKey || "").trim();
               if (possibleKey) {
                 pKey = possibleKey;
                 pUrl = (d.api_url || d.apiUrl || pUrl).trim();
-                providerName = `Auto-Detected: ${d.name || doc.id}`;
-                console.log(`[TRANSMIT] Fallback: Using provider ${providerName} because main key was missing.`);
+                providerName = d.name || id;
+                console.log(`[TRANSMIT] Desperate Fallback Succeeded: Using provider ${providerName} from memory cache.`);
                 break;
               }
             }
           }
-        } catch (fallbackErr) {
-          console.warn("[TRANSMIT] Desperate fallback search failed.");
+
+          if (!pKey && adminSdkSucceeded) {
+            const allProvidersSnap = await fdb.collection("providers").limit(5).get();
+            if (!allProvidersSnap.empty) {
+              for (const doc of allProvidersSnap.docs) {
+                const d = doc.data();
+                const possibleKey = (d.api_key || d.apiKey || "").trim();
+                if (possibleKey) {
+                  pKey = possibleKey;
+                  pUrl = (d.api_url || d.apiUrl || pUrl).trim();
+                  providerName = d.name || doc.id;
+                  console.log(`[TRANSMIT] Fallback: Using provider ${providerName} because main key was missing.`);
+                  break;
+                }
+              }
+            }
+          }
+        } catch (fallbackErr: any) {
+          console.warn("[TRANSMIT] Desperate fallback search failed:", fallbackErr.message);
         }
       }
 
@@ -3072,7 +3379,8 @@ async function startServer() {
       let pKey = "";
 
       if (providerId) {
-        const pS = await getDocSafe("providers", providerId, req.headers.authorization as string);
+        // Force fresh load to avoid testing against stale cached API credentials
+        const pS = await getDocSafe("providers", providerId, req.headers.authorization as string, true);
         if (pS.exists) {
           const data = pS.data() || {};
           pUrl = data.apiUrl || data.api_url;
@@ -3082,7 +3390,8 @@ async function startServer() {
           return res.status(404).json({ error: `Provider not found (ID: ${providerId}). Please check if the provider exists in Admin -> Providers and refresh the page.` });
         }
       } else {
-        const sS = await getDocSafe("settings", "payment", req.headers.authorization as string);
+        // Force fresh load to avoid testing against stale cached API credentials
+        const sS = await getDocSafe("settings", "payment", req.headers.authorization as string, true);
         const data = sS.data() || {};
         pUrl = data.providerApiUrl || data.apiUrl || data.api_url;
         pKey = data.providerApiKey || data.apiKey || data.api_key;
@@ -3147,7 +3456,8 @@ async function startServer() {
       // Fetch provider info
       let pUrl = "";
       let pKey = "";
-      const sS = await getDocSafe("settings", "payment");
+      // Force fresh load to avoid stale SMM provider credentials during status sync
+      const sS = await getDocSafe("settings", "payment", req.headers.authorization as string, true);
       const sData = sS.data() || {};
       pUrl = sData.providerApiUrl || "";
       pKey = sData.providerApiKey || "";
@@ -3158,11 +3468,23 @@ async function startServer() {
         if (cS.exists) {
           const cData = cS.data();
           if (cData.providerId && cData.providerId !== "global") {
-            const pS = await getDocSafe("providers", cData.providerId);
+            // Force fresh load to avoid stale SMM provider credentials during status sync
+            const pS = await getDocSafe("providers", cData.providerId, req.headers.authorization as string, true);
+            let pData = null;
             if (pS.exists) {
-              const pData = pS.data();
-              pUrl = pData.apiUrl || "";
-              pKey = pData.apiKey || "";
+              pData = pS.data();
+            } else {
+              // Safe fallback to local memory cache to bypass Firestore 403 Permission Denied on non-admin client tokens
+              const cachedProvider = serverCache.providers.get(cData.providerId);
+              if (cachedProvider && cachedProvider.data) {
+                console.log(`[STATUS-SYNC] Live provider fetch failed, but successfully resolved from local cache for: ${cData.providerId}`);
+                pData = cachedProvider.data;
+              }
+            }
+
+            if (pData) {
+              pUrl = pData.apiUrl || pData.api_url || "";
+              pKey = pData.apiKey || pData.api_key || "";
             }
           }
         }

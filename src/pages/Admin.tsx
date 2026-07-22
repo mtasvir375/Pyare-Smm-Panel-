@@ -994,7 +994,8 @@ export default function Admin() {
     setEditTitle(course.title);
     setEditPrice(String(course.pricePerThousand || course.price || ""));
     setEditMinLimit(String(course.minLimit || course.min_limit || ""));
-    setEditProviderId(course.providerId || course.provider_id || "");
+    const pId = course.providerId || course.provider_id || "";
+    setEditProviderId(pId === "global" ? "" : pId);
     setEditServiceId(course.providerServiceId || course.provider_service_id || "");
     setEditCategory(course.category || "Other");
     setEditType(course.serviceType || course.service_type || "likes");
@@ -1376,7 +1377,6 @@ export default function Admin() {
                     onChange={(e) => setNewCourseProviderId(e.target.value)}
                   >
                     <option value="" className="bg-gray-900">Select a provider</option>
-                    <option value="global" className="bg-gray-900">Global Settings</option>
                     {providers.map(p => (
                       <option key={p.id} value={p.id} className="bg-gray-900">{p.name}</option>
                     ))}
@@ -2568,7 +2568,6 @@ export default function Admin() {
                 onChange={(e) => setEditProviderId(e.target.value)}
               >
                 <option value="">Select a provider</option>
-                <option value="global">Global Settings</option>
                 {providers.map(p => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
