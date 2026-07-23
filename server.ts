@@ -74,6 +74,7 @@ export async function startServer() {
   console.log("[STARTUP] Initializing server...");
   
   const getRealProjectId = async () => {
+    if (process.env.VERCEL) return null;
     try {
       const res = await axios.get(
         "http://metadata.google.internal/computeMetadata/v1/project/project-id",
@@ -89,6 +90,7 @@ export async function startServer() {
   let tokenExpiryTime = 0;
 
   const getValidSystemAccessToken = async () => {
+    if (process.env.VERCEL) return "";
     const now = Date.now();
     // If we have a cached token and it's valid for at least another 5 minutes, return it
     if (systemAccessToken && now < tokenExpiryTime - 5 * 60 * 1000) {
@@ -669,6 +671,12 @@ export async function startServer() {
 
   // Startup permissions test to enable automatic Firestore REST fallback before handling requests
   const initAdminSdk = async () => {
+    if (process.env.VERCEL) {
+      console.warn("[STARTUP] Vercel detected. Forcing REST Fallback.");
+      adminSdkSucceeded = false;
+      useRestFallback = true;
+      return;
+    }
     try {
       console.log("[STARTUP] Testing Firebase Admin SDK permissions...");
       await fdb.collection("settings").doc("payment").get();
