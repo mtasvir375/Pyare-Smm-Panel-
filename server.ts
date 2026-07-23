@@ -350,40 +350,57 @@ async function startServer() {
   let useRestFallback = false; // Try Admin SDK first
   let adminSdkSucceeded = false;
 
+  // Helper to wrap REST values (primitives, arrays, and map objects)
+  function wrapRestValue(val: any): any {
+    if (val === undefined || val === null) return null;
+    if (typeof val === "string") return { stringValue: val };
+    if (typeof val === "number") {
+      if (Number.isInteger(val)) return { integerValue: String(val) };
+      return { doubleValue: val };
+    }
+    if (typeof val === "boolean") return { booleanValue: val };
+    if (val instanceof Date) return { timestampValue: val.toISOString() };
+    if (Array.isArray(val)) {
+      const values = val.map(wrapRestValue).filter(v => v !== null);
+      return { arrayValue: { values } };
+    }
+    if (typeof val === "object") {
+      return { mapValue: { fields: wrapRestFields(val) } };
+    }
+    return { stringValue: String(val) };
+  }
+
   // Helper to wrap REST fields
   function wrapRestFields(obj: any): any {
     const fields: any = {};
+    if (!obj || typeof obj !== "object") return fields;
     for (const key in obj) {
       const val = obj[key];
       if (val === undefined || val === null) continue;
-      
-      if (typeof val === "string") {
-        fields[key] = { stringValue: val };
-      } else if (typeof val === "number") {
-        if (Number.isInteger(val)) {
-          fields[key] = { integerValue: String(val) };
-        } else {
-          fields[key] = { doubleValue: val };
-        }
-      } else if (typeof val === "boolean") {
-        fields[key] = { booleanValue: val };
-      } else if (val instanceof Date) {
-        fields[key] = { timestampValue: val.toISOString() };
-      } else if (typeof val === "object") {
-        if (Array.isArray(val)) {
-          const values: any[] = [];
-          for (const item of val) {
-            if (typeof item === "string") values.push({ stringValue: item });
-            else if (typeof item === "number") values.push(Number.isInteger(item) ? { integerValue: String(item) } : { doubleValue: item });
-            else if (typeof item === "boolean") values.push({ booleanValue: item });
-          }
-          fields[key] = { arrayValue: { values } };
-        } else {
-          fields[key] = { mapValue: { fields: wrapRestFields(val) } };
-        }
+      const wrapped = wrapRestValue(val);
+      if (wrapped !== null) {
+        fields[key] = wrapped;
       }
     }
     return fields;
+  }
+
+  // Helper to unwrap REST values
+  function unwrapRestValue(val: any): any {
+    if (!val) return null;
+    if (val.stringValue !== undefined) return val.stringValue;
+    if (val.integerValue !== undefined) return parseInt(val.integerValue, 10);
+    if (val.doubleValue !== undefined) return parseFloat(val.doubleValue);
+    if (val.booleanValue !== undefined) return val.booleanValue;
+    if (val.timestampValue !== undefined) return val.timestampValue;
+    if (val.arrayValue !== undefined) {
+      const vals = val.arrayValue.values || [];
+      return vals.map(unwrapRestValue);
+    }
+    if (val.mapValue !== undefined) {
+      return unwrapRestFields(val.mapValue.fields || {});
+    }
+    return null;
   }
 
   // Helper to unwrap REST fields
@@ -393,23 +410,7 @@ async function startServer() {
     for (const key in fields) {
       const val = fields[key];
       if (!val) continue;
-      if (val.stringValue !== undefined) result[key] = val.stringValue;
-      else if (val.integerValue !== undefined) result[key] = parseInt(val.integerValue, 10);
-      else if (val.doubleValue !== undefined) result[key] = parseFloat(val.doubleValue);
-      else if (val.booleanValue !== undefined) result[key] = val.booleanValue;
-      else if (val.timestampValue !== undefined) result[key] = val.timestampValue;
-      else if (val.arrayValue !== undefined) {
-        const vals = val.arrayValue.values || [];
-        result[key] = vals.map((v: any) => {
-          if (v.stringValue !== undefined) return v.stringValue;
-          if (v.integerValue !== undefined) return parseInt(v.integerValue, 10);
-          if (v.doubleValue !== undefined) return parseFloat(v.doubleValue);
-          if (v.booleanValue !== undefined) return v.booleanValue;
-          return null;
-        });
-      } else if (val.mapValue !== undefined) {
-        result[key] = unwrapRestFields(val.mapValue.fields || {});
-      }
+      result[key] = unwrapRestValue(val);
     }
     return result;
   }
@@ -2739,8 +2740,8 @@ async function startServer() {
       let providerName = "Global Settings";
 
       if (c.providerId && c.providerId !== "global") {
-        // Force fresh load for custom SMM providers as well to ensure latest API URL & key
-        const pS = await getDocSafe("providers", c.providerId, token, true);
+        // Use cached provider details to save Firestore read quota
+        const pS = await getDocSafe("providers", c.providerId, token, false);
         let pData = null;
         if (pS && pS.exists) {
           pData = pS.data() || {};
@@ -2822,7 +2823,10 @@ async function startServer() {
         pUrl = "https://" + pUrl;
       }
 
-      if (!c.providerServiceId || String(c.providerServiceId) === "0") {
+      const isComboService = !!(c.isCombo || currentOrderData?.isCombo || (Array.isArray(c.comboItems) && c.comboItems.length > 0));
+      const comboItemList = c.comboItems || currentOrderData?.comboItems || [];
+
+      if (!isComboService && (!c.providerServiceId || String(c.providerServiceId) === "0")) {
         throw new Error(`Service ID for course "${c.title}" is missing or mapped poorly.`);
       }
 
@@ -2855,6 +2859,95 @@ async function startServer() {
           finalLink = urlObj.toString();
         }
       } catch (err) {}
+
+      // --- MULTI-SERVICE COMBO PACKAGE PROCESSING ---
+      if (isComboService && comboItemList.length > 0) {
+        console.log(`[TRANSMIT-COMBO] Processing Combo Package for Order ${orderId} (${comboItemList.length} components)`);
+        const comboResults: any[] = [];
+        const comboErrors: string[] = [];
+
+        for (let idx = 0; idx < comboItemList.length; idx++) {
+          const item = comboItemList[idx];
+          const itemProviderId = item.providerId || c.providerId || "global";
+          const itemServiceId = String(item.providerServiceId || "0").trim();
+          const itemQty = item.quantity || 1000;
+          const itemName = item.name || `Combo Item #${idx + 1}`;
+
+          console.log(`[TRANSMIT-COMBO] Sub-Order ${idx + 1}/${comboItemList.length}: "${itemName}" (Service ID: ${itemServiceId}, Qty: ${itemQty})`);
+
+          let itemUrl = pUrl;
+          let itemKey = pKey;
+
+          if (itemProviderId && itemProviderId !== "global") {
+            try {
+              const pS = await getDocSafe("providers", itemProviderId, token, false);
+              let pData = pS?.exists ? pS.data() : serverCache.providers.get(itemProviderId)?.data;
+              if (pData) {
+                if (pData.api_url || pData.apiUrl) itemUrl = (pData.api_url || pData.apiUrl).trim();
+                if (pData.api_key || pData.apiKey) itemKey = (pData.api_key || pData.apiKey).trim();
+              }
+            } catch (errP: any) {
+              console.warn(`[TRANSMIT-COMBO] Could not load provider ${itemProviderId}: ${errP.message}`);
+            }
+          }
+
+          if (!itemUrl.startsWith("http")) itemUrl = "https://" + itemUrl;
+
+          try {
+            const params = new URLSearchParams();
+            params.append("key", itemKey);
+            params.append("action", "add");
+            params.append("service", itemServiceId);
+            params.append("link", finalLink);
+            params.append("quantity", String(itemQty));
+
+            const subRes = await axios.post(itemUrl, params, {
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              timeout: 12000
+            });
+
+            if (subRes.data && (subRes.data.order || subRes.data.id)) {
+              const subOrderId = String(subRes.data.order || subRes.data.id);
+              comboResults.push({ name: itemName, providerOrderId: subOrderId, serviceId: itemServiceId });
+              console.log(`[TRANSMIT-COMBO] Sub-Order "${itemName}" Succeeded -> Provider Order ID #${subOrderId}`);
+            } else {
+              const errText = subRes.data?.error || JSON.stringify(subRes.data);
+              comboErrors.push(`${itemName}: ${errText}`);
+              console.warn(`[TRANSMIT-COMBO] Sub-Order "${itemName}" warning: ${errText}`);
+            }
+          } catch (subErr: any) {
+            const errText = subErr.response?.data?.error || subErr.message;
+            comboErrors.push(`${itemName}: ${errText}`);
+            console.error(`[TRANSMIT-COMBO] Sub-Order "${itemName}" failed: ${errText}`);
+          }
+        }
+
+        if (comboResults.length > 0) {
+          const combinedProviderOrderId = comboResults.map(r => `#${r.providerOrderId}`).join(" | ");
+          console.log(`[TRANSMIT-COMBO] Combo order ${orderId} completed successfully: ${combinedProviderOrderId}`);
+          
+          await setDocSafe("orders", orderId, {
+            ...currentOrderData,
+            status: "In progress",
+            providerOrderId: combinedProviderOrderId,
+            comboResults,
+            comboErrors,
+            updatedAt: new Date().toISOString()
+          }, token);
+
+          return { success: true, providerOrderId: combinedProviderOrderId };
+        } else {
+          const failReason = comboErrors.join(" ; ") || "All combo items failed to transmit to providers.";
+          await refundIfDeducted(userId, orderId, orderAmount);
+          await setDocSafe("orders", orderId, {
+            ...currentOrderData,
+            status: "Failed",
+            providerError: failReason,
+            updatedAt: new Date().toISOString()
+          }, token);
+          throw new Error(`Combo Order Failed: ${failReason}`);
+        }
+      }
 
       console.log(`[TRANSMIT] Sending API request to: ${pUrl} (Provider: ${providerName})`);
       await logToDb("PROVIDER_REQUEST", { 
@@ -3171,18 +3264,10 @@ async function startServer() {
   async function logToDb(event: string, data: any) {
     console.log(`[LOG-DB] ${event}:`, data);
     try {
-      // Also log to a local file for easier debugging via view_file
+      // Log to a local file for easier debugging via view_file with ZERO Firestore writes
       const logLine = `[${new Date().toISOString()}] ${event}: ${JSON.stringify(data)}\n`;
       fs.appendFileSync(path.join(process.cwd(), "backend_debug.log"), logLine);
     } catch (fsErr) {}
-    
-    try {
-      await addDocSafe("backend_logs", {
-        event,
-        ...data,
-        timestamp: new Date().toISOString()
-      });
-    } catch (e) {}
   }
 
   // Improved Proxy for Provider with better logging and headers
@@ -3204,7 +3289,9 @@ async function startServer() {
         target_link: bodyTargetLink,
         totalPrice,
         total_price: bodyTotalPrice,
-        orderId: passedOrderId
+        orderId: passedOrderId,
+        isCombo,
+        comboItems
       } = req.body;
 
       const final_user_id = bodyUserId || userId;
@@ -3234,6 +3321,8 @@ async function startServer() {
           quantity: Number(quantity),
           targetLink: final_target_link.trim(),
           totalPrice: Number(final_total_price),
+          isCombo: !!isCombo,
+          comboItems: comboItems || [],
           status: "Pending",
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
@@ -3259,6 +3348,8 @@ async function startServer() {
         quantity: Number(quantity),
         targetLink: final_target_link?.trim() || "",
         totalPrice: Number(final_total_price),
+        isCombo: !!isCombo,
+        comboItems: comboItems || [],
         status: "Pending"
       };
 

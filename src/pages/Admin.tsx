@@ -120,6 +120,11 @@ export default function Admin() {
   const [newCourseIsPackage, setNewCourseIsPackage] = useState(false);
   const [newCoursePackagePrice, setNewCoursePackagePrice] = useState("");
   const [newCoursePackageQuantity, setNewCoursePackageQuantity] = useState("1000");
+  const [newCourseServiceMode, setNewCourseServiceMode] = useState<"single" | "package" | "combo">("single");
+  const [newCourseComboItems, setNewCourseComboItems] = useState<Array<{ name: string; providerId: string; providerServiceId: string; quantity: string }>>([
+    { name: "100,000 Views", providerId: "", providerServiceId: "", quantity: "100000" },
+    { name: "5,000 Likes", providerId: "", providerServiceId: "", quantity: "5000" }
+  ]);
   const [qrUrl, setQrUrl] = useState("");
   const [upiId, setUpiId] = useState("");
   const [merchantName, setMerchantName] = useState("");
@@ -920,7 +925,20 @@ export default function Admin() {
   };
 
   const handleCreateCourse = async () => {
-    if (newCourseIsPackage) {
+    const isCombo = newCourseServiceMode === "combo";
+    const isPkg = newCourseServiceMode === "package" || isCombo;
+
+    if (isCombo) {
+      if (!newCourseTitle || !newCoursePackagePrice || newCourseComboItems.length === 0) {
+        toast.error("Please fill in Combo Title, Package Price, and add components");
+        return;
+      }
+      const validItems = newCourseComboItems.filter(i => i.providerServiceId && i.quantity);
+      if (validItems.length === 0) {
+        toast.error("Please add at least one valid component with Provider Service ID & Quantity");
+        return;
+      }
+    } else if (isPkg) {
       if (!newCourseTitle || !newCoursePackagePrice || !newCoursePackageQuantity || !newCourseProviderServiceId || !newCourseProviderId) {
         toast.error("Please fill in all package fields (including Price, Quantity, Provider and Service ID)");
         return;
@@ -934,33 +952,44 @@ export default function Admin() {
 
     try {
       const pkgPrice = Number(newCoursePackagePrice);
-      const pkgQty = Number(newCoursePackageQuantity);
-      const computedPricePerThousand = newCourseIsPackage 
+      const pkgQty = isCombo ? 1 : Number(newCoursePackageQuantity);
+      const computedPricePerThousand = isPkg 
         ? Number(((pkgPrice / pkgQty) * 1000).toFixed(4)) 
         : Number(newCoursePrice);
+
+      const formattedComboItems = isCombo ? newCourseComboItems.map(i => ({
+        name: i.name || "Combo Component",
+        providerId: i.providerId || newCourseProviderId || "global",
+        providerServiceId: String(i.providerServiceId).trim(),
+        quantity: Number(i.quantity) || 1000
+      })) : [];
 
       await dbClient.addDoc("courses", {
         title: newCourseTitle,
         category: newCourseCategory,
         pricePerThousand: computedPricePerThousand,
-        minLimit: newCourseIsPackage ? pkgQty : Number(newCourseMinLimit),
-        serviceType: newCourseType,
-        providerId: newCourseProviderId,
-        providerServiceId: newCourseProviderServiceId,
+        minLimit: isPkg ? pkgQty : Number(newCourseMinLimit),
+        serviceType: isCombo ? "combo" : newCourseType,
+        providerId: isCombo ? (formattedComboItems[0]?.providerId || newCourseProviderId || "global") : newCourseProviderId,
+        providerServiceId: isCombo ? (formattedComboItems[0]?.providerServiceId || "combo") : newCourseProviderServiceId,
         preventDuplicateLink: preventDuplicateLink,
         iconUrl: newCourseIcon || null,
         status: "published",
-        description: newCourseIsPackage 
+        description: isCombo 
+          ? `Combo Offer: ${formattedComboItems.map(i => `${i.name} (${i.quantity})`).join(" + ")}`
+          : isPkg 
           ? `Offer Price: ₹${newCoursePackagePrice} for ${newCoursePackageQuantity} fixed quantity` 
           : `High quality ${newCourseType} service`,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        isPackage: newCourseIsPackage,
-        packagePrice: newCourseIsPackage ? pkgPrice : null,
-        packageQuantity: newCourseIsPackage ? pkgQty : null,
+        isPackage: isPkg,
+        isCombo: isCombo,
+        comboItems: formattedComboItems,
+        packagePrice: isPkg ? pkgPrice : null,
+        packageQuantity: isPkg ? pkgQty : null,
       });
       import("@/lib/cache").then(mod => mod.clearCache());
-      toast.success("Service added successfully!");
+      toast.success(isCombo ? "Multi-Service Combo Package created!" : "Service added successfully!");
       fetchTabData(activeTab, true);
       setNewCourseTitle("");
       setNewCoursePrice("");
@@ -971,6 +1000,7 @@ export default function Admin() {
       setNewCourseIsPackage(false);
       setNewCoursePackagePrice("");
       setNewCoursePackageQuantity("1000");
+      setNewCourseServiceMode("single");
     } catch (error: any) {
       toast.error(`Error adding course: ${error.message}`);
     }
@@ -988,6 +1018,8 @@ export default function Admin() {
   const [editIsPackage, setEditIsPackage] = useState(false);
   const [editPackagePrice, setEditPackagePrice] = useState("");
   const [editPackageQuantity, setEditPackageQuantity] = useState("");
+  const [editServiceMode, setEditServiceMode] = useState<"single" | "package" | "combo">("single");
+  const [editComboItems, setEditComboItems] = useState<Array<{ name: string; providerId: string; providerServiceId: string; quantity: string }>>([]);
 
   const startEditCourse = (course: any) => {
     setEditingCourse(course);
@@ -1000,32 +1032,61 @@ export default function Admin() {
     setEditCategory(course.category || "Other");
     setEditType(course.serviceType || course.service_type || "likes");
     setEditPreventDuplicate(!!(course.preventDuplicateLink || course.prevent_duplicate_link));
-    setEditIsPackage(!!(course.isPackage || course.is_package));
+    
+    const isCombo = !!(course.isCombo || course.is_combo || course.serviceType === "combo" || course.service_type === "combo");
+    const isPkg = !!(course.isPackage || course.is_package);
+    
+    setEditServiceMode(isCombo ? "combo" : (isPkg ? "package" : "single"));
+    setEditIsPackage(isPkg);
     setEditPackagePrice(course.packagePrice ? String(course.packagePrice) : (course.package_price ? String(course.package_price) : ""));
     setEditPackageQuantity(course.packageQuantity ? String(course.packageQuantity) : (course.package_quantity ? String(course.package_quantity) : ""));
+    
+    if (course.comboItems || course.combo_items) {
+      const items = course.comboItems || course.combo_items;
+      setEditComboItems(items.map((i: any) => ({
+        name: i.name || "",
+        providerId: i.providerId || "",
+        providerServiceId: String(i.providerServiceId || ""),
+        quantity: String(i.quantity || "1000")
+      })));
+    } else {
+      setEditComboItems([]);
+    }
   };
 
   const handleUpdateCourse = async () => {
     if (!editingCourse) return;
     try {
+      const isCombo = editServiceMode === "combo";
+      const isPkg = editServiceMode === "package" || isCombo;
       const pkgPrice = Number(editPackagePrice);
-      const pkgQty = Number(editPackageQuantity);
-      const computedPricePerThousand = editIsPackage 
+      const pkgQty = isCombo ? 1 : Number(editPackageQuantity);
+
+      const computedPricePerThousand = isPkg 
         ? Number(((pkgPrice / pkgQty) * 1000).toFixed(4)) 
         : Number(editPrice);
+
+      const formattedComboItems = isCombo ? editComboItems.map(i => ({
+        name: i.name || "Combo Component",
+        providerId: i.providerId || editProviderId || "global",
+        providerServiceId: String(i.providerServiceId).trim(),
+        quantity: Number(i.quantity) || 1000
+      })) : [];
 
       await dbClient.updateDoc("courses", editingCourse.id, {
         title: editTitle,
         pricePerThousand: computedPricePerThousand,
-        minLimit: editIsPackage ? pkgQty : Number(editMinLimit),
-        providerId: editProviderId,
-        providerServiceId: editServiceId,
+        minLimit: isPkg ? pkgQty : Number(editMinLimit),
+        providerId: isCombo ? (formattedComboItems[0]?.providerId || editProviderId || "global") : editProviderId,
+        providerServiceId: isCombo ? (formattedComboItems[0]?.providerServiceId || "combo") : editServiceId,
         category: editCategory,
-        serviceType: editType,
+        serviceType: isCombo ? "combo" : editType,
         preventDuplicateLink: editPreventDuplicate,
-        isPackage: editIsPackage,
-        packagePrice: editIsPackage ? pkgPrice : null,
-        packageQuantity: editIsPackage ? pkgQty : null,
+        isPackage: isPkg,
+        isCombo: isCombo,
+        comboItems: formattedComboItems,
+        packagePrice: isPkg ? pkgPrice : null,
+        packageQuantity: isPkg ? pkgQty : null,
         updatedAt: new Date().toISOString()
       });
       import("@/lib/cache").then(mod => mod.clearCache());
@@ -1291,21 +1352,136 @@ export default function Admin() {
                     onChange={(e) => setNewCourseTitle(e.target.value)}
                   />
                 </div>
-                <div className="md:col-span-2 pt-1 pb-1 flex items-center gap-3">
-                  <input
-                    type="checkbox"
-                    id="newCourseIsPackage"
-                    checked={newCourseIsPackage}
-                    onChange={(e) => setNewCourseIsPackage(e.target.checked)}
-                    className="w-5 h-5 rounded border-white/20 bg-white/10 text-primary focus:ring-primary focus:ring-offset-gray-900 cursor-pointer"
-                  />
-                  <label htmlFor="newCourseIsPackage" className="text-sm font-medium text-gray-300 cursor-pointer select-none">
-                    Is this a Fixed Quantity SMM Package? (e.g. 100k views for ₹45)
-                    <span className="block text-xs text-gray-500 font-normal mt-0.5">Check this to offer a fixed quantity at a set offer price instead of calculation per 1000.</span>
-                  </label>
+                <div className="md:col-span-2 space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Service Mode</label>
+                  <div className="grid grid-cols-3 gap-2 p-1 bg-white/5 rounded-xl border border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => { setNewCourseServiceMode("single"); setNewCourseIsPackage(false); }}
+                      className={`py-2 text-xs font-semibold rounded-lg transition-all ${newCourseServiceMode === "single" ? "bg-primary text-white shadow-lg" : "text-gray-400 hover:text-white"}`}
+                    >
+                      Normal Service
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setNewCourseServiceMode("package"); setNewCourseIsPackage(true); }}
+                      className={`py-2 text-xs font-semibold rounded-lg transition-all ${newCourseServiceMode === "package" ? "bg-primary text-white shadow-lg" : "text-gray-400 hover:text-white"}`}
+                    >
+                      Single Package
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setNewCourseServiceMode("combo"); setNewCourseIsPackage(true); }}
+                      className={`py-2 text-xs font-semibold rounded-lg transition-all ${newCourseServiceMode === "combo" ? "bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg" : "text-gray-400 hover:text-white"}`}
+                    >
+                      🔥 Multi Combo
+                    </button>
+                  </div>
                 </div>
 
-                {newCourseIsPackage ? (
+                {newCourseServiceMode === "combo" ? (
+                  <div className="md:col-span-2 space-y-4 p-4 bg-purple-950/20 rounded-2xl border border-purple-500/30">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-bold text-purple-300 flex items-center gap-2">
+                        <span>🔥</span> Multi-Service Combo Builder
+                      </h4>
+                      <span className="text-[10px] text-purple-400 bg-purple-900/50 px-2 py-0.5 rounded-full border border-purple-500/30">
+                        Orders send automatically for each service
+                      </span>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Combo Total Special Price (INR)</label>
+                      <Input 
+                        placeholder="e.g. 99 (Price for the entire combo package)" 
+                        className="bg-white/10 border-white/20 text-white"
+                        type="number"
+                        value={newCoursePackagePrice}
+                        onChange={(e) => setNewCoursePackagePrice(e.target.value)}
+                      />
+                    </div>
+
+                    <div className="space-y-3 pt-2">
+                      <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block">
+                        Combo Components (Services Included in 1 Link Order)
+                      </label>
+
+                      {newCourseComboItems.map((item, idx) => (
+                        <div key={idx} className="p-3 bg-white/5 rounded-xl border border-white/10 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-gray-300">Component #{idx + 1}</span>
+                            {newCourseComboItems.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => setNewCourseComboItems(newCourseComboItems.filter((_, i) => i !== idx))}
+                                className="text-xs text-red-400 hover:text-red-300"
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                            <Input
+                              placeholder="Name e.g. 100k Views"
+                              className="bg-white/10 border-white/20 text-white text-xs"
+                              value={item.name}
+                              onChange={(e) => {
+                                const copy = [...newCourseComboItems];
+                                copy[idx].name = e.target.value;
+                                setNewCourseComboItems(copy);
+                              }}
+                            />
+                            <select
+                              className="w-full h-9 rounded-md bg-gray-900 border border-white/20 text-white px-2 text-xs"
+                              value={item.providerId}
+                              onChange={(e) => {
+                                const copy = [...newCourseComboItems];
+                                copy[idx].providerId = e.target.value;
+                                setNewCourseComboItems(copy);
+                              }}
+                            >
+                              <option value="">Default Provider</option>
+                              {providers.map(p => (
+                                <option key={p.id} value={p.id}>{p.name}</option>
+                              ))}
+                            </select>
+                            <Input
+                              placeholder="Service ID e.g. 1234"
+                              className="bg-white/10 border-white/20 text-white text-xs"
+                              value={item.providerServiceId}
+                              onChange={(e) => {
+                                const copy = [...newCourseComboItems];
+                                copy[idx].providerServiceId = e.target.value;
+                                setNewCourseComboItems(copy);
+                              }}
+                            />
+                            <Input
+                              placeholder="Qty e.g. 100000"
+                              type="number"
+                              className="bg-white/10 border-white/20 text-white text-xs"
+                              value={item.quantity}
+                              onChange={(e) => {
+                                const copy = [...newCourseComboItems];
+                                copy[idx].quantity = e.target.value;
+                                setNewCourseComboItems(copy);
+                              }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setNewCourseComboItems([...newCourseComboItems, { name: "", providerId: "", providerServiceId: "", quantity: "1000" }])}
+                        className="w-full bg-white/5 border-dashed border-white/20 text-xs text-purple-300 hover:bg-white/10"
+                      >
+                        + Add Another Service Component to Combo
+                      </Button>
+                    </div>
+                  </div>
+                ) : newCourseServiceMode === "package" ? (
                   <>
                     <div className="space-y-2">
                       <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Package Special Price (INR)</label>
@@ -1352,45 +1528,50 @@ export default function Admin() {
                     </div>
                   </>
                 )}
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Service Type</label>
-                  <select 
-                    className="w-full h-10 rounded-md bg-white/10 border border-white/20 text-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                    value={newCourseType}
-                    onChange={(e) => {
-                      setNewCourseType(e.target.value);
-                      if (e.target.value === 'followers') setNewCourseMinLimit("100");
-                      else setNewCourseMinLimit("1000");
-                    }}
-                  >
-                    <option value="likes" className="bg-gray-900">Likes</option>
-                    <option value="followers" className="bg-gray-900">Followers</option>
-                    <option value="views" className="bg-gray-900">Views</option>
-                    <option value="other" className="bg-gray-900">Other</option>
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Select Provider</label>
-                  <select 
-                    className="w-full h-10 rounded-md bg-white/10 border border-white/20 text-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                    value={newCourseProviderId}
-                    onChange={(e) => setNewCourseProviderId(e.target.value)}
-                  >
-                    <option value="" className="bg-gray-900">Select a provider</option>
-                    {providers.map(p => (
-                      <option key={p.id} value={p.id} className="bg-gray-900">{p.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Provider Service ID</label>
-                  <Input 
-                    placeholder="e.g. 1234" 
-                    className="bg-white/10 border-white/20 text-white"
-                    value={newCourseProviderServiceId}
-                    onChange={(e) => setNewCourseProviderServiceId(e.target.value)}
-                  />
-                </div>
+
+                {newCourseServiceMode !== "combo" && (
+                  <>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Service Type</label>
+                      <select 
+                        className="w-full h-10 rounded-md bg-white/10 border border-white/20 text-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                        value={newCourseType}
+                        onChange={(e) => {
+                          setNewCourseType(e.target.value);
+                          if (e.target.value === 'followers') setNewCourseMinLimit("100");
+                          else setNewCourseMinLimit("1000");
+                        }}
+                      >
+                        <option value="likes" className="bg-gray-900">Likes</option>
+                        <option value="followers" className="bg-gray-900">Followers</option>
+                        <option value="views" className="bg-gray-900">Views</option>
+                        <option value="other" className="bg-gray-900">Other</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Select Provider</label>
+                      <select 
+                        className="w-full h-10 rounded-md bg-white/10 border border-white/20 text-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                        value={newCourseProviderId}
+                        onChange={(e) => setNewCourseProviderId(e.target.value)}
+                      >
+                        <option value="" className="bg-gray-900">Select a provider</option>
+                        {providers.map(p => (
+                          <option key={p.id} value={p.id} className="bg-gray-900">{p.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Provider Service ID</label>
+                      <Input 
+                        placeholder="e.g. 1234" 
+                        className="bg-white/10 border-white/20 text-white"
+                        value={newCourseProviderServiceId}
+                        onChange={(e) => setNewCourseProviderServiceId(e.target.value)}
+                      />
+                    </div>
+                  </>
+                )}
                 
                 <div className="pt-2 flex items-center gap-3">
                   <input
@@ -2492,21 +2673,136 @@ export default function Admin() {
                 onChange={(e) => setEditTitle(e.target.value)}
               />
             </div>
-            <div className="md:col-span-2 pt-1 pb-1 flex items-center gap-3">
-              <input
-                type="checkbox"
-                id="editIsPackage"
-                checked={editIsPackage}
-                onChange={(e) => setEditIsPackage(e.target.checked)}
-                className="w-5 h-5 rounded border-gray-200 bg-gray-50 text-primary focus:ring-primary focus:ring-offset-white cursor-pointer"
-              />
-              <label htmlFor="editIsPackage" className="text-sm font-medium text-gray-600 cursor-pointer select-none">
-                Is this a Fixed Quantity SMM Package? (e.g. 100k views for ₹45)
-                <span className="block text-xs text-gray-400 font-normal mt-0.5">Check this to offer a fixed quantity at a set offer price instead of calculation per 1000.</span>
-              </label>
+            <div className="md:col-span-2 space-y-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Service Mode</label>
+              <div className="grid grid-cols-3 gap-2 p-1 bg-gray-100 rounded-xl border border-gray-200">
+                <button
+                  type="button"
+                  onClick={() => { setEditServiceMode("single"); setEditIsPackage(false); }}
+                  className={`py-2 text-xs font-semibold rounded-lg transition-all ${editServiceMode === "single" ? "bg-primary text-white shadow" : "text-gray-600 hover:text-gray-900"}`}
+                >
+                  Normal Service
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setEditServiceMode("package"); setEditIsPackage(true); }}
+                  className={`py-2 text-xs font-semibold rounded-lg transition-all ${editServiceMode === "package" ? "bg-primary text-white shadow" : "text-gray-600 hover:text-gray-900"}`}
+                >
+                  Single Package
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setEditServiceMode("combo"); setEditIsPackage(true); }}
+                  className={`py-2 text-xs font-semibold rounded-lg transition-all ${editServiceMode === "combo" ? "bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow" : "text-gray-600 hover:text-gray-900"}`}
+                >
+                  🔥 Multi Combo
+                </button>
+              </div>
             </div>
 
-            {editIsPackage ? (
+            {editServiceMode === "combo" ? (
+              <div className="md:col-span-2 space-y-4 p-4 bg-purple-50 rounded-2xl border border-purple-200">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-bold text-purple-900 flex items-center gap-2">
+                    <span>🔥</span> Multi-Service Combo Builder
+                  </h4>
+                  <span className="text-[10px] text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full border border-purple-200">
+                    Orders send automatically for each service
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500">Combo Total Special Price (INR)</label>
+                  <Input 
+                    placeholder="e.g. 99" 
+                    className="rounded-xl bg-white"
+                    type="number"
+                    value={editPackagePrice}
+                    onChange={(e) => setEditPackagePrice(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-3 pt-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500 block">
+                    Combo Components (Services Included in 1 Link Order)
+                  </label>
+
+                  {editComboItems.map((item, idx) => (
+                    <div key={idx} className="p-3 bg-white rounded-xl border border-gray-200 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-gray-700">Component #{idx + 1}</span>
+                        {editComboItems.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => setEditComboItems(editComboItems.filter((_, i) => i !== idx))}
+                            className="text-xs text-red-500 hover:text-red-700"
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                        <Input
+                          placeholder="Name e.g. 100k Views"
+                          className="text-xs"
+                          value={item.name}
+                          onChange={(e) => {
+                            const copy = [...editComboItems];
+                            copy[idx].name = e.target.value;
+                            setEditComboItems(copy);
+                          }}
+                        />
+                        <select
+                          className="w-full h-9 rounded-md bg-white border border-gray-200 text-xs px-2"
+                          value={item.providerId}
+                          onChange={(e) => {
+                            const copy = [...editComboItems];
+                            copy[idx].providerId = e.target.value;
+                            setEditComboItems(copy);
+                          }}
+                        >
+                          <option value="">Default Provider</option>
+                          {providers.map(p => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))}
+                        </select>
+                        <Input
+                          placeholder="Service ID e.g. 1234"
+                          className="text-xs"
+                          value={item.providerServiceId}
+                          onChange={(e) => {
+                            const copy = [...editComboItems];
+                            copy[idx].providerServiceId = e.target.value;
+                            setEditComboItems(copy);
+                          }}
+                        />
+                        <Input
+                          placeholder="Qty e.g. 100000"
+                          type="number"
+                          className="text-xs"
+                          value={item.quantity}
+                          onChange={(e) => {
+                            const copy = [...editComboItems];
+                            copy[idx].quantity = e.target.value;
+                            setEditComboItems(copy);
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setEditComboItems([...editComboItems, { name: "", providerId: "", providerServiceId: "", quantity: "1000" }])}
+                    className="w-full border-dashed border-purple-300 text-xs text-purple-700 hover:bg-purple-100/50"
+                  >
+                    + Add Another Service Component to Combo
+                  </Button>
+                </div>
+              </div>
+            ) : editServiceMode === "package" ? (
               <>
                 <div className="space-y-2">
                   <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Package Special Price (INR)</label>
@@ -2551,28 +2847,33 @@ export default function Admin() {
                 </div>
               </>
             )}
-            <div className="space-y-2">
-              <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Provider Service ID</label>
-              <Input 
-                placeholder="e.g. 1234" 
-                className="rounded-xl"
-                value={editServiceId}
-                onChange={(e) => setEditServiceId(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Select Provider</label>
-              <select 
-                className="w-full h-10 rounded-md bg-gray-50 border border-gray-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                value={editProviderId}
-                onChange={(e) => setEditProviderId(e.target.value)}
-              >
-                <option value="">Select a provider</option>
-                {providers.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
+
+            {editServiceMode !== "combo" && (
+              <>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Provider Service ID</label>
+                  <Input 
+                    placeholder="e.g. 1234" 
+                    className="rounded-xl"
+                    value={editServiceId}
+                    onChange={(e) => setEditServiceId(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Select Provider</label>
+                  <select 
+                    className="w-full h-10 rounded-md bg-gray-50 border border-gray-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    value={editProviderId}
+                    onChange={(e) => setEditProviderId(e.target.value)}
+                  >
+                    <option value="">Select a provider</option>
+                    {providers.map(p => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
             <div className="md:col-span-2 pt-2 flex items-center gap-3">
               <input
                 type="checkbox"

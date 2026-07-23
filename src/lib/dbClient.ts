@@ -220,14 +220,45 @@ export const dbClient = {
   },
 
   async checkDuplicateOrder(userId: string, courseId: string, link: string): Promise<boolean> {
-    // Check if any order with same link and course was placed in last 25 minutes
-    const twentyFiveMinsAgo = new Date(Date.now() - 25 * 60 * 1000);
-    
-    // Fetch all orders of this user with this target link to avoid complex composite index requirement
+    const twentyFiveMinsAgo = Date.now() - 25 * 60 * 1000;
+    const trimmedLink = link.trim();
+
+    // 1. First check local storage cached orders to save Firestore reads
+    try {
+      const cacheKeys = [`cached_orders_${userId}`, `orders_${userId}`];
+      for (const key of cacheKeys) {
+        const raw = localStorage.getItem(key) || sessionStorage.getItem(key);
+        if (raw) {
+          const orders = JSON.parse(raw);
+          if (Array.isArray(orders)) {
+            const hasDuplicate = orders.some((order: any) => {
+              if (!order) return false;
+              const oLink = (order.targetLink || order.target_link || "").trim();
+              const oCId = order.courseId || order.serviceId;
+              if (oLink !== trimmedLink || oCId !== courseId) return false;
+
+              let createdMs = 0;
+              const ca = order.createdAt || order.created_at;
+              if (ca) {
+                if (typeof ca === "number") createdMs = ca;
+                else if (typeof ca === "string") createdMs = new Date(ca).getTime();
+                else if (ca._seconds) createdMs = ca._seconds * 1000;
+                else if (ca.seconds) createdMs = ca.seconds * 1000;
+              }
+              return createdMs > twentyFiveMinsAgo;
+            });
+            if (hasDuplicate) return true;
+          }
+        }
+      }
+    } catch (e) {}
+
+    // 2. Fallback to query Firestore
+    const twentyFiveMinsAgoDate = new Date(twentyFiveMinsAgo);
     const q = query(
       collection(db, 'orders'),
       where('userId', '==', userId),
-      where('targetLink', '==', link.trim())
+      where('targetLink', '==', trimmedLink)
     );
     
     const snap = await getDocs(q);
@@ -238,7 +269,6 @@ export const dbClient = {
       const cId = data.courseId || data.serviceId;
       if (cId !== courseId) return false;
       
-      // Parse createdAt
       let createdDate: Date | null = null;
       if (data.createdAt) {
         if (typeof data.createdAt === 'string') {
@@ -250,7 +280,7 @@ export const dbClient = {
         }
       }
       
-      if (createdDate && createdDate > twentyFiveMinsAgo) {
+      if (createdDate && createdDate > twentyFiveMinsAgoDate) {
         return true;
       }
       return false;

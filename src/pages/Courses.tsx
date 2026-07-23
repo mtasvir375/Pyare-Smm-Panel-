@@ -247,6 +247,9 @@ export default function Courses() {
       const orderId = "ord_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
 
       // 2. Create the order data object with status "Pending"
+      const isComboService = !!(selectedCourse.isCombo || selectedCourse.is_combo || selectedCourse.serviceType === "combo" || selectedCourse.service_type === "combo");
+      const comboItems = selectedCourse.comboItems || selectedCourse.combo_items || [];
+
       const orderData = {
         userId: user.uid,
         userEmail: user.email || "",
@@ -257,30 +260,69 @@ export default function Courses() {
         quantity: Math.floor(Number(quantity)),
         targetLink: targetLink.trim(),
         totalPrice: Number(totalPrice),
+        isCombo: isComboService,
+        comboItems: comboItems,
         status: "Pending",
         providerOrderId: "", 
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
 
-      // 3. Save the order to Firestore instantly as Pending
-      await dbClient.setDoc("orders", orderId, orderData);
-
+      // 3. Prepare order data
       const savedTargetLink = targetLink.trim();
       const savedQuantity = String(quantity);
 
-      // 4. Transmit the order to the SMM provider and WAIT for confirmation
-      const isNativeHost = window.location.origin.includes("localhost") || 
-                           window.location.origin.includes("127.0.0.1") || 
-                           window.location.origin.includes("-523409699457");
-
-      let finalProviderOrderId = "SENT";
-      let transmissionError = null;
+      // 4. Transmit the order to the SMM provider via backend proxy
+      let finalProviderOrderId = "";
+      let isSuccess = false;
+      let isProxySuccess = false;
 
       try {
-        if (!isNativeHost) {
-          // Custom Domain Mode: Direct transmit (Less secure but keeps it working for custom domains)
-          console.log(`[Custom Domain Mode] Direct transmit for order ${orderId}`);
+        let response = null;
+        try {
+          response = await axios.post("/api/proxy-provider", {
+            orderId,
+            userId: user.uid,
+            userEmail: user.email || "",
+            serviceId: selectedCourse.id,
+            title: selectedCourse.title,
+            category: selectedCourse.category || "Other",
+            quantity: Math.floor(Number(savedQuantity)),
+            targetLink: savedTargetLink,
+            totalPrice,
+            isCombo: isComboService,
+            comboItems: comboItems,
+            isAsync: false
+          });
+        } catch (serverErr: any) {
+          // If server responded with an error payload (e.g. status 400/500 with { error: "..." })
+          if (serverErr.response?.data?.error) {
+            throw new Error(serverErr.response.data.error);
+          }
+          // Only if network level failure (server endpoint unreachable)
+          console.warn("[Order Transmit] Proxy unreachable, attempting direct fallback:", serverErr.message);
+          response = null;
+        }
+
+        if (response?.data) {
+          if (response.data.success) {
+            isSuccess = true;
+            isProxySuccess = true;
+            finalProviderOrderId = response.data.providerOrderId || "SENT";
+            
+            // Server already deducted balance in DB upon provider success
+            const currentBal = Number(profile?.balance || 0);
+            const newBal = Math.max(0, currentBal - totalPrice);
+            if (updateUserProfileLocal) {
+              updateUserProfileLocal({ balance: newBal });
+            }
+          } else {
+            // Provider rejected the order
+            throw new Error(response.data.error || "Provider rejected the order.");
+          }
+        } else {
+          // Direct Transmit Fallback (Only if server proxy endpoint wasn't reached)
+          console.log(`[Direct Fallback] Direct transmit for order ${orderId}`);
           
           const settingsSnap = await dbClient.getDoc("settings", "payment");
           let pUrl = (settingsSnap?.providerApiUrl || "").trim();
@@ -289,8 +331,8 @@ export default function Courses() {
           if (selectedCourse.providerId && selectedCourse.providerId !== "global") {
             const providerSnap = await dbClient.getDoc("providers", selectedCourse.providerId);
             if (providerSnap) {
-              const resolvedUrl = (providerSnap.api_url || "").trim() || (providerSnap.apiUrl || "").trim();
-              const resolvedKey = (providerSnap.api_key || "").trim() || (providerSnap.apiKey || "").trim();
+              const resolvedUrl = (providerSnap.api_url || providerSnap.apiUrl || "").trim();
+              const resolvedKey = (providerSnap.api_key || providerSnap.apiKey || "").trim();
               if (resolvedUrl) pUrl = resolvedUrl;
               if (resolvedKey) pKey = resolvedKey;
             }
@@ -299,15 +341,74 @@ export default function Courses() {
           if (!pUrl) pUrl = "https://smmbin.com/api/v2";
           if (!pUrl.startsWith("http")) pUrl = "https://" + pUrl;
 
-          if (pKey) {
-            let finalLink = savedTargetLink;
-            if (finalLink.startsWith("@")) {
-              const username = finalLink.substring(1);
-              if (selectedCourse.category?.toLowerCase().includes("instagram")) finalLink = `https://www.instagram.com/${username}/`;
-              else if (selectedCourse.category?.toLowerCase().includes("twitter") || selectedCourse.category?.toLowerCase().includes("x")) finalLink = `https://x.com/${username}/`;
-              else if (selectedCourse.category?.toLowerCase().includes("tiktok")) finalLink = `https://www.tiktok.com/@${username}`;
+          if (!pKey) {
+            throw new Error("Provider API Key is missing. Please configure it in settings.");
+          }
+
+          let finalLink = savedTargetLink;
+          if (finalLink.startsWith("@")) {
+            const username = finalLink.substring(1);
+            if (selectedCourse.category?.toLowerCase().includes("instagram")) finalLink = `https://www.instagram.com/${username}/`;
+            else if (selectedCourse.category?.toLowerCase().includes("twitter") || selectedCourse.category?.toLowerCase().includes("x")) finalLink = `https://x.com/${username}/`;
+            else if (selectedCourse.category?.toLowerCase().includes("tiktok")) finalLink = `https://www.tiktok.com/@${username}`;
+          }
+
+          if (isComboService && comboItems.length > 0) {
+            // Transmit each combo item
+            const pIds: string[] = [];
+            const comboErrors: string[] = [];
+            for (const item of comboItems) {
+              const itemServiceId = String(item.providerServiceId || "0").trim();
+              const itemQty = String(item.quantity || "1000").trim();
+              const itemProviderId = item.providerId || selectedCourse.providerId;
+              let itemUrl = pUrl;
+              let itemKey = pKey;
+
+              if (itemProviderId && itemProviderId !== "global") {
+                const itemProvSnap = await dbClient.getDoc("providers", itemProviderId);
+                if (itemProvSnap) {
+                  const rUrl = (itemProvSnap.api_url || itemProvSnap.apiUrl || "").trim();
+                  const rKey = (itemProvSnap.api_key || itemProvSnap.apiKey || "").trim();
+                  if (rUrl) itemUrl = rUrl;
+                  if (rKey) itemKey = rKey;
+                }
+              }
+              if (!itemUrl.startsWith("http")) itemUrl = "https://" + itemUrl;
+
+              const params = new URLSearchParams();
+              params.append("key", itemKey);
+              params.append("action", "add");
+              params.append("service", itemServiceId);
+              params.append("link", finalLink);
+              params.append("quantity", itemQty);
+
+              let providerRes;
+              const proxies = [(url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`, (url: string) => url];
+              for (const proxyFn of proxies) {
+                try {
+                  providerRes = await axios.post(proxyFn(itemUrl), params);
+                  if (providerRes?.data) break;
+                } catch (e) {}
+              }
+              let resData = providerRes?.data;
+              if (typeof resData === "string" && (resData.trim().startsWith("{") || resData.trim().match(/^\d+$/))) {
+                try { resData = resData.trim().startsWith("{") ? JSON.parse(resData) : { order: resData }; } catch (e) {}
+              }
+              const pId = resData?.order || resData?.order_id || resData?.orderid || resData?.orderId || resData?.id;
+              if (pId) {
+                pIds.push(String(pId));
+              } else {
+                comboErrors.push(resData?.error || "Component failed");
+              }
             }
 
+            if (pIds.length > 0) {
+              finalProviderOrderId = pIds.map(id => `#${id}`).join(" | ");
+              isSuccess = true;
+            } else {
+              throw new Error("Combo order transmission failed: " + (comboErrors.join(" ; ") || "Provider error"));
+            }
+          } else {
             const params = new URLSearchParams();
             params.append("key", pKey);
             params.append("action", "add");
@@ -329,56 +430,38 @@ export default function Courses() {
               try { resData = resData.trim().startsWith("{") ? JSON.parse(resData) : { order: resData }; } catch (e) {}
             }
             const pId = resData?.order || resData?.order_id || resData?.orderid || resData?.orderId || resData?.id || resData?.ID || resData?.data?.order;
-            if (pId) finalProviderOrderId = String(pId);
-            else if (resData?.error) throw new Error(resData.error);
-          }
-        } else {
-          // Native Host: Use Server Proxy with ultra-optimized Synchronous Processing (Blazing Fast + Returns actual Provider Order ID!)
-          const response = await axios.post("/api/proxy-provider", {
-            orderId,
-            userId: user.uid,
-            userEmail: user.email || "",
-            serviceId: selectedCourse.id,
-            title: selectedCourse.title,
-            category: selectedCourse.category || "Other",
-            quantity: Math.floor(Number(savedQuantity)),
-            targetLink: savedTargetLink,
-            totalPrice,
-            isAsync: false
-          });
-
-          if (response.data?.success) {
-            finalProviderOrderId = response.data.providerOrderId || "SENT";
-            
-            // Deduct locally instantly so UI wallet balance is updated immediately
-            const currentBal = Number(profile?.balance || 0);
-            const newBal = Math.max(0, currentBal - totalPrice);
-            if (updateUserProfileLocal) {
-              updateUserProfileLocal({ balance: newBal });
+            if (pId) {
+              finalProviderOrderId = String(pId);
+              isSuccess = true;
+            } else {
+              throw new Error(resData?.error || "Provider rejected the request.");
             }
-          } else {
-            throw new Error(response.data?.error || "Provider rejected the order.");
           }
-        }
 
-        // 5. Success! Balance was deducted by the server (or needs to be if direct).
-        // Since we want Paisa only after success, and server already handles deduction for proxy-provider...
-        // If it was direct (isNativeHost = false), we must deduct it now if we haven't.
-        if (!isNativeHost) {
+          // Direct fallback: Deduct balance ONLY AFTER provider success confirmed!
           const currentBal = Number(profile?.balance || 0);
           const newBal = Math.max(0, currentBal - totalPrice);
           await dbClient.updateUserProfile(user.uid, { balance: newBal });
-          if (updateUserProfileLocal) updateUserProfileLocal({ balance: newBal });
+          if (updateUserProfileLocal) {
+            updateUserProfileLocal({ balance: newBal });
+          }
         }
 
-        // Always update order status to Completed and store the actual provider order ID immediately on success
-        await dbClient.updateDoc("orders", orderId, {
-          status: "Completed",
-          providerOrderId: finalProviderOrderId,
-          updatedAt: new Date().toISOString()
-        });
+        if (!isSuccess) {
+          throw new Error("Order placement failed. Provider did not accept the order.");
+        }
 
-        // 6. Update local cache and show success
+        // If client fallback was used, write order status to DB on success (Proxy server already saved it)
+        if (!isProxySuccess) {
+          await dbClient.setDoc("orders", orderId, {
+            ...orderData,
+            status: "Completed",
+            providerOrderId: finalProviderOrderId,
+            updatedAt: new Date().toISOString()
+          });
+        }
+
+        // Update local cache and show success
         refreshUserProfile().catch(() => {});
         setLastOrder({ ...orderData, status: "Completed", providerOrderId: finalProviderOrderId });
         setIsOrderSuccessOpen(true);
@@ -387,7 +470,7 @@ export default function Courses() {
         setTargetLink("");
         setQuantity(String(selectedCourse.minLimit || 1000));
         
-        // Highly optimal: Prepend the new order directly into local storage & session storage cache
+        // Update local storage & session storage cache
         try {
           const cacheKey = `orders_${user.uid}`;
           const cachedData = localStorage.getItem(cacheKey) || sessionStorage.getItem(cacheKey);
@@ -413,33 +496,27 @@ export default function Courses() {
             updatedAt: new Date().toISOString()
           };
           
-          // Deduplicate and prepend
           cachedOrders = cachedOrders.filter(o => o.id !== orderId);
           cachedOrders.unshift(newOrderObj);
-          
-          // Cap at 50 to avoid bloated storage
           cachedOrders = cachedOrders.slice(0, 50);
           
           localStorage.setItem(cacheKey, JSON.stringify(cachedOrders));
           localStorage.setItem(`${cacheKey}_time`, Date.now().toString());
           sessionStorage.setItem(cacheKey, JSON.stringify(cachedOrders));
           sessionStorage.setItem(`${cacheKey}_time`, Date.now().toString());
-          console.log("[CACHE-APPEND] Local cache updated with new order. Zero reads required next time!");
         } catch (cacheErr) {
           console.warn("Failed to update orders local cache:", cacheErr);
         }
 
       } catch (err: any) {
-        transmissionError = err.response?.data?.error || err.message || "Provider error";
+        const transmissionError = err.response?.data?.error || err.message || "Provider error";
         console.error("Order transmission failed:", transmissionError);
         
-        if (!isNativeHost) {
-          await dbClient.updateDoc("orders", orderId, {
-            status: "Failed",
-            error: transmissionError,
-            updatedAt: new Date().toISOString()
-          });
-        }
+        await dbClient.updateDoc("orders", orderId, {
+          status: "Failed",
+          error: transmissionError,
+          updatedAt: new Date().toISOString()
+        });
         
         toast.error(`Order Failed: ${transmissionError}`);
       }
