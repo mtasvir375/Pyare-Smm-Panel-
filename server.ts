@@ -67,7 +67,10 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 const app = express();
 export default app;
 
-async function startServer() {
+let isInitialized = false;
+export async function startServer() {
+  if (isInitialized) return;
+  isInitialized = true;
   console.log("[STARTUP] Initializing server...");
   
   const getRealProjectId = async () => {

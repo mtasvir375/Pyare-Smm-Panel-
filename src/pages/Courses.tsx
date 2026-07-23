@@ -434,7 +434,9 @@ export default function Courses() {
               finalProviderOrderId = String(pId);
               isSuccess = true;
             } else {
-              throw new Error(resData?.error || "Provider rejected the request.");
+              let errDetail = resData?.error || "Provider rejected the request.";
+              if (typeof errDetail === 'object' && errDetail !== null) errDetail = errDetail.message || JSON.stringify(errDetail);
+              throw new Error(errDetail);
             }
           }
 
@@ -509,7 +511,11 @@ export default function Courses() {
         }
 
       } catch (err: any) {
-        const transmissionError = err.response?.data?.error || err.message || "Provider error";
+        let rawError = err.response?.data?.error || err.message || "Provider error";
+        let transmissionError = rawError;
+        if (typeof rawError === 'object' && rawError !== null) {
+          transmissionError = rawError.message || JSON.stringify(rawError);
+        }
         console.error("Order transmission failed:", transmissionError);
         
         await dbClient.updateDoc("orders", orderId, {
