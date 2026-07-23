@@ -665,21 +665,26 @@ async function startServer() {
   };
 
   // Startup permissions test to enable automatic Firestore REST fallback before handling requests
-  try {
-    console.log("[STARTUP] Testing Firebase Admin SDK permissions...");
-    await fdb.collection("settings").doc("payment").get();
-    console.log("[STARTUP] Firebase Admin SDK permissions checked successfully!");
-    adminSdkSucceeded = true;
-    useRestFallback = false;
-  } catch (err: any) {
-    if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
-      console.warn(`[STARTUP] Firebase Admin SDK is unauthorized (PERMISSION_DENIED).`);
-      console.warn("[STARTUP] >>> AUTOMATIC ACTIVE FIRESTORE REST FALLBACK OVERRIDE TURNED ON <<<");
-      useRestFallback = true;
-    } else {
-      console.warn(`[STARTUP] Firebase Admin SDK test returned non-permission warning: ${err.message}`);
+  const initAdminSdk = async () => {
+    try {
+      console.log("[STARTUP] Testing Firebase Admin SDK permissions...");
+      await fdb.collection("settings").doc("payment").get();
+      console.log("[STARTUP] Firebase Admin SDK permissions checked successfully!");
+      adminSdkSucceeded = true;
+      useRestFallback = false;
+      
+      syncProvidersToSettingsInternal().catch(console.error);
+    } catch (err: any) {
+      if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
+        console.warn(`[STARTUP] Firebase Admin SDK is unauthorized (PERMISSION_DENIED).`);
+        console.warn("[STARTUP] >>> AUTOMATIC ACTIVE FIRESTORE REST FALLBACK OVERRIDE TURNED ON <<<");
+        useRestFallback = true;
+      } else {
+        console.warn(`[STARTUP] Firebase Admin SDK test returned non-permission warning: ${err.message}`);
+      }
     }
-  }
+  };
+  initAdminSdk();
 
   const syncProvidersToSettingsInternal = async () => {
     try {
@@ -3656,13 +3661,17 @@ async function startServer() {
 
   // Vite
   const isProductionMode = process.env.NODE_ENV === "production" || fs.existsSync(path.join(process.cwd(), 'dist'));
-  if (!isProductionMode) {
-    const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
-    app.use(vite.middlewares);
+  if (!isProductionMode && !process.env.VERCEL) {
+    try {
+      const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
+      app.use(vite.middlewares);
+    } catch (e) {}
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
+    if (!process.env.VERCEL) {
+      const distPath = path.join(process.cwd(), 'dist');
+      app.use(express.static(distPath));
+      app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
+    }
   }
 
   if (!process.env.VERCEL) {
