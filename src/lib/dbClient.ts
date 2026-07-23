@@ -115,6 +115,9 @@ export const dbClient = {
       } catch (e: any) {
         console.warn(`[DB-CLIENT] Proxy update failed for ${table}/${id}.`);
         if (table === 'orders') return;
+        if (e.response?.data?.error) {
+          throw new Error(e.response.data.error);
+        }
         throw e;
       }
     }
