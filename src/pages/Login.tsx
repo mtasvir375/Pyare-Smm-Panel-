@@ -47,7 +47,8 @@ export default function Login() {
 
       <div className="w-full max-w-md relative z-10">
         <Card className="border-none shadow-[0_20px_60px_-15px_rgba(0,0,0,0.08)] bg-white/90 backdrop-blur-xl rounded-[2.5rem]">
-          <CardHeader className="p-8 pt-10 text-center space-y-1">
+          <CardHeader className="p-8 pt-10 text-center space-y-3 flex flex-col items-center">
+            <img src="/logo.png" alt="Pyare SMM Panel" className="w-16 h-16 rounded-2xl shadow-md border border-white/50" />
             <CardTitle className="text-2xl font-bold tracking-tight text-gray-900">
               Welcome Back
             </CardTitle>

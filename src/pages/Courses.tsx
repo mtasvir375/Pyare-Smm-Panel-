@@ -279,29 +279,45 @@ export default function Courses() {
 
       try {
         let response = null;
-        try {
-          response = await axios.post("/api/proxy-provider", {
-            orderId,
-            userId: user.uid,
-            userEmail: user.email || "",
-            serviceId: selectedCourse.id,
-            title: selectedCourse.title,
-            category: selectedCourse.category || "Other",
-            quantity: Math.floor(Number(savedQuantity)),
-            targetLink: savedTargetLink,
-            totalPrice,
-            isCombo: isComboService,
-            comboItems: comboItems,
-            isAsync: false
-          });
-        } catch (serverErr: any) {
-          // If server responded with an error payload (e.g. status 400/500 with { error: "..." })
-          if (serverErr.response?.data?.error) {
-            throw new Error(serverErr.response.data.error);
+        const orderPayload = {
+          orderId,
+          userId: user.uid,
+          userEmail: user.email || "",
+          serviceId: selectedCourse.id,
+          title: selectedCourse.title,
+          category: selectedCourse.category || "Other",
+          quantity: Math.floor(Number(savedQuantity)),
+          targetLink: savedTargetLink,
+          totalPrice,
+          isCombo: isComboService,
+          comboItems: comboItems,
+          isAsync: false
+        };
+
+        const backendEndpoints = [
+          "/api/proxy-provider",
+          "https://ais-dev-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app/api/proxy-provider",
+          "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app/api/proxy-provider"
+        ];
+
+        let lastEndpointError: string | null = null;
+        for (const endpoint of backendEndpoints) {
+          try {
+            console.log(`[Order Transmit] Attempting transmission via backend proxy: ${endpoint}`);
+            const res = await axios.post(endpoint, orderPayload, { timeout: 15000 });
+            if (res?.data) {
+              response = res;
+              console.log(`[Order Transmit] Successfully received response from ${endpoint}`);
+              break;
+            }
+          } catch (serverErr: any) {
+            if (serverErr.response?.data?.error) {
+              lastEndpointError = serverErr.response.data.error;
+              // If provider rejected order with specific error message, throw it
+              throw new Error(serverErr.response.data.error);
+            }
+            console.warn(`[Order Transmit] Endpoint ${endpoint} failed or unreachable:`, serverErr.message);
           }
-          // Only if network level failure (server endpoint unreachable)
-          console.warn("[Order Transmit] Proxy unreachable, attempting direct fallback:", serverErr.message);
-          response = null;
         }
 
         if (response?.data) {
@@ -512,9 +528,16 @@ export default function Courses() {
 
       } catch (err: any) {
         let rawError = err.response?.data?.error || err.message || "Provider error";
-        let transmissionError = rawError;
-        if (typeof rawError === 'object' && rawError !== null) {
-          transmissionError = rawError.message || JSON.stringify(rawError);
+        let transmissionError = "Order placement failed";
+        if (typeof rawError === "string") {
+          transmissionError = rawError;
+        } else if (typeof rawError === "object" && rawError !== null) {
+          transmissionError = rawError.message || rawError.error || JSON.stringify(rawError);
+        } else {
+          transmissionError = String(rawError);
+        }
+        if (transmissionError.includes("[object Object]")) {
+          transmissionError = "Failed to connect to provider. Please check provider settings or link format.";
         }
         console.error("Order transmission failed:", transmissionError);
         
@@ -531,7 +554,14 @@ export default function Courses() {
 
 
     } catch (outerError: any) {
-      toast.error(outerError?.message || "Failed to place order");
+      let outerMsg = outerError?.message;
+      if (typeof outerMsg === "object" && outerMsg !== null) {
+        outerMsg = JSON.stringify(outerMsg);
+      }
+      if (!outerMsg || outerMsg.includes("[object Object]")) {
+        outerMsg = "Failed to place order. Please check provider settings.";
+      }
+      toast.error(outerMsg);
       setSubmitting(false);
     }
   };

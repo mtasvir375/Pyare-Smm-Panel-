@@ -79,27 +79,30 @@ export const dbClient = {
 
   async setDoc(table: string, id: string, data: any): Promise<void> {
     try {
-      // For critical collections or when client SDK fails, use the proxy
+      // For critical collections, attempt backend proxy
       if (table === 'settings' || table === 'providers' || table === 'orders' || table === 'courses' || table === 'services') {
-        const res = await axios.post('/api/db/set', { collection: table, id, data });
-        if (res.data && res.data.success === false) {
-          throw new Error(res.data.error || `Failed to set ${table}/${id} via proxy`);
+        try {
+          const res = await axios.post('/api/db/set', { collection: table, id, data });
+          if (res.data && res.data.success !== false) {
+            return;
+          }
+        } catch (proxyErr: any) {
+          console.warn(`[DB-CLIENT] Proxy setDoc failed for ${table}/${id}, attempting direct Firestore write...`, proxyErr.message);
         }
-        return;
       }
 
       const docRef = doc(db, table, id);
       await setDoc(docRef, { ...data, updatedAt: serverTimestamp() }, { merge: true });
     } catch (err: any) {
-      console.warn(`[DB-CLIENT] Direct setDoc failed for ${table}/${id}, trying proxy...`);
+      console.warn(`[DB-CLIENT] Direct setDoc failed for ${table}/${id}, retrying proxy as last resort...`);
       try {
         const res = await axios.post('/api/db/set', { collection: table, id, data });
         if (res.data && res.data.success === false) {
-          throw new Error(res.data.error || `Failed to set ${table}/${id} via fallback proxy`);
+          throw new Error(res.data.error || `Failed to set ${table}/${id}`);
         }
-      } catch (proxyErr) {
-        console.error(`[DB-CLIENT] Proxy setDoc also failed for ${table}/${id}`);
-        throw proxyErr;
+      } catch (proxyErr: any) {
+        console.error(`[DB-CLIENT] Both direct and proxy setDoc failed for ${table}/${id}`);
+        throw new Error(proxyErr.response?.data?.error || proxyErr.message || `Failed to save ${table}/${id}`);
       }
     }
   },
@@ -108,40 +111,42 @@ export const dbClient = {
     if (table === 'orders' || table === 'settings' || table === 'providers' || table === 'courses' || table === 'services' || table === 'users') {
       try {
         const res = await axios.post('/api/db/update', { collection: table, id, data });
-        if (res.data && res.data.success === false) {
-          throw new Error(res.data.error || `Failed to update ${table}/${id} via proxy`);
+        if (res.data && res.data.success !== false) {
+          return;
         }
-        return;
       } catch (e: any) {
-        console.warn(`[DB-CLIENT] Proxy update failed for ${table}/${id}.`);
-        if (table === 'orders') return;
-        if (e.response?.data?.error) {
-          throw new Error(e.response.data.error);
-        }
-        throw e;
+        console.warn(`[DB-CLIENT] Proxy update failed for ${table}/${id}, falling back to direct update...`);
       }
     }
-    const docRef = doc(db, table, id);
-    await updateDoc(docRef, { ...data, updatedAt: serverTimestamp() });
+    try {
+      const docRef = doc(db, table, id);
+      await updateDoc(docRef, { ...data, updatedAt: serverTimestamp() });
+    } catch (directErr: any) {
+      console.warn(`[DB-CLIENT] Direct updateDoc failed for ${table}/${id}`);
+      if (table === 'orders') return;
+      throw directErr;
+    }
   },
 
   async addDoc(table: string, data: any): Promise<any> {
     if (table === 'orders' || table === 'courses' || table === 'services' || table === 'providers') {
       try {
         const res = await axios.post('/api/db/add', { collection: table, data });
-        if (res.data && res.data.success === false) {
-          throw new Error(res.data.error || `Failed to add ${table} via proxy`);
+        if (res.data && res.data.success !== false && res.data.id) {
+          return { id: res.data.id, ...data };
         }
-        return { id: res.data.id, ...data };
       } catch (e: any) {
-        if (table === 'orders') return { id: 'temp_' + Date.now(), ...data };
-        console.warn(`[DB-CLIENT] Proxy add failed for ${table}.`);
-        throw e;
+        console.warn(`[DB-CLIENT] Proxy add failed for ${table}, attempting direct add...`);
       }
     }
-    const colRef = collection(db, table);
-    const docRef = await firestoreAddDoc(colRef, { ...data, createdAt: serverTimestamp() });
-    return { id: docRef.id, ...data };
+    try {
+      const colRef = collection(db, table);
+      const docRef = await firestoreAddDoc(colRef, { ...data, createdAt: serverTimestamp() });
+      return { id: docRef.id, ...data };
+    } catch (directErr: any) {
+      if (table === 'orders') return { id: 'temp_' + Date.now(), ...data };
+      throw directErr;
+    }
   },
 
   async saveDoc(table: string, id: string, data: any): Promise<void> {

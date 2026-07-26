@@ -138,14 +138,31 @@ export async function startServer() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
   
+  // Custom CORS middleware to guarantee all custom domains (e.g. Vercel, custom domains) are permitted
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+    } else {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+    }
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
+    res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, Access-Control-Request-Method, Access-Control-Request-Headers");
+    
+    if (req.method === "OPTIONS") {
+      return res.status(200).end();
+    }
+    next();
+  });
+  
   // Enable absolute CORS for custom domains calling this Cloud Run backend
   const corsOptions = {
-    origin: (origin, callback) => {
-      // Dynamic origin compliance: return the incoming origin directly to allow credentialed share, fallback to true if undefined
+    origin: (origin: any, callback: any) => {
       callback(null, origin || true);
     },
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allowedHeaders: [
       "Origin",
       "X-Requested-With",
@@ -155,11 +172,11 @@ export async function startServer() {
       "Access-Control-Request-Method",
       "Access-Control-Request-Headers"
     ],
-    maxAge: 86400 // Cache preflight OPTIONS responses for 24 hours
+    maxAge: 86400
   };
 
   app.use(cors(corsOptions));
-  app.options("*", cors(corsOptions)); // Handle preflight OPTIONS requests explicitly for all routes
+  app.options("*", cors(corsOptions));
   
   // Storage for basic app config that doesn't change often
   const serverCache = {
