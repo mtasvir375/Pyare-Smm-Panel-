@@ -15,27 +15,48 @@ import Admin from "./pages/Admin";
 import Login from "./pages/Login";
 import LandingPage from "./pages/LandingPage";
 
+export const STABLE_CLOUD_RUN_BACKEND = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
+
 export const CLOUD_RUN_BACKENDS = [
-  "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app",
+  STABLE_CLOUD_RUN_BACKEND,
   "https://ais-dev-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app"
 ];
 
 export function getApiBaseUrl(): string {
-  if (typeof window === "undefined") return CLOUD_RUN_BACKENDS[0];
+  if (typeof window === "undefined") return STABLE_CLOUD_RUN_BACKEND;
   const host = window.location.hostname;
   if (host.endsWith(".run.app") || host === "localhost" || host === "127.0.0.1") {
     return window.location.origin;
   }
-  return CLOUD_RUN_BACKENDS[0];
+  return STABLE_CLOUD_RUN_BACKEND;
 }
 
-// Global setup for axios base URL and fallback interceptor
+// Global setup for axios base URL and request/response interceptors
 const initialBaseUrl = getApiBaseUrl();
 axios.defaults.baseURL = initialBaseUrl;
 
+axios.interceptors.request.use(
+  (config) => {
+    if (typeof window !== "undefined") {
+      const host = window.location.hostname;
+      const isCustomDomain = !host.endsWith(".run.app") && host !== "localhost" && host !== "127.0.0.1";
+      if (isCustomDomain) {
+        // Force relative requests or current custom domain request URLs to point directly to Cloud Run
+        if (config.url?.startsWith("/")) {
+          config.baseURL = STABLE_CLOUD_RUN_BACKEND;
+        } else if (config.url && config.url.startsWith(window.location.origin)) {
+          config.url = config.url.replace(window.location.origin, STABLE_CLOUD_RUN_BACKEND);
+        }
+      }
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
 axios.interceptors.response.use(
   (response) => {
-    // If an HTML SPA page is returned instead of JSON for an API endpoint (e.g. Vercel 404 fallback), treat as error
+    // If an HTML SPA page is returned instead of JSON for an API endpoint (e.g. Vercel/Firebase 404 fallback), treat as error
     if (typeof response.data === "string" && response.data.includes("<!DOCTYPE")) {
       return Promise.reject(new Error("Received HTML instead of JSON from API endpoint"));
     }
@@ -50,7 +71,7 @@ axios.interceptors.response.use(
     const isHtmlErr = typeof error.response?.data === "string" && error.response.data.includes("<!DOCTYPE");
     const isNetworkOr404 = !error.response || error.response.status === 404 || isHtmlErr;
 
-    // If request failed on Vercel or custom domain, attempt fallback directly to Cloud Run backends
+    // If request failed on custom domain, attempt retry directly on Cloud Run backend
     if (isNetworkOr404) {
       config._retry = true;
       for (const backendUrl of CLOUD_RUN_BACKENDS) {

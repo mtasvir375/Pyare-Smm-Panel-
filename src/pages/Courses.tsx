@@ -294,10 +294,11 @@ export default function Courses() {
           isAsync: false
         };
 
+        const STABLE_CLOUD_RUN_ENDPOINT = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app/api/proxy-provider";
         const backendEndpoints = [
+          STABLE_CLOUD_RUN_ENDPOINT,
           "/api/proxy-provider",
-          "https://ais-dev-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app/api/proxy-provider",
-          "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app/api/proxy-provider"
+          "https://ais-dev-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app/api/proxy-provider"
         ];
 
         let lastEndpointError: string | null = null;

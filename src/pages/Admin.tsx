@@ -344,9 +344,13 @@ export default function Admin() {
           setQrAutoUrl(settingsData.qrAutoUrl || "");
           
           const savedBackendUrl = settingsData.backendApiUrl || "";
-          const activeBackendUrl = window.location.origin;
-          if (!savedBackendUrl || savedBackendUrl.includes("ais-dev-") || savedBackendUrl.includes("ais-pre-")) {
-            setBackendApiUrl(activeBackendUrl);
+          const STABLE_CLOUD_RUN_BACKEND = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
+          if (!savedBackendUrl || 
+              savedBackendUrl.includes("pyaresmmpanel.online") || 
+              savedBackendUrl.includes(".web.app") || 
+              savedBackendUrl.includes(".firebaseapp.com") || 
+              savedBackendUrl.includes("ais-dev-")) {
+            setBackendApiUrl(STABLE_CLOUD_RUN_BACKEND);
           } else {
             setBackendApiUrl(savedBackendUrl);
           }
@@ -473,13 +477,16 @@ export default function Admin() {
 
       const cleanUrl = providerApiUrl.trim();
       const cleanKey = providerApiKey.trim();
-      const cleanBackend = backendApiUrl.trim();
+      let cleanBackend = backendApiUrl.trim();
+      const STABLE_CLOUD_RUN_BACKEND = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
 
-      if (cleanBackend.toLowerCase().includes("ais-dev-")) {
-        toast.error("You cannot save a development environment URL ('ais-dev-') as the backend! Please use the stable preview URL ('ais-pre-') instead.", {
-          description: "This prevents orders from failing when your browser AI Studio tab is closed."
-        });
-        return;
+      if (!cleanBackend || 
+          cleanBackend.toLowerCase().includes("ais-dev-") || 
+          cleanBackend.toLowerCase().includes("pyaresmmpanel.online") || 
+          cleanBackend.toLowerCase().includes(".web.app") || 
+          cleanBackend.toLowerCase().includes(".firebaseapp.com")) {
+        cleanBackend = STABLE_CLOUD_RUN_BACKEND;
+        setBackendApiUrl(STABLE_CLOUD_RUN_BACKEND);
       }
 
       await dbClient.saveDoc("settings", "payment", {
