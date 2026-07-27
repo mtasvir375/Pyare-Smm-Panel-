@@ -38,14 +38,12 @@ export default function Layout() {
     );
   }
 
-  // Allow unrestricted access to Home, Courses, Login and SEO Landing Pages (/p/:slug)
+  // Allow unrestricted access ONLY to /login and SEO Landing Pages (/p/:slug)
   const isPublicPath = 
-    location.pathname === "/" || 
-    location.pathname === "/courses" || 
     location.pathname === "/login" || 
     location.pathname.startsWith("/p/");
 
-  // If unauthenticated and trying to access a protected route, redirect to login page immediately
+  // If unauthenticated and trying to access any protected route, redirect to login page immediately
   if (!user && !isPublicPath) {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
