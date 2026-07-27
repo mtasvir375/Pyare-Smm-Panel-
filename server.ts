@@ -2617,8 +2617,8 @@ export async function startServer() {
       // 1. Parse UTR: Find all distinct sequences of exactly 12 contiguous digits.
       // E.g., 'UPI616880951111' -> '616880951111'.
       // This is extremely robust and bypasses \b word boundary limitations.
-      const digitSequences = text.match(/\d+/g) || [];
-      const candidateUtrs = Array.from(new Set(digitSequences.filter(seq => seq.length === 12)));
+      const digitSequences: string[] = text.match(/\d+/g) || [];
+      const candidateUtrs = Array.from(new Set(digitSequences.filter((seq: string) => seq.length === 12)));
 
       console.log(`[SMS-WEBHOOK] Extracted candidate UTRs: ${JSON.stringify(candidateUtrs)}`);
 
@@ -3007,29 +3007,43 @@ export async function startServer() {
       const isComboService = !!(c.isCombo || currentOrderData?.isCombo || (Array.isArray(c.comboItems) && c.comboItems.length > 0));
       const comboItemList = c.comboItems || currentOrderData?.comboItems || [];
 
-      if (!isComboService && (!c.providerServiceId || String(c.providerServiceId) === "0")) {
-        throw new Error(`Service ID for course "${c.title}" is missing or mapped poorly.`);
+      const resolvedProviderServiceId = String(
+        (c.providerServiceId && String(c.providerServiceId).trim() !== "0") ? c.providerServiceId :
+        (c.provider_service_id && String(c.provider_service_id).trim() !== "0") ? c.provider_service_id :
+        (currentOrderData?.providerServiceId && String(currentOrderData?.providerServiceId).trim() !== "0") ? currentOrderData?.providerServiceId :
+        (currentOrderData?.provider_service_id && String(currentOrderData?.provider_service_id).trim() !== "0") ? currentOrderData?.provider_service_id :
+        "0"
+      ).trim();
+
+      if (!isComboService && (!resolvedProviderServiceId || resolvedProviderServiceId === "0")) {
+        throw new Error(`Service ID for course "${c.title || currentOrderData?.title || 'Selected Service'}" is missing or mapped poorly.`);
       }
 
       // 4. Link & Username Normalization
       let finalLink = String(targetLink).trim();
-      if (finalLink.startsWith("@")) {
-        const username = finalLink.substring(1);
-        if (c.category?.toLowerCase().includes("instagram")) finalLink = `https://www.instagram.com/${username}/`;
-        else if (c.category?.toLowerCase().includes("twitter") || c.category?.toLowerCase().includes("x")) finalLink = `https://x.com/${username}/`;
-        else if (c.category?.toLowerCase().includes("tiktok")) finalLink = `https://www.tiktok.com/@${username}`;
-      } else if (!finalLink.includes("://") && !finalLink.includes(".")) {
-        const username = finalLink.trim();
-        const cat = (c.category || "").toLowerCase();
-        if (cat.includes("instagram")) finalLink = `https://www.instagram.com/${username}/`;
-        else if (cat.includes("twitter") || cat.includes("x.com") || cat.includes("x / twitter") || cat.includes(" x ")) finalLink = `https://x.com/${username}/`;
-        else if (cat.includes("tiktok")) finalLink = `https://www.tiktok.com/@${username}`;
-        else if (cat.includes("telegram") || cat.includes("tg")) finalLink = `https://t.me/${username}`;
-        else if (cat.includes("youtube") || cat.includes("yt")) finalLink = `https://www.youtube.com/@${username}`;
-      }
+      const catTitle = `${c.category || ""} ${currentOrderData?.category || ""} ${c.title || ""} ${currentOrderData?.title || ""}`.toLowerCase();
+      
+      const isIg = catTitle.includes("instagram") || catTitle.includes("ig ") || catTitle.includes(" ig") || catTitle.includes("reels") || catTitle.includes("followers") || catTitle.includes("likes");
+      const isYt = catTitle.includes("youtube") || catTitle.includes("yt ") || catTitle.includes(" yt") || catTitle.includes("subscriber");
+      const isTg = catTitle.includes("telegram") || catTitle.includes("tg ");
+      const isTt = catTitle.includes("tiktok") || catTitle.includes("tik tok");
+      const isTw = catTitle.includes("twitter") || catTitle.includes("x.com") || catTitle.includes(" x ");
+      const isFb = catTitle.includes("facebook") || catTitle.includes("fb ");
 
-      if (finalLink.length > 3 && !finalLink.includes("://") && finalLink.includes(".")) {
-        finalLink = "https://" + finalLink;
+      if (!finalLink.startsWith("http://") && !finalLink.startsWith("https://")) {
+        let handle = finalLink.replace(/^@+/, "").trim();
+        if (!finalLink.includes("://") && !finalLink.includes(".")) {
+          handle = handle.replace(/\s+/g, "");
+          if (isIg) finalLink = `https://www.instagram.com/${handle}/`;
+          else if (isYt) finalLink = `https://www.youtube.com/@${handle}`;
+          else if (isTg) finalLink = `https://t.me/${handle}`;
+          else if (isTt) finalLink = `https://www.tiktok.com/@${handle}`;
+          else if (isTw) finalLink = `https://x.com/${handle}/`;
+          else if (isFb) finalLink = `https://www.facebook.com/${handle}`;
+          else if (handle.length > 0) finalLink = `https://${handle}`;
+        } else if (!finalLink.includes("://")) {
+          finalLink = "https://" + finalLink.replace(/\s+/g, "");
+        }
       }
 
       try {
@@ -3135,14 +3149,14 @@ export async function startServer() {
         orderId, 
         pUrl, 
         providerName,
-        service: c.providerServiceId,
+        service: resolvedProviderServiceId,
         link: finalLink,
         quantity: quantity
       });
       const params = new URLSearchParams();
       params.append("key", pKey);
       params.append("action", "add");
-      params.append("service", String(c.providerServiceId || c.provider_service_id || "0").trim());
+      params.append("service", resolvedProviderServiceId);
       params.append("link", finalLink);
       params.append("quantity", String(quantity).trim());
 
@@ -3176,7 +3190,7 @@ export async function startServer() {
             reqBody = {
               key: pKey,
               action: "add",
-              service: String(c.providerServiceId || c.provider_service_id || "0").trim(),
+              service: resolvedProviderServiceId,
               link: finalLink,
               quantity: String(quantity).trim()
             };
@@ -3531,7 +3545,9 @@ export async function startServer() {
         totalPrice: Number(final_total_price),
         isCombo: !!isCombo,
         comboItems: comboItems || [],
-        status: "Pending"
+        status: "Pending",
+        providerServiceId: req.body.providerServiceId || req.body.provider_service_id,
+        providerId: req.body.providerId || req.body.provider_id
       };
 
       if (req.body.isAsync) {

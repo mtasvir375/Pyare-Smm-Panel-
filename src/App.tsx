@@ -14,6 +14,7 @@ import Profile from "./pages/Profile";
 import Admin from "./pages/Admin";
 import Login from "./pages/Login";
 import LandingPage from "./pages/LandingPage";
+import { auth } from "@/lib/firebase";
 
 export const STABLE_CLOUD_RUN_BACKEND = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
 
@@ -36,17 +37,26 @@ const initialBaseUrl = getApiBaseUrl();
 axios.defaults.baseURL = initialBaseUrl;
 
 axios.interceptors.request.use(
-  (config) => {
+  async (config) => {
     if (typeof window !== "undefined") {
       const host = window.location.hostname;
       const isCustomDomain = !host.endsWith(".run.app") && host !== "localhost" && host !== "127.0.0.1";
       if (isCustomDomain) {
         // Force relative requests or current custom domain request URLs to point directly to Cloud Run
         if (config.url?.startsWith("/")) {
-          config.baseURL = STABLE_CLOUD_RUN_BACKEND;
+          config.url = `${STABLE_CLOUD_RUN_BACKEND}${config.url}`;
+          config.baseURL = "";
         } else if (config.url && config.url.startsWith(window.location.origin)) {
           config.url = config.url.replace(window.location.origin, STABLE_CLOUD_RUN_BACKEND);
         }
+      }
+      if (auth.currentUser && !config.headers?.Authorization) {
+        try {
+          const token = await auth.currentUser.getIdToken();
+          if (token) {
+            config.headers.Authorization = `Bearer ${token}`;
+          }
+        } catch (e) {}
       }
     }
     return config;

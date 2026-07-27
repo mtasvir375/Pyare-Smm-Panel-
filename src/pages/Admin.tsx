@@ -45,6 +45,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import imageCompression from "browser-image-compression";
 import axios from "axios";
+import { STABLE_CLOUD_RUN_BACKEND } from "@/App";
 import {
   Dialog,
   DialogContent,
@@ -432,21 +433,34 @@ export default function Admin() {
       setTestingApi(true);
     }
     
+    const STABLE_CLOUD_RUN_BACKEND = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
     try {
-      const response = await axios.post('/api/test-provider', { providerId });
-      if (response.data.success) {
-        toast.success(`Connected! Balance: ${response.data.balance} ${response.data.currency || 'INR'}`);
+      const endpoints = [
+        `${STABLE_CLOUD_RUN_BACKEND}/api/test-provider`,
+        '/api/test-provider'
+      ];
+      let resData: any = null;
+      let lastErr = "";
+
+      for (const ep of endpoints) {
+        try {
+          const response = await axios.post(ep, { providerId }, { timeout: 15000 });
+          if (response?.data) {
+            resData = response.data;
+            break;
+          }
+        } catch (e: any) {
+          lastErr = e.response?.data?.error || e.message || "Connection failed";
+        }
+      }
+
+      if (resData?.success) {
+        toast.success(`Connected! Balance: ${resData.balance} ${resData.currency || 'INR'}`);
       } else {
-        toast.error(response.data.error || "Connection failed");
+        toast.error(resData?.error || lastErr || "Connection failed");
       }
     } catch (error: any) {
-      const hostname = window.location.hostname;
-      const isCustomDomain = !hostname.includes("run.app") && !hostname.includes("localhost") && !hostname.includes("127.0.0.1");
-      let errorMessage = error.response?.data?.error || error.message || "Connection failed";
-      
-      if (isCustomDomain && errorMessage.toLowerCase().includes("network error")) {
-        errorMessage = "Network Error: Google's Sandbox blocks API calls from custom domains on Vercel. Please open the site through the Google AI Studio preview window to configure and test provider APIs!";
-      }
+      const errorMessage = error.response?.data?.error || error.message || "Connection failed";
       toast.error(`Error: ${errorMessage}`, { duration: 6000 });
     } finally {
       if (providerId) {
@@ -660,11 +674,16 @@ export default function Admin() {
       let responseBody: any = null;
 
       try {
-        const response = await axios.post("/api/proxy-provider", {
+        const response = await axios.post(`${STABLE_CLOUD_RUN_BACKEND}/api/proxy-provider`, {
           orderId: order.id,
+          serviceId: order.serviceId || order.service_id,
           courseId: order.serviceId || order.service_id,
           targetLink: order.targetLink || order.target_link,
-          quantity: order.quantity
+          quantity: order.quantity,
+          providerServiceId: order.providerServiceId || order.provider_service_id,
+          providerId: order.providerId || order.provider_id,
+          title: order.title || order.serviceName || "",
+          totalPrice: order.totalPrice || order.total_price || 0
         });
 
         responseBody = response.data;
@@ -2045,8 +2064,7 @@ export default function Admin() {
                     </div>
                   </div>
                   <p className="text-[10px] text-gray-500 mt-[-12px]">
-                    Note: Your stable Cloud Run backend URL is: <strong className="text-primary">https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app</strong>. 
-                    Do not use your custom domain or the dev sandbox URL ('ais-dev-...') here. Click "Auto-fill Stable API URL" above to set it correctly.
+                    Backend Cloud Run URL: <strong className="text-primary">https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app</strong> (High performance API Server).
                   </p>
 
                   {(() => {
@@ -2054,27 +2072,14 @@ export default function Admin() {
                     const isCustomDomain = !hostname.includes("run.app") && !hostname.includes("localhost") && !hostname.includes("127.0.0.1");
                     if (isCustomDomain) {
                       return (
-                        <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 space-y-2 mt-2">
-                          <p className="text-amber-500 font-bold text-xs uppercase tracking-wider flex items-center gap-1.5">
-                            ⚠️ Custom Domain Warning ({hostname})
+                        <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-4 space-y-1 mt-2">
+                          <p className="text-emerald-400 font-bold text-xs uppercase tracking-wider flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                            Custom Domain Active ({hostname})
                           </p>
                           <p className="text-xs text-gray-300 leading-relaxed">
-                            आप अपनी वेबसाइट को एक कस्टम डोमेन से खोल रहे हैं। लेकिन आपका <strong>Backend API</strong> अभी भी Google AI Studio Sandbox (<code className="text-primary-light">ais-pre-...run.app</code>) से जुड़ा है।
+                            आपकी वेबसाइट कस्टम डोमेन पर एक्टिव है। सभी API कॉल्स और SMM ऑर्डर्स सीधे Cloud Run Backend Server से सुरक्षित रूप से कनेक्टेड हैं।
                           </p>
-                          <p className="text-xs text-gray-400 leading-relaxed">
-                            Google Sandbox सुरक्षा कारणों से (strict cookie verification) बाहरी डोमेन से डायरेक्ट API कॉल्स ब्लॉक कर देता है, जिसकी वजह से custom domain पर <strong>Network Error</strong> आता है।
-                          </p>
-                          <p className="text-xs text-amber-500/90 font-medium">
-                            <strong>इसे ठीक करने के उपाय (How to Fix):</strong>
-                          </p>
-                          <ul className="list-disc pl-4 text-[11px] text-gray-400 space-y-1">
-                            <li>
-                              <strong>AI Studio Preview का उपयोग करें (अनुशंसित):</strong> Admin Panels, Settings या Test API का उपयोग करने के लिए हमेशा Google AI Studio की विंडो या "Open in new window" बटन का ही उपयोग करें (वहाँ balance और connection बिल्कुल सही काम करेगा)।
-                            </li>
-                            <li>
-                              <strong>कस्टम डोमेन को सीधे Cloud Run से जोड़ें:</strong> क्योंकि हमारा प्रोजेक्ट Full-Stack है (frontend और server दोनों एक साथ Cloud Run पर चलते हैं), आप अपने कस्टम डोमेन के DNS को सीधे अपने Google Cloud Run सर्विस से मैप कर सकते हैं (Vercel की आवश्यकता नहीं है)। ऐसा करने से same-origin होने के कारण कभी भी Network Error या API ब्लॉकेज नहीं होगा।
-                            </li>
-                          </ul>
                         </div>
                       );
                     }

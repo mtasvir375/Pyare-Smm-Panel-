@@ -291,13 +291,15 @@ export default function Courses() {
           totalPrice,
           isCombo: isComboService,
           comboItems: comboItems,
+          providerServiceId: selectedCourse.providerServiceId || selectedCourse.provider_service_id,
+          providerId: selectedCourse.providerId || selectedCourse.provider_id,
           isAsync: false
         };
 
         const STABLE_CLOUD_RUN_ENDPOINT = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app/api/proxy-provider";
         const backendEndpoints = [
-          STABLE_CLOUD_RUN_ENDPOINT,
           "/api/proxy-provider",
+          STABLE_CLOUD_RUN_ENDPOINT,
           "https://ais-dev-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app/api/proxy-provider"
         ];
 
