@@ -457,7 +457,9 @@ export async function startServer() {
     const targetProject = getTargetProject();
     try {
       const headers: any = {};
-      const authToken = token || (await getValidSystemAccessToken());
+      const isConfigColl = collect === "providers" || collect === "settings" || collect === "courses" || collect === "services";
+      const effectiveToken = isConfigColl ? undefined : token;
+      const authToken = effectiveToken || (await getValidSystemAccessToken());
       if (authToken) {
         headers["Authorization"] = authToken.startsWith("Bearer ") ? authToken : `Bearer ${authToken}`;
       }
@@ -826,7 +828,8 @@ export async function startServer() {
 
     if ((useRestFallback && !(adminSdkSucceeded && isCoreColl)) || !result.exists) {
       try {
-        result = await getDocREST(collect, id, token);
+        const effectiveToken = isCoreColl ? undefined : token;
+        result = await getDocREST(collect, id, effectiveToken);
       } catch (restErr: any) {
         console.warn(`[FIREBASE-REST-GET] Failed for ${collect}/${id}: ${restErr.message}`);
       }
@@ -1255,14 +1258,6 @@ export async function startServer() {
         
         if (Number(user.balance || 0) < totalPrice) {
           return res.status(400).json({ error: "Insufficient balance" });
-        }
-        
-        // Deduct balance manually if on Vercel without token
-        if (!adminSdkSucceeded) {
-          // If we don't have Admin SDK, we must use REST API.
-          // But REST API requires Auth Token to pass security rules for user balance update!
-          // Since it's a public API, we don't have the user Auth Token!
-          return res.status(500).json({ error: "Server misconfiguration. Cannot process orders without Admin SDK." });
         }
         
         const deductionSuccess = await adjustUserBalanceSafe(userId, -totalPrice);
@@ -2921,8 +2916,8 @@ export async function startServer() {
       let providerName = "Global Settings";
 
       if (c.providerId && c.providerId !== "global") {
-        // Use cached provider details to save Firestore read quota
-        const pS = await getDocSafe("providers", c.providerId, token, false);
+        // Always fetch provider details as system to bypass Firestore non-admin client token restrictions
+        const pS = await getDocSafe("providers", c.providerId, undefined, false);
         let pData = null;
         if (pS && pS.exists) {
           pData = pS.data() || {};
@@ -3358,9 +3353,9 @@ export async function startServer() {
 
         return { success: true, providerOrderId: oId };
       } else {
-        // Collect rejection errors
-        const rawError = resData?.error || resData?.message || resData?.msg || resData?.errors || resData?.ERR || resData?.status || resData?.reason || resData?.error_message || resData?.msg_error;
-        let errorMsg = "Provider rejected the request.";
+        // Collect rejection errors cleanly
+        const rawError = resData?.error || resData?.message || resData?.msg || resData?.errors || resData?.ERR || resData?.status || resData?.reason || resData?.error_message || resData?.msg_error || resData?.data?.error;
+        let errorMsg = "";
 
         if (rawError) {
           if (typeof rawError === "string") errorMsg = rawError;
@@ -3369,6 +3364,8 @@ export async function startServer() {
             const firstInnerKey = Object.keys(rawError)[0];
             if (firstInnerKey && Array.isArray(rawError[firstInnerKey])) {
               errorMsg = `${firstInnerKey}: ${rawError[firstInnerKey][0]}`;
+            } else if (rawError.message || rawError.error) {
+              errorMsg = rawError.message || rawError.error;
             } else {
               errorMsg = JSON.stringify(rawError);
             }
@@ -3379,12 +3376,16 @@ export async function startServer() {
           errorMsg = JSON.stringify(resData);
         }
 
+        if (!errorMsg || errorMsg === "{}" || errorMsg === "null") {
+          errorMsg = "Provider rejected the order without specific error reason. Please check provider API key and service ID.";
+        }
+
         console.error(`[TRANSMIT] Provider rejected request: ${errorMsg}`);
 
         let finalErrorStr = typeof errorMsg === "string" ? errorMsg : JSON.stringify(errorMsg);
         
         if (finalErrorStr.toLowerCase().includes("incorrect api key") || finalErrorStr.toLowerCase().includes("user disabled")) {
-          finalErrorStr = "SMM Panel API credentials (API Key) are incorrect or your account/user is disabled on the SMM vendor panel. Please contact the admin/owner to update their provider credentials.";
+          finalErrorStr = "SMM Panel API credentials (API Key) are incorrect or disabled on provider panel. Please update Provider API Key in Admin Settings.";
         }
 
         if (skipStoreCompleted) {
@@ -3523,9 +3524,13 @@ export async function startServer() {
           updatedAt: new Date().toISOString()
         };
 
-        const createSuccess = await setDocSafe("orders", orderId, orderData, req.headers.authorization as string);
+        const createSuccess = await setDocSafe("orders", orderId, orderData);
         if (!createSuccess) {
-          return res.status(500).json({ success: false, error: "Failed to initialize order record in database. Please check your Firestore permissions." });
+          console.warn(`[HTTP Direct Order] Primary setDocSafe for order ${orderId} returned false, attempting setDocREST direct system fallback...`);
+          const fallbackSuccess = await setDocREST("orders", orderId, orderData);
+          if (!fallbackSuccess) {
+            return res.status(500).json({ success: false, error: "Failed to initialize order record in database. Please check your Firestore permissions." });
+          }
         }
       }
 
@@ -3556,20 +3561,20 @@ export async function startServer() {
         // Instant database balance deduction
         if (final_user_id && final_total_price > 0) {
           console.log(`[ASYNC-DEDUCTION] Deducting ₹${final_total_price} instantly from user ${final_user_id} in DB for order ${orderId}`);
-          const deductionSuccess = await adjustUserBalanceSafe(final_user_id, -Number(final_total_price), req.headers.authorization as string);
+          const deductionSuccess = await adjustUserBalanceSafe(final_user_id, -Number(final_total_price));
           if (!deductionSuccess) {
             return res.status(400).json({ success: false, error: "Insufficient balance or user profile not found." });
           }
         }
 
         // Run background transmittal immediately and return milliseconds response to client
-        transmitOrderToProviderDirect(orderId, { ...payloadData, balanceAlreadyDeducted: true }, skipStoreCompleted, req.headers.authorization as string).catch(err => {
+        transmitOrderToProviderDirect(orderId, { ...payloadData, balanceAlreadyDeducted: true }, skipStoreCompleted).catch(err => {
           console.error(`[ASYNC-TRANSMIT-ERROR] Background transmission exception for ${orderId}:`, err.message);
         });
         return res.json({ success: true, isAsync: true, providerOrderId: "PENDING", orderId });
       }
 
-      const result = await transmitOrderToProviderDirect(orderId, payloadData, skipStoreCompleted, req.headers.authorization as string);
+      const result = await transmitOrderToProviderDirect(orderId, payloadData, skipStoreCompleted);
       if (result.success) {
         return res.json({ success: true, providerOrderId: result.providerOrderId, orderId });
       } else {

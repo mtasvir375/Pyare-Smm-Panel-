@@ -1,0 +1,112 @@
+{
+  "settings": {
+    "data": {
+      "providerApiKey": "f55bb2dfdc035f9c3c9e737bb72922a51d64309f",
+      "guideVideoUrl": "https://youtube.com/shorts/2mbsWR0eXhA?si=ThfubUvq1ppLc3Uw",
+      "paytmMid": "",
+      "autoApproveDeposits": false,
+      "qrAutoUrl": "",
+      "updatedAt": "2026-07-30T00:04:25.812Z",
+      "phonepeEnv": "sandbox",
+      "selectedTheme": "amber",
+      "whatsappLink": "https://whatsapp.com/channel/0029Vb7zsyi6RGJFemxpzy0b",
+      "customGateway2Secret": "",
+      "phonepeSaltIndex": "1",
+      "paytmEnabled": false,
+      "customGateway2Name": "",
+      "providerApiUrl": "https://smmbin.com/api/v2",
+      "backendApiUrl": "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app",
+      "customGateway1Enabled": false,
+      "customGateway2Url": "",
+      "customGateway1Key": "aad9befe-802c-4b3f-b3e7-26cae4640b8c",
+      "phonepeEnabled": false,
+      "customGateway2Enabled": false,
+      "customGateway1Name": "Upi pay",
+      "paytmMerchantKey": "",
+      "customGateway2Key": "",
+      "qrAutoToken": "",
+      "razorpayKeyId": "rzp_test_T7t3jWdort7zKi",
+      "razorpayEnabled": false,
+      "upiId": "mtasvir375-1@okhdfcbank",
+      "paymentQrUrl": "",
+      "phonepeSaltKey": "",
+      "qrAutoProvider": "upigateway",
+      "merchantName": "Pyare Smm panel",
+      "razorpayKeySecret": "dl50MrTHG0esZA3rjRA1ReK1",
+      "customGateway1Url": "https://www.pyaresmmpanel.online",
+      "customGateway1Secret": "aad9befe-802c-4b3f-b3e7-26cae4640b8c",
+      "phonepeMerchantId": "",
+      "paytmEnv": "sandbox",
+      "qrAutoEnabled": false,
+      "qrAutoApiKey": "aad9befe-802c-4b3f-b3e7-26cae4640b8c",
+      "whatsappChatNumber": "9942658657"
+    },
+    "time": 1785370783091
+  },
+  "providers": [
+    [
+      "GbtZDOMSvSrBPgeRy6aU",
+      {
+        "data": {
+          "name": "Smm bin",
+          "createdAt": "2026-07-13T01:42:06.734Z",
+          "apiKey": "f55bb2dfdc035f9c3c9e737bb72922a51d64309f",
+          "apiUrl": "https://www.smmbin.com/api/v2"
+        },
+        "time": 1785369743877
+      }
+    ],
+    [
+      "k7IIPgA8QcpGmZGul3Pw",
+      {
+        "data": {
+          "createdAt": "2026-07-27T10:33:37.983Z",
+          "name": "The main smm ❤️❤️😂",
+          "apiUrl": "https://themainsmmprovider.com/api/v2",
+          "apiKey": "505344007e6bb5e4daf9a20d71cb946a411f65d5"
+        },
+        "time": 1785369741400
+      }
+    ],
+    [
+      "BjKqhBjQkzJ6y1GIYf5R",
+      {
+        "data": {
+          "name": "Wholesale smm store",
+          "apiUrl": "https://wholesalesmmstore.com/api/v2",
+          "apiKey": "68111b9cb78051d955d830f292a0217a7bdc9371",
+          "createdAt": "2026-06-28T03:49:07.308Z"
+        },
+        "time": 1785369747705
+      }
+    ]
+  ],
+  "courses": [
+    [
+      "QqFbpGujCOyCkZLq5tBQ",
+      {
+        "data": {
+          "title": "Reels Views ♻️",
+          "comboItems": [],
+          "serviceType": "combo",
+          "isPackage": false,
+          "preventDuplicateLink": false,
+          "packageQuantity": null,
+          "minLimit": 1000,
+          "pricePerThousand": 1,
+          "createdAt": "2026-07-08T12:48:34.598Z",
+          "iconUrl": null,
+          "packagePrice": null,
+          "isCombo": false,
+          "description": "High quality views service",
+          "category": "Instagram",
+          "status": "published",
+          "providerServiceId": "4541",
+          "updatedAt": "2026-07-27T14:06:39.185Z",
+          "providerId": "GbtZDOMSvSrBPgeRy6aU"
+        },
+        "time": 1785369988328
+      }
+    ]
+  ]
+}

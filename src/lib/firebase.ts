@@ -2,9 +2,19 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
+const getAuthDomain = () => {
+  if (typeof window !== "undefined" && window.location.hostname) {
+    const host = window.location.hostname;
+    if (host.includes("pyaresmmpanel.online")) {
+      return host;
+    }
+  }
+  return "gen-lang-client-0629912823.firebaseapp.com";
+};
+
 const firebaseConfig = {
   apiKey: "AIzaSyBW_IUbuocn83oBCfQfbZsGbswo-OcgxRY",
-  authDomain: "gen-lang-client-0629912823.firebaseapp.com",
+  authDomain: getAuthDomain(),
   projectId: "gen-lang-client-0629912823",
   storageBucket: "gen-lang-client-0629912823.firebasestorage.app",
   messagingSenderId: "507845696919",

@@ -56,7 +56,8 @@ service cloud.firestore {
 
     // Providers
     match /providers/{providerId} {
-      allow read, write: if isAdmin();
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
     // Deposits

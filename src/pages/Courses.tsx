@@ -272,175 +272,87 @@ export default function Courses() {
       const savedTargetLink = targetLink.trim();
       const savedQuantity = String(quantity);
 
-      // 4. Transmit the order to the SMM provider via backend proxy
+      // 4. Transmit the order directly to the SMM API Provider Panel
       let finalProviderOrderId = "";
       let isSuccess = false;
-      let isProxySuccess = false;
 
       try {
-        let response = null;
-        const orderPayload = {
-          orderId,
-          userId: user.uid,
-          userEmail: user.email || "",
-          serviceId: selectedCourse.id,
-          title: selectedCourse.title,
-          category: selectedCourse.category || "Other",
-          quantity: Math.floor(Number(savedQuantity)),
-          targetLink: savedTargetLink,
-          totalPrice,
-          isCombo: isComboService,
-          comboItems: comboItems,
-          providerServiceId: selectedCourse.providerServiceId || selectedCourse.provider_service_id,
-          providerId: selectedCourse.providerId || selectedCourse.provider_id,
-          isAsync: false
-        };
+        console.log(`[Direct Order Transmit] Preparing direct transmission for order ${orderId}`);
+        
+        // Fetch provider settings & credentials
+        const settingsSnap = await dbClient.getDoc("settings", "payment");
+        let pUrl = (settingsSnap?.providerApiUrl || "").trim();
+        let pKey = (settingsSnap?.providerApiKey || "").trim();
 
-        const STABLE_CLOUD_RUN_ENDPOINT = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app/api/proxy-provider";
-        const backendEndpoints = [
-          "/api/proxy-provider",
-          STABLE_CLOUD_RUN_ENDPOINT,
-          "https://ais-dev-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app/api/proxy-provider"
-        ];
-
-        let lastEndpointError: string | null = null;
-        for (const endpoint of backendEndpoints) {
-          try {
-            console.log(`[Order Transmit] Attempting transmission via backend proxy: ${endpoint}`);
-            const res = await axios.post(endpoint, orderPayload, { timeout: 15000 });
-            if (res?.data) {
-              response = res;
-              console.log(`[Order Transmit] Successfully received response from ${endpoint}`);
-              break;
-            }
-          } catch (serverErr: any) {
-            if (serverErr.response?.data?.error) {
-              lastEndpointError = serverErr.response.data.error;
-              // If provider rejected order with specific error message, throw it
-              throw new Error(serverErr.response.data.error);
-            }
-            console.warn(`[Order Transmit] Endpoint ${endpoint} failed or unreachable:`, serverErr.message);
+        if (selectedCourse.providerId && selectedCourse.providerId !== "global") {
+          const providerSnap = await dbClient.getDoc("providers", selectedCourse.providerId);
+          if (providerSnap) {
+            const resolvedUrl = (providerSnap.api_url || providerSnap.apiUrl || "").trim();
+            const resolvedKey = (providerSnap.api_key || providerSnap.apiKey || "").trim();
+            if (resolvedUrl) pUrl = resolvedUrl;
+            if (resolvedKey) pKey = resolvedKey;
           }
         }
 
-        if (response?.data) {
-          if (response.data.success) {
-            isSuccess = true;
-            isProxySuccess = true;
-            finalProviderOrderId = response.data.providerOrderId || "SENT";
-            
-            // Server already deducted balance in DB upon provider success
-            const currentBal = Number(profile?.balance || 0);
-            const newBal = Math.max(0, currentBal - totalPrice);
-            if (updateUserProfileLocal) {
-              updateUserProfileLocal({ balance: newBal });
-            }
-          } else {
-            // Provider rejected the order
-            throw new Error(response.data.error || "Provider rejected the order.");
-          }
-        } else {
-          // Direct Transmit Fallback (Only if server proxy endpoint wasn't reached)
-          console.log(`[Direct Fallback] Direct transmit for order ${orderId}`);
-          
-          const settingsSnap = await dbClient.getDoc("settings", "payment");
-          let pUrl = (settingsSnap?.providerApiUrl || "").trim();
-          let pKey = (settingsSnap?.providerApiKey || "").trim();
+        if (!pUrl) pUrl = "https://smmbin.com/api/v2";
+        if (!pUrl.startsWith("http")) pUrl = "https://" + pUrl;
 
-          if (selectedCourse.providerId && selectedCourse.providerId !== "global") {
-            const providerSnap = await dbClient.getDoc("providers", selectedCourse.providerId);
-            if (providerSnap) {
-              const resolvedUrl = (providerSnap.api_url || providerSnap.apiUrl || "").trim();
-              const resolvedKey = (providerSnap.api_key || providerSnap.apiKey || "").trim();
-              if (resolvedUrl) pUrl = resolvedUrl;
-              if (resolvedKey) pKey = resolvedKey;
-            }
-          }
+        if (!pKey) {
+          throw new Error("Provider API Key is missing. Please configure it in Settings.");
+        }
 
-          if (!pUrl) pUrl = "https://smmbin.com/api/v2";
-          if (!pUrl.startsWith("http")) pUrl = "https://" + pUrl;
+        // Format link
+        let finalLink = savedTargetLink;
+        if (finalLink.startsWith("@")) {
+          const username = finalLink.substring(1);
+          if (selectedCourse.category?.toLowerCase().includes("instagram")) finalLink = `https://www.instagram.com/${username}/`;
+          else if (selectedCourse.category?.toLowerCase().includes("twitter") || selectedCourse.category?.toLowerCase().includes("x")) finalLink = `https://x.com/${username}/`;
+          else if (selectedCourse.category?.toLowerCase().includes("tiktok")) finalLink = `https://www.tiktok.com/@${username}`;
+        }
 
-          if (!pKey) {
-            throw new Error("Provider API Key is missing. Please configure it in settings.");
-          }
+        // Handle Combo or Single Service
+        if (isComboService && comboItems.length > 0) {
+          const pIds: string[] = [];
+          const comboErrors: string[] = [];
 
-          let finalLink = savedTargetLink;
-          if (finalLink.startsWith("@")) {
-            const username = finalLink.substring(1);
-            if (selectedCourse.category?.toLowerCase().includes("instagram")) finalLink = `https://www.instagram.com/${username}/`;
-            else if (selectedCourse.category?.toLowerCase().includes("twitter") || selectedCourse.category?.toLowerCase().includes("x")) finalLink = `https://x.com/${username}/`;
-            else if (selectedCourse.category?.toLowerCase().includes("tiktok")) finalLink = `https://www.tiktok.com/@${username}`;
-          }
+          for (const item of comboItems) {
+            const itemServiceId = String(item.providerServiceId || "0").trim();
+            const itemQty = String(item.quantity || "1000").trim();
+            const itemProviderId = item.providerId || selectedCourse.providerId;
+            let itemUrl = pUrl;
+            let itemKey = pKey;
 
-          if (isComboService && comboItems.length > 0) {
-            // Transmit each combo item
-            const pIds: string[] = [];
-            const comboErrors: string[] = [];
-            for (const item of comboItems) {
-              const itemServiceId = String(item.providerServiceId || "0").trim();
-              const itemQty = String(item.quantity || "1000").trim();
-              const itemProviderId = item.providerId || selectedCourse.providerId;
-              let itemUrl = pUrl;
-              let itemKey = pKey;
-
-              if (itemProviderId && itemProviderId !== "global") {
-                const itemProvSnap = await dbClient.getDoc("providers", itemProviderId);
-                if (itemProvSnap) {
-                  const rUrl = (itemProvSnap.api_url || itemProvSnap.apiUrl || "").trim();
-                  const rKey = (itemProvSnap.api_key || itemProvSnap.apiKey || "").trim();
-                  if (rUrl) itemUrl = rUrl;
-                  if (rKey) itemKey = rKey;
-                }
-              }
-              if (!itemUrl.startsWith("http")) itemUrl = "https://" + itemUrl;
-
-              const params = new URLSearchParams();
-              params.append("key", itemKey);
-              params.append("action", "add");
-              params.append("service", itemServiceId);
-              params.append("link", finalLink);
-              params.append("quantity", itemQty);
-
-              let providerRes;
-              const proxies = [(url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`, (url: string) => url];
-              for (const proxyFn of proxies) {
-                try {
-                  providerRes = await axios.post(proxyFn(itemUrl), params);
-                  if (providerRes?.data) break;
-                } catch (e) {}
-              }
-              let resData = providerRes?.data;
-              if (typeof resData === "string" && (resData.trim().startsWith("{") || resData.trim().match(/^\d+$/))) {
-                try { resData = resData.trim().startsWith("{") ? JSON.parse(resData) : { order: resData }; } catch (e) {}
-              }
-              const pId = resData?.order || resData?.order_id || resData?.orderid || resData?.orderId || resData?.id;
-              if (pId) {
-                pIds.push(String(pId));
-              } else {
-                comboErrors.push(resData?.error || "Component failed");
+            if (itemProviderId && itemProviderId !== "global") {
+              const itemProvSnap = await dbClient.getDoc("providers", itemProviderId);
+              if (itemProvSnap) {
+                const rUrl = (itemProvSnap.api_url || itemProvSnap.apiUrl || "").trim();
+                const rKey = (itemProvSnap.api_key || itemProvSnap.apiKey || "").trim();
+                if (rUrl) itemUrl = rUrl;
+                if (rKey) itemKey = rKey;
               }
             }
+            if (!itemUrl.startsWith("http")) itemUrl = "https://" + itemUrl;
 
-            if (pIds.length > 0) {
-              finalProviderOrderId = pIds.map(id => `#${id}`).join(" | ");
-              isSuccess = true;
-            } else {
-              throw new Error("Combo order transmission failed: " + (comboErrors.join(" ; ") || "Provider error"));
-            }
-          } else {
             const params = new URLSearchParams();
-            params.append("key", pKey);
+            params.append("key", itemKey);
             params.append("action", "add");
-            params.append("service", String(selectedCourse.providerServiceId || selectedCourse.provider_service_id || "0").trim());
+            params.append("service", itemServiceId);
             params.append("link", finalLink);
-            params.append("quantity", savedQuantity);
+            params.append("quantity", itemQty);
 
-            let providerRes;
-            const proxies = [(url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`, (url: string) => url];
-            for (const proxyFn of proxies) {
+            let providerRes: any = null;
+            const transmissionMethods = [
+              async () => axios.post(itemUrl, params),
+              async () => axios.post(`https://corsproxy.io/?${encodeURIComponent(itemUrl)}`, params)
+            ];
+
+            for (const method of transmissionMethods) {
               try {
-                providerRes = await axios.post(proxyFn(pUrl), params);
-                if (providerRes?.data) break;
+                const res = await method();
+                if (res?.data) {
+                  providerRes = res;
+                  break;
+                }
               } catch (e) {}
             }
 
@@ -448,39 +360,158 @@ export default function Courses() {
             if (typeof resData === "string" && (resData.trim().startsWith("{") || resData.trim().match(/^\d+$/))) {
               try { resData = resData.trim().startsWith("{") ? JSON.parse(resData) : { order: resData }; } catch (e) {}
             }
-            const pId = resData?.order || resData?.order_id || resData?.orderid || resData?.orderId || resData?.id || resData?.ID || resData?.data?.order;
+
+            const pId = resData?.order || resData?.order_id || resData?.orderid || resData?.orderId || resData?.id;
             if (pId) {
-              finalProviderOrderId = String(pId);
-              isSuccess = true;
+              pIds.push(String(pId));
             } else {
-              let errDetail = resData?.error || "Provider rejected the request.";
-              if (typeof errDetail === 'object' && errDetail !== null) errDetail = errDetail.message || JSON.stringify(errDetail);
-              throw new Error(errDetail);
+              comboErrors.push(resData?.error || "Combo component failed");
             }
           }
 
-          // Direct fallback: Deduct balance ONLY AFTER provider success confirmed!
-          const currentBal = Number(profile?.balance || 0);
-          const newBal = Math.max(0, currentBal - totalPrice);
-          await dbClient.updateUserProfile(user.uid, { balance: newBal });
-          if (updateUserProfileLocal) {
-            updateUserProfileLocal({ balance: newBal });
+          if (pIds.length > 0) {
+            finalProviderOrderId = pIds.map(id => `#${id}`).join(" | ");
+            isSuccess = true;
+          } else {
+            throw new Error("Combo order transmission failed: " + (comboErrors.join(" ; ") || "Provider error"));
+          }
+
+        } else {
+          // Single Service direct transmit
+          const params = new URLSearchParams();
+          params.append("key", pKey);
+          params.append("action", "add");
+          params.append("service", String(selectedCourse.providerServiceId || selectedCourse.provider_service_id || "0").trim());
+          params.append("link", finalLink);
+          params.append("quantity", savedQuantity);
+
+            let providerRes: any = null;
+            let lastDirectErr: any = null;
+
+            const isValidJsonResponse = (data: any) => {
+              if (!data) return false;
+              if (typeof data === "object") return true;
+              if (typeof data === "string") {
+                const trimmed = data.trim();
+                if (trimmed.startsWith("<!") || trimmed.startsWith("<html") || trimmed.toLowerCase().startsWith("<!doctype")) return false;
+                try { JSON.parse(trimmed); return true; } catch (e) { return false; }
+              }
+              return false;
+            };
+
+            const STABLE_CLOUD_RUN_ENDPOINT = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app/api/proxy-provider";
+
+            // Attempt 1: Direct Server Proxy via Cloud Run (bypasses browser CORS & static host rewrite)
+            const orderPayload = {
+              orderId,
+              userId: user.uid,
+              userEmail: user.email || "",
+              serviceId: selectedCourse.id,
+              title: selectedCourse.title,
+              category: selectedCourse.category || "Other",
+              quantity: Math.floor(Number(savedQuantity)),
+              targetLink: savedTargetLink,
+              totalPrice,
+              isCombo: isComboService,
+              comboItems: comboItems,
+              providerServiceId: selectedCourse.providerServiceId || selectedCourse.provider_service_id,
+              providerId: selectedCourse.providerId || selectedCourse.provider_id,
+              isAsync: false
+            };
+
+            const backendEndpoints = [
+              STABLE_CLOUD_RUN_ENDPOINT,
+              "/api/proxy-provider"
+            ];
+
+            for (const endpoint of backendEndpoints) {
+              try {
+                const res = await axios.post(endpoint, orderPayload, { timeout: 12000 });
+                if (res?.data && isValidJsonResponse(res.data)) {
+                  if (res.data.success === false && res.data.error) {
+                    let errStr = res.data.error;
+                    if (typeof errStr === "object") errStr = errStr.message || JSON.stringify(errStr);
+                    throw new Error(errStr);
+                  }
+                  providerRes = res;
+                  console.log(`[Order Transmit] Backend proxy success via ${endpoint}`);
+                  break;
+                }
+              } catch (e: any) {
+                if (e.response?.data?.error) {
+                  let errStr = e.response.data.error;
+                  if (typeof errStr === "object") errStr = errStr.message || JSON.stringify(errStr);
+                  throw new Error(errStr);
+                }
+                lastDirectErr = e;
+              }
+            }
+
+            // Attempt 2: Direct browser call fallback if backend proxy not reachable
+            if (!providerRes?.data || !isValidJsonResponse(providerRes.data)) {
+              const transmissionMethods = [
+                async () => axios.post(pUrl, params),
+                async () => axios.post(`https://corsproxy.io/?${encodeURIComponent(pUrl)}`, params)
+              ];
+
+              for (const method of transmissionMethods) {
+                try {
+                  const res = await method();
+                  if (res?.data && isValidJsonResponse(res.data)) {
+                    providerRes = res;
+                    break;
+                  }
+                } catch (e: any) {
+                  lastDirectErr = e;
+                }
+              }
+            }
+
+          let resData = providerRes?.data;
+          let extractedOrderId = "";
+
+          if (typeof resData === "string" && (resData.trim().startsWith("{") || resData.trim().match(/^\d+$/))) {
+            try { resData = resData.trim().startsWith("{") ? JSON.parse(resData) : { order: resData }; } catch (e) {}
+          }
+
+          if (resData?.success === true && resData?.providerOrderId && String(resData.providerOrderId).trim() !== "SENT") {
+            extractedOrderId = String(resData.providerOrderId).trim();
+          } else {
+            const pId = resData?.order || resData?.order_id || resData?.orderid || resData?.orderId || resData?.id || resData?.ID || resData?.data?.order || resData?.providerOrderId;
+            if (pId && String(pId).trim() !== "" && String(pId).trim() !== "0") {
+              extractedOrderId = String(pId).trim();
+            }
+          }
+
+          if (extractedOrderId && extractedOrderId !== "0" && extractedOrderId !== "SENT") {
+            finalProviderOrderId = extractedOrderId;
+            isSuccess = true;
+          } else {
+            let errDetail = resData?.error || resData?.message || resData?.msg || resData?.reason || resData?.data?.error || lastDirectErr?.response?.data?.error || lastDirectErr?.response?.data?.message || lastDirectErr?.message || "Provider rejected the order or did not return an Order ID.";
+            if (typeof errDetail === 'object' && errDetail !== null) errDetail = errDetail.message || errDetail.error || JSON.stringify(errDetail);
+            throw new Error(errDetail);
           }
         }
 
-        if (!isSuccess) {
-          throw new Error("Order placement failed. Provider did not accept the order.");
+        if (!isSuccess || !finalProviderOrderId || finalProviderOrderId === "0" || finalProviderOrderId === "SENT") {
+          throw new Error("Order placement failed. Provider did not generate a valid Order ID.");
         }
 
-        // If client fallback was used, write order status to DB on success (Proxy server already saved it)
-        if (!isProxySuccess) {
-          await dbClient.setDoc("orders", orderId, {
-            ...orderData,
-            status: "Completed",
-            providerOrderId: finalProviderOrderId,
-            updatedAt: new Date().toISOString()
-          });
+        // Deduct user balance in DB upon provider confirmation
+        const currentBal = Number(profile?.balance || 0);
+        const newBal = Math.max(0, currentBal - totalPrice);
+        await dbClient.updateUserProfile(user.uid, { balance: newBal });
+        if (updateUserProfileLocal) {
+          updateUserProfileLocal({ balance: newBal });
         }
+
+        // Save order in Firestore DB
+        await dbClient.setDoc("orders", orderId, {
+          ...orderData,
+          status: "Completed",
+          providerOrderId: finalProviderOrderId,
+          updatedAt: new Date().toISOString()
+        });
 
         // Update local cache and show success
         refreshUserProfile().catch(() => {});
