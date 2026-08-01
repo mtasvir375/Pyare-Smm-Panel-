@@ -1117,10 +1117,9 @@ export async function startServer() {
   const ensureBackendUrlIsSet = async () => {
     try {
       const snap = await getDocSafe("settings", "payment");
-      if (!snap.exists || !snap.data()?.backendApiUrl) {
-        const DEFAULT_BACKEND = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
-        await setDocSafe("settings", "payment", { backendApiUrl: DEFAULT_BACKEND });
-        console.log(`[INIT] ✅ Set default backendApiUrl as it was missing.`);
+      if (!snap.exists) {
+        await setDocSafe("settings", "payment", { backendApiUrl: "" });
+        console.log(`[INIT] ✅ Initialized payment settings doc.`);
       }
     } catch (err: any) {
       console.warn(`[INIT] ⚠️ Auto-updating backendApiUrl failed: ${err.message}`);

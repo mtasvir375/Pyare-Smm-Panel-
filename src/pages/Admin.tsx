@@ -345,16 +345,7 @@ export default function Admin() {
           setQrAutoUrl(settingsData.qrAutoUrl || "");
           
           const savedBackendUrl = settingsData.backendApiUrl || "";
-          const STABLE_CLOUD_RUN_BACKEND = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
-          if (!savedBackendUrl || 
-              savedBackendUrl.includes("pyaresmmpanel.online") || 
-              savedBackendUrl.includes(".web.app") || 
-              savedBackendUrl.includes(".firebaseapp.com") || 
-              savedBackendUrl.includes("ais-dev-")) {
-            setBackendApiUrl(STABLE_CLOUD_RUN_BACKEND);
-          } else {
-            setBackendApiUrl(savedBackendUrl);
-          }
+          setBackendApiUrl(savedBackendUrl);
         }
       }
       setFetchedTabs(prev => {
@@ -433,10 +424,8 @@ export default function Admin() {
       setTestingApi(true);
     }
     
-    const STABLE_CLOUD_RUN_BACKEND = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
     try {
       const endpoints = [
-        `${STABLE_CLOUD_RUN_BACKEND}/api/test-provider`,
         '/api/test-provider'
       ];
       let resData: any = null;
@@ -492,16 +481,6 @@ export default function Admin() {
       const cleanUrl = providerApiUrl.trim();
       const cleanKey = providerApiKey.trim();
       let cleanBackend = backendApiUrl.trim();
-      const STABLE_CLOUD_RUN_BACKEND = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
-
-      if (!cleanBackend || 
-          cleanBackend.toLowerCase().includes("ais-dev-") || 
-          cleanBackend.toLowerCase().includes("pyaresmmpanel.online") || 
-          cleanBackend.toLowerCase().includes(".web.app") || 
-          cleanBackend.toLowerCase().includes(".firebaseapp.com")) {
-        cleanBackend = STABLE_CLOUD_RUN_BACKEND;
-        setBackendApiUrl(STABLE_CLOUD_RUN_BACKEND);
-      }
 
       await dbClient.saveDoc("settings", "payment", {
         paymentQrUrl: base64,
@@ -2046,17 +2025,17 @@ export default function Admin() {
                     </div>
                     <div className="space-y-2">
                       <div className="flex justify-between items-center">
-                        <label className="text-xs font-bold uppercase tracking-wider text-primary font-bold">Backend Server URL</label>
+                        <label className="text-xs font-bold uppercase tracking-wider text-primary font-bold">Backend Server URL (Optional override)</label>
                         <button
                           type="button"
-                          onClick={() => setBackendApiUrl("https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app")}
+                          onClick={() => setBackendApiUrl(window.location.origin)}
                           className="text-[10px] text-primary hover:underline font-semibold"
                         >
-                          Auto-fill Stable API URL
+                          Use Current Site Domain
                         </button>
                       </div>
                       <Input 
-                        placeholder="e.g. https://ais-pre-...run.app" 
+                        placeholder="e.g. Leave blank or use current origin" 
                         value={backendApiUrl}
                         onChange={(e) => setBackendApiUrl(e.target.value)}
                         className="rounded-xl h-12 border-primary/50 focus:border-primary"
@@ -2064,7 +2043,7 @@ export default function Admin() {
                     </div>
                   </div>
                   <p className="text-[10px] text-gray-500 mt-[-12px]">
-                    Backend Cloud Run URL: <strong className="text-primary">https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app</strong> (High performance API Server).
+                    Backend API Server: Default uses current origin automatically.
                   </p>
 
                   {(() => {

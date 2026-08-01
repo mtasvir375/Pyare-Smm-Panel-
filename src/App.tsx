@@ -16,40 +16,23 @@ import Login from "./pages/Login";
 import LandingPage from "./pages/LandingPage";
 import { auth } from "@/lib/firebase";
 
-export const STABLE_CLOUD_RUN_BACKEND = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
+export const STABLE_CLOUD_RUN_BACKEND = typeof window !== "undefined" ? window.location.origin : "";
 
 export const CLOUD_RUN_BACKENDS = [
-  STABLE_CLOUD_RUN_BACKEND,
-  "https://ais-dev-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app"
+  STABLE_CLOUD_RUN_BACKEND
 ];
 
 export function getApiBaseUrl(): string {
-  if (typeof window === "undefined") return STABLE_CLOUD_RUN_BACKEND;
-  const host = window.location.hostname;
-  if (host.endsWith(".run.app") || host === "localhost" || host === "127.0.0.1") {
-    return window.location.origin;
-  }
-  return STABLE_CLOUD_RUN_BACKEND;
+  if (typeof window === "undefined") return "";
+  return window.location.origin;
 }
 
 // Global setup for axios base URL and request/response interceptors
-const initialBaseUrl = getApiBaseUrl();
-axios.defaults.baseURL = initialBaseUrl;
+axios.defaults.baseURL = "";
 
 axios.interceptors.request.use(
   async (config) => {
     if (typeof window !== "undefined") {
-      const host = window.location.hostname;
-      const isCustomDomain = !host.endsWith(".run.app") && host !== "localhost" && host !== "127.0.0.1";
-      if (isCustomDomain) {
-        // Force relative requests or current custom domain request URLs to point directly to Cloud Run
-        if (config.url?.startsWith("/")) {
-          config.url = `${STABLE_CLOUD_RUN_BACKEND}${config.url}`;
-          config.baseURL = "";
-        } else if (config.url && config.url.startsWith(window.location.origin)) {
-          config.url = config.url.replace(window.location.origin, STABLE_CLOUD_RUN_BACKEND);
-        }
-      }
       if (auth.currentUser && !config.headers?.Authorization) {
         try {
           const token = await auth.currentUser.getIdToken();
@@ -72,36 +55,7 @@ axios.interceptors.response.use(
     }
     return response;
   },
-  async (error) => {
-    const config = error.config;
-    if (!config || config._retry) {
-      return Promise.reject(error);
-    }
-
-    const isHtmlErr = typeof error.response?.data === "string" && error.response.data.includes("<!DOCTYPE");
-    const isNetworkOr404 = !error.response || error.response.status === 404 || isHtmlErr;
-
-    // If request failed on custom domain, attempt retry directly on Cloud Run backend
-    if (isNetworkOr404) {
-      config._retry = true;
-      for (const backendUrl of CLOUD_RUN_BACKENDS) {
-        if (!config.url?.startsWith("http") || !config.url.startsWith(backendUrl)) {
-          try {
-            const path = config.url?.startsWith("/") ? config.url : `/${config.url || ""}`;
-            const targetUrl = `${backendUrl}${path}`;
-            console.log(`[AXIOS INTERCEPTOR] Retrying failed request to target URL: ${targetUrl}`);
-            const retryRes = await axios({ ...config, url: targetUrl });
-            if (retryRes && (typeof retryRes.data !== "string" || !retryRes.data.includes("<!DOCTYPE"))) {
-              return retryRes;
-            }
-          } catch (retryErr) {
-            console.warn(`[AXIOS INTERCEPTOR] Retry failed on ${backendUrl}:`, retryErr);
-          }
-        }
-      }
-    }
-    return Promise.reject(error);
-  }
+  (error) => Promise.reject(error)
 );
 
 export default function App() {

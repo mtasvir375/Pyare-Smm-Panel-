@@ -399,9 +399,6 @@ export default function Courses() {
               return false;
             };
 
-            const STABLE_CLOUD_RUN_ENDPOINT = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app/api/proxy-provider";
-
-            // Attempt 1: Direct Server Proxy via Cloud Run (bypasses browser CORS & static host rewrite)
             const orderPayload = {
               orderId,
               userId: user.uid,
@@ -420,7 +417,6 @@ export default function Courses() {
             };
 
             const backendEndpoints = [
-              STABLE_CLOUD_RUN_ENDPOINT,
               "/api/proxy-provider"
             ];
 
