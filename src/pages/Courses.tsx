@@ -272,253 +272,67 @@ export default function Courses() {
       const savedTargetLink = targetLink.trim();
       const savedQuantity = String(quantity);
 
-      // 4. Transmit the order directly to the SMM API Provider Panel
-      let finalProviderOrderId = "";
-      let isSuccess = false;
-
+      // 4. Transmit order directly via backend proxy (/api/proxy-provider)
       try {
-        console.log(`[Direct Order Transmit] Preparing direct transmission for order ${orderId}`);
-        
-        // Fetch provider settings & credentials
-        const settingsSnap = await dbClient.getDoc("settings", "payment");
-        let pUrl = (settingsSnap?.providerApiUrl || "").trim();
-        let pKey = (settingsSnap?.providerApiKey || "").trim();
+        console.log(`[Order Transmit] Dispatching order ${orderId} to backend proxy (/api/proxy-provider)`);
 
-        if (selectedCourse.providerId && selectedCourse.providerId !== "global") {
-          const providerSnap = await dbClient.getDoc("providers", selectedCourse.providerId);
-          if (providerSnap) {
-            const resolvedUrl = (providerSnap.api_url || providerSnap.apiUrl || "").trim();
-            const resolvedKey = (providerSnap.api_key || providerSnap.apiKey || "").trim();
-            if (resolvedUrl) pUrl = resolvedUrl;
-            if (resolvedKey) pKey = resolvedKey;
-          }
-        }
+        const orderPayload = {
+          orderId,
+          userId: user.uid,
+          userEmail: user.email || "",
+          serviceId: selectedCourse.id,
+          title: selectedCourse.title,
+          category: selectedCourse.category || "Other",
+          quantity: Math.floor(Number(savedQuantity)),
+          targetLink: savedTargetLink,
+          totalPrice,
+          isCombo: isComboService,
+          comboItems: comboItems,
+          providerServiceId: selectedCourse.providerServiceId || selectedCourse.provider_service_id,
+          providerId: selectedCourse.providerId || selectedCourse.provider_id,
+          isAsync: false
+        };
 
-        if (!pUrl) pUrl = "https://smmbin.com/api/v2";
-        if (!pUrl.startsWith("http")) pUrl = "https://" + pUrl;
+        const res = await axios.post("/api/proxy-provider", orderPayload, { timeout: 40000 });
+        const resData = res.data;
 
-        if (!pKey) {
-          throw new Error("Provider API Key is missing. Please configure it in Settings.");
-        }
-
-        // Format link
-        let finalLink = savedTargetLink;
-        if (finalLink.startsWith("@")) {
-          const username = finalLink.substring(1);
-          if (selectedCourse.category?.toLowerCase().includes("instagram")) finalLink = `https://www.instagram.com/${username}/`;
-          else if (selectedCourse.category?.toLowerCase().includes("twitter") || selectedCourse.category?.toLowerCase().includes("x")) finalLink = `https://x.com/${username}/`;
-          else if (selectedCourse.category?.toLowerCase().includes("tiktok")) finalLink = `https://www.tiktok.com/@${username}`;
-        }
-
-        // Handle Combo or Single Service
-        if (isComboService && comboItems.length > 0) {
-          const pIds: string[] = [];
-          const comboErrors: string[] = [];
-
-          for (const item of comboItems) {
-            const itemServiceId = String(item.providerServiceId || "0").trim();
-            const itemQty = String(item.quantity || "1000").trim();
-            const itemProviderId = item.providerId || selectedCourse.providerId;
-            let itemUrl = pUrl;
-            let itemKey = pKey;
-
-            if (itemProviderId && itemProviderId !== "global") {
-              const itemProvSnap = await dbClient.getDoc("providers", itemProviderId);
-              if (itemProvSnap) {
-                const rUrl = (itemProvSnap.api_url || itemProvSnap.apiUrl || "").trim();
-                const rKey = (itemProvSnap.api_key || itemProvSnap.apiKey || "").trim();
-                if (rUrl) itemUrl = rUrl;
-                if (rKey) itemKey = rKey;
-              }
-            }
-            if (!itemUrl.startsWith("http")) itemUrl = "https://" + itemUrl;
-
-            const params = new URLSearchParams();
-            params.append("key", itemKey);
-            params.append("action", "add");
-            params.append("service", itemServiceId);
-            params.append("link", finalLink);
-            params.append("quantity", itemQty);
-
-            let providerRes: any = null;
-            const transmissionMethods = [
-              async () => axios.post(itemUrl, params),
-              async () => axios.post(`https://corsproxy.io/?${encodeURIComponent(itemUrl)}`, params)
-            ];
-
-            for (const method of transmissionMethods) {
-              try {
-                const res = await method();
-                if (res?.data) {
-                  providerRes = res;
-                  break;
-                }
-              } catch (e) {}
-            }
-
-            let resData = providerRes?.data;
-            if (typeof resData === "string" && (resData.trim().startsWith("{") || resData.trim().match(/^\d+$/))) {
-              try { resData = resData.trim().startsWith("{") ? JSON.parse(resData) : { order: resData }; } catch (e) {}
-            }
-
-            const pId = resData?.order || resData?.order_id || resData?.orderid || resData?.orderId || resData?.id;
-            if (pId) {
-              pIds.push(String(pId));
-            } else {
-              comboErrors.push(resData?.error || "Combo component failed");
-            }
-          }
-
-          if (pIds.length > 0) {
-            finalProviderOrderId = pIds.map(id => `#${id}`).join(" | ");
-            isSuccess = true;
-          } else {
-            throw new Error("Combo order transmission failed: " + (comboErrors.join(" ; ") || "Provider error"));
-          }
-
+        let finalProviderOrderId = "";
+        if (resData && (resData.success === true || resData.providerOrderId)) {
+          finalProviderOrderId = String(resData.providerOrderId || "SENT").trim();
+        } else if (resData && resData.error) {
+          let errStr = resData.error;
+          if (typeof errStr === "object") errStr = errStr.message || JSON.stringify(errStr);
+          throw new Error(errStr);
         } else {
-          // Single Service direct transmit
-          const params = new URLSearchParams();
-          params.append("key", pKey);
-          params.append("action", "add");
-          params.append("service", String(selectedCourse.providerServiceId || selectedCourse.provider_service_id || "0").trim());
-          params.append("link", finalLink);
-          params.append("quantity", savedQuantity);
-
-            let providerRes: any = null;
-            let lastDirectErr: any = null;
-
-            const isValidJsonResponse = (data: any) => {
-              if (!data) return false;
-              if (typeof data === "object") return true;
-              if (typeof data === "string") {
-                const trimmed = data.trim();
-                if (trimmed.startsWith("<!") || trimmed.startsWith("<html") || trimmed.toLowerCase().startsWith("<!doctype")) return false;
-                try { JSON.parse(trimmed); return true; } catch (e) { return false; }
-              }
-              return false;
-            };
-
-            const orderPayload = {
-              orderId,
-              userId: user.uid,
-              userEmail: user.email || "",
-              serviceId: selectedCourse.id,
-              title: selectedCourse.title,
-              category: selectedCourse.category || "Other",
-              quantity: Math.floor(Number(savedQuantity)),
-              targetLink: savedTargetLink,
-              totalPrice,
-              isCombo: isComboService,
-              comboItems: comboItems,
-              providerServiceId: selectedCourse.providerServiceId || selectedCourse.provider_service_id,
-              providerId: selectedCourse.providerId || selectedCourse.provider_id,
-              isAsync: false
-            };
-
-            const backendEndpoints = [
-              "/api/proxy-provider"
-            ];
-
-            for (const endpoint of backendEndpoints) {
-              try {
-                const res = await axios.post(endpoint, orderPayload, { timeout: 12000 });
-                if (res?.data && isValidJsonResponse(res.data)) {
-                  if (res.data.success === false && res.data.error) {
-                    let errStr = res.data.error;
-                    if (typeof errStr === "object") errStr = errStr.message || JSON.stringify(errStr);
-                    throw new Error(errStr);
-                  }
-                  providerRes = res;
-                  console.log(`[Order Transmit] Backend proxy success via ${endpoint}`);
-                  break;
-                }
-              } catch (e: any) {
-                if (e.response?.data?.error) {
-                  let errStr = e.response.data.error;
-                  if (typeof errStr === "object") errStr = errStr.message || JSON.stringify(errStr);
-                  throw new Error(errStr);
-                }
-                lastDirectErr = e;
-              }
-            }
-
-            // Attempt 2: Direct browser call fallback if backend proxy not reachable
-            if (!providerRes?.data || !isValidJsonResponse(providerRes.data)) {
-              const transmissionMethods = [
-                async () => axios.post(pUrl, params),
-                async () => axios.post(`https://corsproxy.io/?${encodeURIComponent(pUrl)}`, params)
-              ];
-
-              for (const method of transmissionMethods) {
-                try {
-                  const res = await method();
-                  if (res?.data && isValidJsonResponse(res.data)) {
-                    providerRes = res;
-                    break;
-                  }
-                } catch (e: any) {
-                  lastDirectErr = e;
-                }
-              }
-            }
-
-          let resData = providerRes?.data;
-          let extractedOrderId = "";
-
-          if (typeof resData === "string" && (resData.trim().startsWith("{") || resData.trim().match(/^\d+$/))) {
-            try { resData = resData.trim().startsWith("{") ? JSON.parse(resData) : { order: resData }; } catch (e) {}
-          }
-
-          if (resData?.success === true && resData?.providerOrderId && String(resData.providerOrderId).trim() !== "SENT") {
-            extractedOrderId = String(resData.providerOrderId).trim();
-          } else {
-            const pId = resData?.order || resData?.order_id || resData?.orderid || resData?.orderId || resData?.id || resData?.ID || resData?.data?.order || resData?.providerOrderId;
-            if (pId && String(pId).trim() !== "" && String(pId).trim() !== "0") {
-              extractedOrderId = String(pId).trim();
-            }
-          }
-
-          if (extractedOrderId && extractedOrderId !== "0" && extractedOrderId !== "SENT") {
-            finalProviderOrderId = extractedOrderId;
-            isSuccess = true;
-          } else {
-            let errDetail = resData?.error || resData?.message || resData?.msg || resData?.reason || resData?.data?.error || lastDirectErr?.response?.data?.error || lastDirectErr?.response?.data?.message || lastDirectErr?.message || "Provider rejected the order or did not return an Order ID.";
-            if (typeof errDetail === 'object' && errDetail !== null) errDetail = errDetail.message || errDetail.error || JSON.stringify(errDetail);
-            throw new Error(errDetail);
-          }
+          throw new Error("Provider did not return a valid order confirmation.");
         }
 
-        if (!isSuccess || !finalProviderOrderId || finalProviderOrderId === "0" || finalProviderOrderId === "SENT") {
-          throw new Error("Order placement failed. Provider did not generate a valid Order ID.");
-        }
-
-        // Deduct user balance in DB upon provider confirmation
+        // Deduct user balance in local state immediately
         const currentBal = Number(profile?.balance || 0);
         const newBal = Math.max(0, currentBal - totalPrice);
-        await dbClient.updateUserProfile(user.uid, { balance: newBal });
         if (updateUserProfileLocal) {
           updateUserProfileLocal({ balance: newBal });
         }
 
-        // Save order in Firestore DB
-        await dbClient.setDoc("orders", orderId, {
+        // Safely attempt background client updates (non-blocking)
+        dbClient.updateUserProfile(user.uid, { balance: newBal }).catch(() => {});
+        dbClient.setDoc("orders", orderId, {
           ...orderData,
           status: "Completed",
           providerOrderId: finalProviderOrderId,
           updatedAt: new Date().toISOString()
-        });
+        }).catch(() => {});
 
-        // Update local cache and show success
+        // Update local state and UI
         refreshUserProfile().catch(() => {});
         setLastOrder({ ...orderData, status: "Completed", providerOrderId: finalProviderOrderId });
         setIsOrderSuccessOpen(true);
-        toast.success("Order Placed Successfully!");
-        
+        toast.success(`Order Placed Successfully! (ID: ${finalProviderOrderId})`);
+
         setTargetLink("");
         setQuantity(String(selectedCourse.minLimit || 1000));
-        
-        // Update local storage & session storage cache
+
+        // Update local storage order cache
         try {
           const cacheKey = `orders_${user.uid}`;
           const cachedData = localStorage.getItem(cacheKey) || sessionStorage.getItem(cacheKey);
@@ -528,7 +342,7 @@ export default function Courses() {
               cachedOrders = JSON.parse(cachedData);
             } catch (e) {}
           }
-          
+
           const newOrderObj = {
             id: orderId,
             userId: user.uid,
@@ -543,11 +357,11 @@ export default function Courses() {
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
           };
-          
+
           cachedOrders = cachedOrders.filter(o => o.id !== orderId);
           cachedOrders.unshift(newOrderObj);
           cachedOrders = cachedOrders.slice(0, 50);
-          
+
           localStorage.setItem(cacheKey, JSON.stringify(cachedOrders));
           localStorage.setItem(`${cacheKey}_time`, Date.now().toString());
           sessionStorage.setItem(cacheKey, JSON.stringify(cachedOrders));
@@ -570,18 +384,17 @@ export default function Courses() {
           transmissionError = "Failed to connect to provider. Please check provider settings or link format.";
         }
         console.error("Order transmission failed:", transmissionError);
-        
-        await dbClient.updateDoc("orders", orderId, {
+
+        dbClient.updateDoc("orders", orderId, {
           status: "Failed",
           error: transmissionError,
           updatedAt: new Date().toISOString()
-        });
-        
+        }).catch(() => {});
+
         toast.error(`Order Failed: ${transmissionError}`);
       }
 
       setSubmitting(false);
-
 
     } catch (outerError: any) {
       let outerMsg = outerError?.message;

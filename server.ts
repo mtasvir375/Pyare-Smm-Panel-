@@ -2880,7 +2880,8 @@ export async function startServer() {
           })
         };
       }
-      const userBalance = Number(userSnap.data().balance || 0);
+      const uData = userSnap.data() || {};
+      const userBalance = Number(uData.balance ?? uData.walletBalance ?? uData.wallet_balance ?? uData.funds ?? 0);
       const isDeducted = currentOrderData?.balanceAlreadyDeducted || false;
 
       if (!isDeducted && userBalance < orderAmount) {
@@ -3202,7 +3203,7 @@ export async function startServer() {
               "Accept": "application/json, text/plain, */*",
               "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             },
-            timeout: 12000
+            timeout: 25000
           });
           
           await logToDb("PROVIDER_RESPONSE", {
