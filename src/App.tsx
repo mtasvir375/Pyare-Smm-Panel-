@@ -16,15 +16,21 @@ import Login from "./pages/Login";
 import LandingPage from "./pages/LandingPage";
 import { auth } from "@/lib/firebase";
 
-export const STABLE_CLOUD_RUN_BACKEND = typeof window !== "undefined" ? window.location.origin : "";
+export const STABLE_CLOUD_RUN_BACKEND = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
 
 export const CLOUD_RUN_BACKENDS = [
   STABLE_CLOUD_RUN_BACKEND
 ];
 
 export function getApiBaseUrl(): string {
-  if (typeof window === "undefined") return "";
-  return window.location.origin;
+  if (typeof window === "undefined") return STABLE_CLOUD_RUN_BACKEND;
+  const host = window.location.hostname.toLowerCase();
+  // If hosted on Cloud Run or Localhost, use relative / same origin
+  if (host.includes("run.app") || host.includes("localhost") || host.includes("127.0.0.1") || host.includes("webcontainer")) {
+    return window.location.origin;
+  }
+  // If visited on custom domain directly before redirect or during proxy, route API to Cloud Run Production URL
+  return STABLE_CLOUD_RUN_BACKEND;
 }
 
 // Global setup for axios base URL and request/response interceptors

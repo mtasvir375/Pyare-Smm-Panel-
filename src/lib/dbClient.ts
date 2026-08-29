@@ -65,15 +65,24 @@ export const dbClient = {
       const q = query(colRef, ...constraints);
       const snap = await getDocs(q);
       return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    } catch (err) {
-      console.warn(`[DB-CLIENT] Direct getDocs failed for ${table}, trying proxy...`);
+    } catch (err: any) {
+      console.warn(`[DB-CLIENT] Direct getDocs with query failed for ${table}: ${err.message}. Retrying simple collection read...`);
       try {
-        const res = await axios.post('/api/db/list', { collection: table });
-        if (res.data.success) return res.data.data;
-      } catch (proxyErr) {
-        console.error(`[DB-CLIENT] Proxy getDocs also failed for ${table}`);
+        const colRef = collection(db, table);
+        const snap = await getDocs(colRef);
+        return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      } catch (err2: any) {
+        console.warn(`[DB-CLIENT] Direct simple getDocs failed for ${table}: ${err2.message}. Falling back to backend proxy...`);
+        try {
+          const res = await axios.post('/api/db/list', { collection: table });
+          if (res.data && res.data.success && Array.isArray(res.data.data)) {
+            return res.data.data;
+          }
+        } catch (proxyErr: any) {
+          console.error(`[DB-CLIENT] Proxy getDocs also failed for ${table}:`, proxyErr.message);
+        }
+        return [];
       }
-      return [];
     }
   },
 

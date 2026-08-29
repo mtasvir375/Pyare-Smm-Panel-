@@ -227,6 +227,7 @@ export const getCachedSettings = async (forceRefresh = false) => {
         backendApiUrl: res.data.backendApiUrl || "",
         qrAutoEnabled: !!res.data.qrAutoEnabled,
         selectedTheme: res.data.selectedTheme || "charcoal",
+        selectedFestivalTheme: res.data.selectedFestivalTheme || "none",
       };
 
       cachedSettings = settingsData;
@@ -275,6 +276,7 @@ export const getCachedSettings = async (forceRefresh = false) => {
       backendApiUrl: settingsData.backendApiUrl || "",
       qrAutoEnabled: !!settingsData.qrAutoEnabled,
       selectedTheme: settingsData.selectedTheme || "charcoal",
+      selectedFestivalTheme: settingsData.selectedFestivalTheme || "none",
     };
 
     cachedSettings = cleanedSettings;

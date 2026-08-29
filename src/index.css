@@ -280,3 +280,51 @@ body {
 .light-dot {
   @apply absolute w-1.5 h-1.5 rounded-full;
 }
+@keyframes bounce-slow {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes swing {
+  0% { transform: rotate(0deg); }
+  25% { transform: rotate(5deg); }
+  50% { transform: rotate(0deg); }
+  75% { transform: rotate(-5deg); }
+  100% { transform: rotate(0deg); }
+}
+
+@keyframes snow {
+  0% { transform: translateY(-10px); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(100vh); opacity: 0; }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes float-up {
+  0% { transform: translateY(0); opacity: 0; }
+  10% { opacity: 0.9; }
+  90% { opacity: 0.9; }
+  100% { transform: translateY(-100vh); opacity: 0; }
+}
+
+@utility animate-bounce-slow {
+  animation: bounce-slow 3s infinite ease-in-out;
+}
+@utility animate-swing {
+  animation: swing 4s infinite ease-in-out;
+  transform-origin: top center;
+}
+@utility animate-snow {
+  animation: snow 5s infinite linear;
+}
+@utility animate-spin-slow {
+  animation: spin-slow 8s infinite linear;
+}
+@utility animate-float-up {
+  animation: float-up 6s infinite ease-in;
+}

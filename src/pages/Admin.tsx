@@ -136,6 +136,7 @@ export default function Admin() {
   const [whatsappChatNumber, setWhatsappChatNumber] = useState("");
   const [guideVideoUrl, setGuideVideoUrl] = useState("");
   const [selectedTheme, setSelectedTheme] = useState("charcoal");
+  const [selectedFestivalTheme, setSelectedFestivalTheme] = useState("none");
   const [razorpayEnabled, setRazorpayEnabled] = useState(false);
   const [razorpayKeyId, setRazorpayKeyId] = useState("");
   const [razorpayKeySecret, setRazorpayKeySecret] = useState("");
@@ -307,12 +308,13 @@ export default function Admin() {
           setQrUrl(settingsData.paymentQrUrl || "");
           setUpiId(settingsData.upiId || "");
           setMerchantName(settingsData.merchantName || "");
-          setProviderApiUrl(settingsData.providerApiUrl || "");
-          setProviderApiKey(settingsData.providerApiKey || "");
+          setProviderApiUrl(settingsData.providerApiUrl || settingsData.apiUrl || settingsData.api_url || settingsData.provider_api_url || "");
+          setProviderApiKey(settingsData.providerApiKey || settingsData.apiKey || settingsData.api_key || settingsData.provider_api_key || "");
           setWhatsappLink(settingsData.whatsappLink || "");
           setWhatsappChatNumber(settingsData.whatsappChatNumber || "");
           setGuideVideoUrl(settingsData.guideVideoUrl || "");
           setSelectedTheme(settingsData.selectedTheme || "charcoal");
+          setSelectedFestivalTheme(settingsData.selectedFestivalTheme || "none");
           setRazorpayEnabled(settingsData.razorpayEnabled || false);
           setRazorpayKeyId(settingsData.razorpayKeyId || "");
           setRazorpayKeySecret(settingsData.razorpayKeySecret || "");
@@ -417,6 +419,48 @@ export default function Admin() {
 
   const [testingProviders, setTestingProviders] = useState<Set<string>>(new Set());
 
+  const [transmittingOrders, setTransmittingOrders] = useState<Set<string>>(new Set());
+
+  const handleResendOrderToProvider = async (order: any) => {
+    if (!order || !order.id) return;
+    setTransmittingOrders(prev => new Set(prev).add(order.id));
+    toast.loading(`Transmitting order #${order.id} to provider...`, { id: `tx_${order.id}` });
+    try {
+      const payload = {
+        orderId: order.id,
+        userId: order.userId || order.user_id,
+        userEmail: order.userEmail || "",
+        serviceId: order.serviceId || order.service_id || order.courseId,
+        title: order.title || order.courseTitle || "",
+        category: order.category || "Other",
+        quantity: Number(order.quantity),
+        targetLink: order.targetLink || order.target_link,
+        totalPrice: Number(order.totalPrice || order.total_price || 0),
+        providerServiceId: order.providerServiceId || order.provider_service_id,
+        providerId: order.providerId || order.provider_id,
+        isAsync: false,
+        skipStoreCompleted: false
+      };
+
+      const response = await axios.post("/api/proxy-provider", payload, { timeout: 35000 });
+      if (response.data && (response.data.success || response.data.providerOrderId)) {
+        const pOrderId = String(response.data.providerOrderId || "SENT");
+        toast.success(`Successfully sent to provider! Provider Order ID: #${pOrderId}`, { id: `tx_${order.id}` });
+        setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: "In progress", providerOrderId: pOrderId } : o));
+      } else {
+        toast.error(`Transmission failed: ${response.data.error || "Provider error"}`, { id: `tx_${order.id}` });
+      }
+    } catch (err: any) {
+      toast.error(`Transmission error: ${err.response?.data?.error || err.message}`, { id: `tx_${order.id}` });
+    } finally {
+      setTransmittingOrders(prev => {
+        const next = new Set(prev);
+        next.delete(order.id);
+        return next;
+      });
+    }
+  };
+
   const handleTestProviderApi = async (providerId?: string) => {
     if (providerId) {
       setTestingProviders(prev => new Set(prev).add(providerId));
@@ -433,7 +477,12 @@ export default function Admin() {
 
       for (const ep of endpoints) {
         try {
-          const response = await axios.post(ep, { providerId }, { timeout: 15000 });
+          const payload: any = { providerId };
+          if (!providerId) {
+            payload.providerApiUrl = providerApiUrl;
+            payload.providerApiKey = providerApiKey;
+          }
+          const response = await axios.post(ep, payload, { timeout: 15000 });
           if (response?.data) {
             resData = response.data;
             break;
@@ -493,6 +542,7 @@ export default function Admin() {
         whatsappChatNumber: whatsappChatNumber.trim(),
         guideVideoUrl: guideVideoUrl.trim(),
         selectedTheme: selectedTheme,
+        selectedFestivalTheme: selectedFestivalTheme,
         razorpayEnabled: razorpayEnabled,
         razorpayKeyId: razorpayKeyId.trim(),
         razorpayKeySecret: razorpayKeySecret.trim(),
@@ -1712,6 +1762,25 @@ export default function Admin() {
                             <p className="text-[9px] opacity-80">Reason: {typeof order.error === 'string' ? order.error : JSON.stringify(order.error || 'Check provider settings or target link.')}</p>
                           </div>
                         )}
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-2 mt-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-xs bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 flex items-center gap-1.5 h-8 font-bold"
+                            onClick={() => handleResendOrderToProvider(order)}
+                            disabled={transmittingOrders.has(order.id)}
+                          >
+                            <RefreshCw className={cn("w-3.5 h-3.5", transmittingOrders.has(order.id) && "animate-spin")} />
+                            {transmittingOrders.has(order.id) ? "Sending to Provider..." : "⚡ Send / Re-transmit to Provider"}
+                          </Button>
+
+                          {order.providerOrderId && (
+                            <span className="text-[11px] text-green-700 font-bold bg-green-50 px-2.5 py-1 rounded-md border border-green-200 flex items-center gap-1">
+                              ✓ Provider ID: #{order.providerOrderId}
+                            </span>
+                          )}
+                        </div>
                       </CardContent>
                     </Card>
                   ))
@@ -2181,6 +2250,55 @@ export default function Admin() {
                               <h4 className="font-bold text-xs text-gray-900 leading-tight">{t.name}</h4>
                               <p className="text-[9px] font-bold text-primary mb-1">{t.hindi}</p>
                               <p className="text-[8px] text-gray-400 leading-normal">{t.desc}</p>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      
+                      <div className="border-t pt-6 mt-6 space-y-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <svg className="w-5 h-5 text-primary shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                          </svg>
+                          <div>
+                            <h3 className="font-bold text-sm">Festival Special Themes (त्योहार स्पेशल थीम)</h3>
+                            <p className="text-[10px] text-gray-500">Enable an immersive glowing festival theme overlay for the entire website. (Select 'Normal' to disable)</p>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                          {[
+                            { id: "none", name: "Normal (None)", hindi: "सामान्य दिन", color: "#64748b", icon: "☀️" },
+                            { id: "diwali", name: "Happy Diwali", hindi: "दीपावली", color: "#f97316", icon: "🪔" },
+                            { id: "eid", name: "Eid Mubarak", hindi: "ईद", color: "#10b981", icon: "🌙" },
+                            { id: "holi", name: "Happy Holi", hindi: "होली", color: "#ec4899", icon: "🎨" },
+                            { id: "christmas", name: "Merry Christmas", hindi: "क्रिसमस", color: "#ef4444", icon: "🎄" },
+                            { id: "bakraeid", name: "Happy Bakra Eid", hindi: "बकरीद", color: "#059669", icon: "🐐" },
+                            { id: "rakshabandhan", name: "Raksha Bandhan", hindi: "रक्षाबंधन", color: "#e11d48", icon: "🪢" }
+                          ].map((t) => (
+                            <button
+                              key={t.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedFestivalTheme(t.id);
+                                // Dispatch event for instant preview
+                                window.dispatchEvent(new CustomEvent("festivalThemePreview", { detail: t.id }));
+                              }}
+                              className={cn(
+                                "relative flex flex-col items-center p-3 rounded-2xl border-2 text-center transition-all duration-300 hover:scale-[1.02] cursor-pointer",
+                                selectedFestivalTheme === t.id 
+                                  ? "border-primary bg-primary/5 shadow-md shadow-primary/5" 
+                                  : "border-gray-150 bg-white hover:border-gray-300"
+                              )}
+                            >
+                              <div className="text-3xl mb-2 drop-shadow-sm">{t.icon}</div>
+                              <h4 className="font-bold text-xs text-gray-900 leading-tight">{t.name}</h4>
+                              <p className="text-[9px] font-bold text-primary mb-1 mt-0.5" style={{ color: selectedFestivalTheme === t.id ? t.color : '#64748b' }}>{t.hindi}</p>
+                              {selectedFestivalTheme === t.id && (
+                                <div className="absolute top-2 right-2 p-0.5 bg-primary rounded-full text-white shadow-sm">
+                                  <Check className="w-3.5 h-3.5" />
+                                </div>
+                              )}
                             </button>
                           ))}
                         </div>

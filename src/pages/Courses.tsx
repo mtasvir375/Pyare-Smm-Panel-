@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { dbClient } from "@/lib/dbClient";
+import { getFestivalConfig } from "@/lib/festivalConfig";
 import { orderBy, where } from "firebase/firestore";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/context/AuthContext";
@@ -201,20 +202,50 @@ export default function Courses() {
     return String(err);
   };
 
+  const normalizeTargetLink = (rawLink: string, category: string = ""): string => {
+    let link = rawLink.trim();
+    if (!link) return "";
+    
+    // Fix relative protocol e.g. //www.instagram.com -> https://www.instagram.com
+    if (link.startsWith("//")) {
+      link = "https:" + link;
+    }
+    // Fix handles @username -> https://instagram.com/username
+    else if (link.startsWith("@")) {
+      link = `https://instagram.com/${link.substring(1)}`;
+    }
+    // Fix missing http/https protocol
+    else if (!link.startsWith("http://") && !link.startsWith("https://")) {
+      if (link.includes(".") || link.includes("/")) {
+        link = "https://" + link;
+      } else {
+        const catLower = (category || "").toLowerCase();
+        if (catLower.includes("youtube")) {
+          link = `https://youtube.com/@${link}`;
+        } else if (catLower.includes("telegram")) {
+          link = `https://t.me/${link}`;
+        } else {
+          link = `https://instagram.com/${link}`;
+        }
+      }
+    }
+    return link;
+  };
+
   const handleSubmitOrder = async () => {
     if (!selectedCourse || !user) {
       toast.error("Please login to place an order");
       return;
     }
-    if (!targetLink || targetLink.trim().length < 2) {
-      toast.error("Please provide a valid target link, profile, or username");
+
+    const rawLink = targetLink ? targetLink.trim() : "";
+    if (!rawLink || rawLink.length < 1) {
+      toast.error("Please enter a link, profile URL, or username");
       return;
     }
-    const providerServiceId = selectedCourse.providerServiceId || selectedCourse.provider_service_id;
-    if (!providerServiceId || providerServiceId === "0") {
-      toast.error("This service is not currently available (missing configuration).");
-      return;
-    }
+
+    const formattedLink = normalizeTargetLink(rawLink, selectedCourse.category || "");
+
     const qtyNum = Number(quantity);
     const minLimit = Number(selectedCourse.minLimit || selectedCourse.min_limit || 0);
     if (!quantity || isNaN(qtyNum) || qtyNum < minLimit) {
@@ -231,24 +262,27 @@ export default function Courses() {
     }
 
     setSubmitting(true);
+    setLastOrder(null);
+    const orderId = "ord_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
+
     try {
       // Check for duplicate link if required
       if (selectedCourse.prevent_duplicate_link || selectedCourse.preventDuplicateLink) {
-        const isDuplicate = await dbClient.checkDuplicateOrder(user.uid, selectedCourse.id, targetLink);
+        const isDuplicate = await dbClient.checkDuplicateOrder(user.uid, selectedCourse.id, formattedLink);
         if (isDuplicate) {
-          toast.error("This link already working");
+          toast.error("This link is already processing. Please wait.");
           setSubmitting(false);
           return;
         }
       }
 
       // 1. Prepare random order ID on demand
-      setLastOrder(null);
-      const orderId = "ord_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
 
       // 2. Create the order data object with status "Pending"
       const isComboService = !!(selectedCourse.isCombo || selectedCourse.is_combo || selectedCourse.serviceType === "combo" || selectedCourse.service_type === "combo");
       const comboItems = selectedCourse.comboItems || selectedCourse.combo_items || [];
+      const pServiceId = selectedCourse.providerServiceId || selectedCourse.provider_service_id || selectedCourse.id || "1";
+      const pId = selectedCourse.providerId || selectedCourse.provider_id || "";
 
       const orderData = {
         userId: user.uid,
@@ -258,155 +292,126 @@ export default function Courses() {
         title: selectedCourse.title,
         category: selectedCourse.category || "Other",
         quantity: Math.floor(Number(quantity)),
-        targetLink: targetLink.trim(),
+        targetLink: formattedLink,
         totalPrice: Number(totalPrice),
         isCombo: isComboService,
         comboItems: comboItems,
         status: "Pending",
-        providerOrderId: "", 
+        providerOrderId: "PENDING", 
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
 
-      // 3. Prepare order data
-      const savedTargetLink = targetLink.trim();
-      const savedQuantity = String(quantity);
+      // 3. Transmit order directly via backend proxy (/api/proxy-provider)
+      const orderPayload = {
+        orderId,
+        userId: user.uid,
+        userEmail: user.email || "",
+        serviceId: selectedCourse.id,
+        title: selectedCourse.title,
+        category: selectedCourse.category || "Other",
+        quantity: Math.floor(Number(quantity)),
+        targetLink: formattedLink,
+        totalPrice: Number(totalPrice),
+        isCombo: isComboService,
+        comboItems: comboItems,
+        providerServiceId: pServiceId,
+        providerId: pId
+      };
 
-      // 4. Transmit order directly via backend proxy (/api/proxy-provider)
+      let finalProviderOrderId = "PENDING";
+      const res = await axios.post("/api/proxy-provider", orderPayload, { timeout: 30000 });
+      const resData = res.data;
+      if (resData && (resData.success === true || resData.providerOrderId)) {
+        finalProviderOrderId = String(resData.providerOrderId || "PENDING").trim();
+      } else if (resData && resData.error) {
+        let errStr = resData.error;
+        if (typeof errStr === "object") errStr = errStr.message || JSON.stringify(errStr);
+        throw new Error(errStr);
+      }
+
+      // Deduct user balance in local state immediately
+      const currentBal = Number(profile?.balance || 0);
+      const newBal = Math.max(0, currentBal - totalPrice);
+      if (updateUserProfileLocal) {
+        updateUserProfileLocal({ balance: newBal });
+      }
+
+      // Safely update DB balance (non-blocking)
+      dbClient.updateUserProfile(user.uid, { balance: newBal }).catch(() => {});
+
+      // Update local state and UI
+      refreshUserProfile().catch(() => {});
+      setLastOrder({ ...orderData, status: "Pending", providerOrderId: finalProviderOrderId });
+      setIsOrderSuccessOpen(true);
+      toast.success(`Order Placed Successfully! Order ID: ${finalProviderOrderId}`);
+
+      setTargetLink("");
+      setQuantity(String(selectedCourse.minLimit || 1000));
+
+      // Update local storage order cache
       try {
-        console.log(`[Order Transmit] Dispatching order ${orderId} to backend proxy (/api/proxy-provider)`);
+        const cacheKey = `orders_${user.uid}`;
+        const cachedData = localStorage.getItem(cacheKey) || sessionStorage.getItem(cacheKey);
+        let cachedOrders: any[] = [];
+        if (cachedData) {
+          try {
+            cachedOrders = JSON.parse(cachedData);
+          } catch (e) {}
+        }
 
-        const orderPayload = {
-          orderId,
+        const newOrderObj = {
+          id: orderId,
           userId: user.uid,
-          userEmail: user.email || "",
-          serviceId: selectedCourse.id,
-          title: selectedCourse.title,
+          courseId: selectedCourse.id,
+          courseTitle: selectedCourse.title,
           category: selectedCourse.category || "Other",
-          quantity: Math.floor(Number(savedQuantity)),
-          targetLink: savedTargetLink,
-          totalPrice,
-          isCombo: isComboService,
-          comboItems: comboItems,
-          providerServiceId: selectedCourse.providerServiceId || selectedCourse.provider_service_id,
-          providerId: selectedCourse.providerId || selectedCourse.provider_id,
-          isAsync: false
+          quantity: Math.floor(Number(quantity)),
+          targetLink: formattedLink,
+          totalPrice: Number(totalPrice),
+          status: "Pending",
+          providerOrderId: finalProviderOrderId,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
         };
 
-        const res = await axios.post("/api/proxy-provider", orderPayload, { timeout: 40000 });
-        const resData = res.data;
+        cachedOrders = cachedOrders.filter(o => o.id !== orderId);
+        cachedOrders.unshift(newOrderObj);
+        cachedOrders = cachedOrders.slice(0, 50);
 
-        let finalProviderOrderId = "";
-        if (resData && (resData.success === true || resData.providerOrderId)) {
-          finalProviderOrderId = String(resData.providerOrderId || "SENT").trim();
-        } else if (resData && resData.error) {
-          let errStr = resData.error;
-          if (typeof errStr === "object") errStr = errStr.message || JSON.stringify(errStr);
-          throw new Error(errStr);
-        } else {
-          throw new Error("Provider did not return a valid order confirmation.");
-        }
-
-        // Deduct user balance in local state immediately
-        const currentBal = Number(profile?.balance || 0);
-        const newBal = Math.max(0, currentBal - totalPrice);
-        if (updateUserProfileLocal) {
-          updateUserProfileLocal({ balance: newBal });
-        }
-
-        // Safely attempt background client updates (non-blocking)
-        dbClient.updateUserProfile(user.uid, { balance: newBal }).catch(() => {});
-        dbClient.setDoc("orders", orderId, {
-          ...orderData,
-          status: "Completed",
-          providerOrderId: finalProviderOrderId,
-          updatedAt: new Date().toISOString()
-        }).catch(() => {});
-
-        // Update local state and UI
-        refreshUserProfile().catch(() => {});
-        setLastOrder({ ...orderData, status: "Completed", providerOrderId: finalProviderOrderId });
-        setIsOrderSuccessOpen(true);
-        toast.success(`Order Placed Successfully! (ID: ${finalProviderOrderId})`);
-
-        setTargetLink("");
-        setQuantity(String(selectedCourse.minLimit || 1000));
-
-        // Update local storage order cache
-        try {
-          const cacheKey = `orders_${user.uid}`;
-          const cachedData = localStorage.getItem(cacheKey) || sessionStorage.getItem(cacheKey);
-          let cachedOrders: any[] = [];
-          if (cachedData) {
-            try {
-              cachedOrders = JSON.parse(cachedData);
-            } catch (e) {}
-          }
-
-          const newOrderObj = {
-            id: orderId,
-            userId: user.uid,
-            courseId: selectedCourse.id,
-            courseTitle: selectedCourse.title,
-            category: selectedCourse.category || "Other",
-            quantity: Math.floor(Number(savedQuantity)),
-            targetLink: savedTargetLink.trim(),
-            totalPrice: Number(totalPrice),
-            status: "Completed",
-            providerOrderId: finalProviderOrderId,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          };
-
-          cachedOrders = cachedOrders.filter(o => o.id !== orderId);
-          cachedOrders.unshift(newOrderObj);
-          cachedOrders = cachedOrders.slice(0, 50);
-
-          localStorage.setItem(cacheKey, JSON.stringify(cachedOrders));
-          localStorage.setItem(`${cacheKey}_time`, Date.now().toString());
-          sessionStorage.setItem(cacheKey, JSON.stringify(cachedOrders));
-          sessionStorage.setItem(`${cacheKey}_time`, Date.now().toString());
-        } catch (cacheErr) {
-          console.warn("Failed to update orders local cache:", cacheErr);
-        }
-
-      } catch (err: any) {
-        let rawError = err.response?.data?.error || err.message || "Provider error";
-        let transmissionError = "Order placement failed";
-        if (typeof rawError === "string") {
-          transmissionError = rawError;
-        } else if (typeof rawError === "object" && rawError !== null) {
-          transmissionError = rawError.message || rawError.error || JSON.stringify(rawError);
-        } else {
-          transmissionError = String(rawError);
-        }
-        if (transmissionError.includes("[object Object]")) {
-          transmissionError = "Failed to connect to provider. Please check provider settings or link format.";
-        }
-        console.error("Order transmission failed:", transmissionError);
-
-        dbClient.updateDoc("orders", orderId, {
-          status: "Failed",
-          error: transmissionError,
-          updatedAt: new Date().toISOString()
-        }).catch(() => {});
-
-        toast.error(`Order Failed: ${transmissionError}`);
+        localStorage.setItem(cacheKey, JSON.stringify(cachedOrders));
+        localStorage.setItem(`${cacheKey}_time`, Date.now().toString());
+        sessionStorage.setItem(cacheKey, JSON.stringify(cachedOrders));
+        sessionStorage.setItem(`${cacheKey}_time`, Date.now().toString());
+      } catch (cacheErr) {
+        console.warn("Failed to update orders local cache:", cacheErr);
       }
 
-      setSubmitting(false);
+    } catch (err: any) {
+      let rawError = err.response?.data?.error || err.message || "Provider error";
+      let transmissionError = "Order placement failed";
+      if (typeof rawError === "string") {
+        transmissionError = rawError;
+      } else if (typeof rawError === "object" && rawError !== null) {
+        transmissionError = rawError.message || rawError.error || JSON.stringify(rawError);
+      } else {
+        transmissionError = String(rawError);
+      }
+      if (transmissionError.includes("[object Object]")) {
+        transmissionError = "Failed to connect to provider. Please check provider settings or link format.";
+      }
+      console.error("Order transmission failed:", transmissionError);
 
-    } catch (outerError: any) {
-      let outerMsg = outerError?.message;
-      if (typeof outerMsg === "object" && outerMsg !== null) {
-        outerMsg = JSON.stringify(outerMsg);
-      }
-      if (!outerMsg || outerMsg.includes("[object Object]")) {
-        outerMsg = "Failed to place order. Please check provider settings.";
-      }
-      toast.error(outerMsg);
-      setSubmitting(false);
+      dbClient.updateDoc("orders", orderId, {
+        status: "Failed",
+        error: transmissionError,
+        updatedAt: new Date().toISOString()
+      }).catch(() => {});
+
+      toast.error(`Order Failed: ${transmissionError}`);
     }
+
+    setSubmitting(false);
   };
 
   const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -726,25 +731,34 @@ export default function Courses() {
     return dots;
   };
 
+  const festivalTheme = paymentSettings?.selectedFestivalTheme || "none";
+  const festivalConfig = getFestivalConfig(festivalTheme);
+
   return (
     <div className="w-full max-w-xl mx-auto space-y-4 pb-12">
       {/* Balance Card */}
-      <Card className="border-none shadow-sm bg-gray-900 text-white overflow-hidden relative group">
-        {/* Animated Lights Border */}
-        <div className="absolute inset-0 pointer-events-none">
-          {renderLights()}
-        </div>
+      <Card className={cn("border-none shadow-sm overflow-hidden relative group text-white", festivalConfig ? festivalConfig.cardBgClass : "bg-gray-900")}>
+        {!festivalConfig && (
+          <div className="absolute inset-0 pointer-events-none">
+            {renderLights()}
+          </div>
+        )}
+        
+        {festivalConfig && festivalConfig.cardDecorations}
 
-        <div className="absolute top-0 right-0 p-6 opacity-10">
-          <Wallet className="w-16 h-16" />
-        </div>
-        <CardContent className="p-4 relative z-10">
-          <p className="text-[10px] font-bold uppercase tracking-wider opacity-80">Available Balance</p>
-          <div className="flex items-end gap-2 mt-0.5">
-            <h2 className="text-2xl font-bold">₹{Number(profile?.balance || 0).toFixed(2)}</h2>
+        {!festivalConfig && (
+          <div className="absolute top-0 right-0 p-6 opacity-10">
+            <Wallet className="w-16 h-16" />
+          </div>
+        )}
+
+        <CardContent className="p-4 relative z-20 h-full flex flex-col justify-center">
+          <p className="text-[10px] font-bold uppercase tracking-wider opacity-90">AVAILABLE BALANCE</p>
+          <div className="flex items-center gap-3 mt-1">
+            <h2 className="text-3xl font-bold">₹{Number(profile?.balance || 0).toFixed(2)}</h2>
             <Button 
               size="sm" 
-              className="mb-0.5 rounded-full h-9 text-xs font-bold uppercase bg-primary hover:bg-primary/90 text-primary-foreground border-none shadow-sm px-5 transition-all duration-300"
+              className={cn("rounded-full h-7 text-[10px] font-bold uppercase px-4 shadow-md border-none", festivalConfig ? "bg-[#111] hover:bg-black text-white" : "bg-primary hover:bg-primary/90 text-primary-foreground")}
               onClick={async () => {
                 setIsAddFundsOpen(true);
                 try {
@@ -939,25 +953,30 @@ export default function Courses() {
           </div>
 
           {selectedCourse && (
-            <div className="p-3 bg-primary/5 rounded-xl border border-primary/10 space-y-0.5">
-              <div className="flex justify-between items-center">
-                <span className="text-xs font-medium text-gray-600">Total Charge</span>
-                <span className="text-lg font-bold text-primary">₹{totalPrice}</span>
+            <div className={cn("p-4 rounded-xl border flex items-center justify-between transition-all", festivalConfig ? "bg-white border-gray-100 shadow-sm" : "bg-primary/5 border-primary/10")}>
+              <div className="flex items-center gap-3">
+                 {festivalConfig?.totalChargeImg && <img src={festivalConfig.totalChargeImg} alt="" className="w-8 h-8 object-contain drop-shadow-sm" />}
+                 <span className="text-sm font-bold text-gray-700">Total Charge</span>
               </div>
-              {(profile?.balance || 0) < totalPrice && (
-                <p className="text-[9px] text-red-500 flex items-center gap-1 font-bold">
-                  <AlertCircle className="w-2.5 h-2.5" /> Insufficient balance!
-                </p>
-              )}
+              <div className="flex flex-col items-end">
+                <span className={cn("text-xl font-bold", festivalConfig ? "text-[#ff5722]" : "text-primary")}>₹{totalPrice}</span>
+                {(profile?.balance || 0) < totalPrice && (
+                  <p className="text-[9px] text-red-500 flex items-center gap-1 font-bold mt-0.5">
+                    <AlertCircle className="w-2.5 h-2.5" /> Low balance!
+                  </p>
+                )}
+              </div>
             </div>
           )}
 
           <Button 
-            className="w-full rounded-xl h-11 font-bold text-base shadow-lg shadow-primary/20" 
+            className={cn("w-full rounded-xl h-12 font-bold text-base shadow-lg relative overflow-hidden flex items-center justify-center transition-all duration-300", festivalConfig ? "bg-[#ff5722] hover:bg-[#e64a19] text-white border-none" : "shadow-primary/20 bg-primary text-primary-foreground")}
             onClick={handleSubmitOrder}
             disabled={submitting || !selectedCourse || (profile?.balance || 0) < totalPrice}
           >
-            {submitting ? "Placing Order..." : "Place Order"}
+            {festivalConfig?.btnImgLeft && <img src={festivalConfig.btnImgLeft} className="w-10 h-10 absolute left-2 bottom-0 drop-shadow-md object-contain" alt="" />}
+            <span className="z-10 relative drop-shadow-sm">{submitting ? "Placing Order..." : "Place Order"}</span>
+            {festivalConfig?.btnImgRight && <img src={festivalConfig.btnImgRight} className="w-8 h-8 absolute right-4 drop-shadow-md object-contain" alt="" />}
           </Button>
         </CardContent>
       </Card>

@@ -7,6 +7,13 @@
       "**/.*",
       "**/node_modules/**"
     ],
+    "redirects": [
+      {
+        "source": "/:path*",
+        "destination": "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app/:path*",
+        "type": 301
+      }
+    ],
     "rewrites": [
       {
         "source": "**",
