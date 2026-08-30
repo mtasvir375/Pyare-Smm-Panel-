@@ -3901,37 +3901,11 @@ export async function startServer() {
 
       console.log(`[HTTP Proxy] Order transmission call received for order: ${orderId} (skipStoreCompleted = ${skipStoreCompleted})`);
 
-      // 1. Create order document in database with status "Pending"
-      if (final_user_id && !skipStoreCompleted) {
-        const orderData = {
-          id: orderId,
-          userId: final_user_id,
-          userEmail: final_user_email,
-          serviceId: final_service_id,
-          courseId: final_service_id,
-          title: final_title,
-          category: category || "Other",
-          quantity: Number(quantity),
-          targetLink: String(final_target_link).trim(),
-          totalPrice: final_total_price,
-          isCombo: !!isCombo,
-          comboItems: comboItems || [],
-          status: "Pending",
-          providerOrderId: "PENDING",
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        };
-
-        const createSuccess = await setDocSafe("orders", orderId, orderData, req.headers.authorization as string);
-        if (!createSuccess) {
-          await setDocREST("orders", orderId, orderData, req.headers.authorization as string).catch(() => {});
-        }
-      }
-
       const payloadData = {
         userId: final_user_id,
         userEmail: final_user_email,
         serviceId: final_service_id,
+        courseId: final_service_id,
         title: final_title,
         category: category || "Other",
         quantity: Number(quantity),
@@ -3946,11 +3920,35 @@ export async function startServer() {
 
       const userToken = (req.headers.authorization as string) || "";
 
-      // 2. Dispatch synchronous transmission to SMM provider panel
+      // 1. Dispatch synchronous transmission to SMM provider panel
       const result = await transmitOrderToProviderDirect(orderId, payloadData, skipStoreCompleted, userToken);
 
-      // 3. Return response to user
+      // 2. Return response to user
       if (result.success) {
+        // Save order document in database only upon confirmed provider success
+        if (final_user_id && !skipStoreCompleted) {
+          const orderData = {
+            id: orderId,
+            userId: final_user_id,
+            userEmail: final_user_email,
+            serviceId: final_service_id,
+            courseId: final_service_id,
+            title: final_title,
+            category: category || "Other",
+            quantity: Number(quantity),
+            targetLink: String(final_target_link).trim(),
+            totalPrice: final_total_price,
+            isCombo: !!isCombo,
+            comboItems: comboItems || [],
+            status: "Pending",
+            providerOrderId: result.providerOrderId || "1",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+
+          await setDocSafe("orders", orderId, orderData, req.headers.authorization as string).catch(() => {});
+        }
+
         return res.json({ success: true, isAsync: false, providerOrderId: result.providerOrderId, orderId });
       } else {
         return res.status(400).json({ success: false, error: result.alreadyProcessing ? "Processing in-progress..." : result.error, orderId });
