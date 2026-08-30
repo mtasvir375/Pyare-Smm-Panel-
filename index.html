@@ -22,23 +22,6 @@
     <!-- Canonical URL -->
     <link rel="canonical" href="https://pyaresmmpanel.online/" />
 
-    <!-- Instant Smart Redirection from Custom Domain to Google Cloud Production URL -->
-    <script>
-      (function() {
-        try {
-          var host = window.location.hostname.toLowerCase();
-          var defaultDomain = "ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
-          // If the visitor enters via custom domain (e.g. pyaresmmpanel.online or any other custom domain)
-          if (host && !host.includes("run.app") && !host.includes("localhost") && !host.includes("127.0.0.1") && !host.includes("webcontainer") && !host.includes("ais-dev") && !host.includes("ais-pre")) {
-            var target = "https://" + defaultDomain + window.location.pathname + window.location.search + window.location.hash;
-            window.location.replace(target);
-          }
-        } catch(e) {
-          console.error("Redirect check error:", e);
-        }
-      })();
-    </script>
-
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://pyaresmmpanel.online/" />

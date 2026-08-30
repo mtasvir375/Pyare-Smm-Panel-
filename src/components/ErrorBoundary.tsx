@@ -46,7 +46,17 @@ export class ErrorBoundary extends React.Component<Props, State> {
           <h2 className="text-2xl font-bold text-gray-900">Oops!</h2>
           <p className="text-gray-600 max-w-md">{errorMessage}</p>
           <Button 
-            onClick={() => window.location.reload()}
+            onClick={() => {
+              try {
+                localStorage.removeItem("cached_courses");
+                localStorage.removeItem("cached_courses_time");
+                localStorage.removeItem("cached_settings");
+                localStorage.removeItem("cached_settings_time");
+                localStorage.removeItem("cached_providers");
+                localStorage.removeItem("cached_providers_time");
+              } catch (e) {}
+              window.location.reload();
+            }}
             className="rounded-full px-8"
           >
             Reload Page

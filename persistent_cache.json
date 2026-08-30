@@ -27,7 +27,7 @@
       "qrAutoToken": "",
       "razorpayKeyId": "rzp_test_T7t3jWdort7zKi",
       "razorpayEnabled": false,
-      "upiId": "mtasvir375-1@okhdfcbank",
+      "upiId": "mdsaudalam621@okicici",
       "paymentQrUrl": "",
       "phonepeSaltKey": "",
       "qrAutoProvider": "upigateway",
@@ -41,37 +41,40 @@
       "qrAutoApiKey": "aad9befe-802c-4b3f-b3e7-26cae4640b8c",
       "whatsappChatNumber": "9942658657"
     },
-    "time": 1785370783091
+    "time": 1788004963587
   },
   "providers": [
     [
       "GbtZDOMSvSrBPgeRy6aU",
       {
         "data": {
+          "id": "GbtZDOMSvSrBPgeRy6aU",
           "name": "Smm bin",
           "createdAt": "2026-07-13T01:42:06.734Z",
           "apiKey": "f55bb2dfdc035f9c3c9e737bb72922a51d64309f",
           "apiUrl": "https://www.smmbin.com/api/v2"
         },
-        "time": 1785369743877
+        "time": 1788004964870
       }
     ],
     [
       "k7IIPgA8QcpGmZGul3Pw",
       {
         "data": {
+          "id": "k7IIPgA8QcpGmZGul3Pw",
           "createdAt": "2026-07-27T10:33:37.983Z",
           "name": "The main smm ❤️❤️😂",
           "apiUrl": "https://themainsmmprovider.com/api/v2",
           "apiKey": "505344007e6bb5e4daf9a20d71cb946a411f65d5"
         },
-        "time": 1785369741400
+        "time": 1788004769090
       }
     ],
     [
       "BjKqhBjQkzJ6y1GIYf5R",
       {
         "data": {
+          "id": "BjKqhBjQkzJ6y1GIYf5R",
           "name": "Wholesale smm store",
           "apiUrl": "https://wholesalesmmstore.com/api/v2",
           "apiKey": "68111b9cb78051d955d830f292a0217a7bdc9371",
@@ -86,6 +89,7 @@
       "QqFbpGujCOyCkZLq5tBQ",
       {
         "data": {
+          "id": "QqFbpGujCOyCkZLq5tBQ",
           "title": "Reels Views ♻️",
           "comboItems": [],
           "serviceType": "combo",

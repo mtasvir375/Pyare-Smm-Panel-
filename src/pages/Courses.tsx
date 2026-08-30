@@ -142,6 +142,18 @@ export default function Courses() {
   }, []);
 
   useEffect(() => {
+    if (isAddFundsOpen) {
+      import("@/lib/cache").then(mod => mod.getCachedSettings(false)).then(settings => {
+        if (settings) {
+          setPaymentSettings(settings);
+          const hasAuto = !!(settings.razorpayEnabled || settings.phonepeEnabled || settings.paytmEnabled);
+          setPaymentMethod(hasAuto ? "auto" : "manual");
+        }
+      }).catch(console.error);
+    }
+  }, [isAddFundsOpen]);
+
+  useEffect(() => {
     const services = courses.filter(c => c.category === selectedCategory);
     if (services.length > 0) {
       if (!selectedCourseId || !services.find(s => s.id === selectedCourseId)) {
@@ -279,8 +291,9 @@ export default function Courses() {
       // 1. Prepare random order ID on demand
 
       // 2. Create the order data object with status "Pending"
-      const isComboService = !!(selectedCourse.isCombo || selectedCourse.is_combo || selectedCourse.serviceType === "combo" || selectedCourse.service_type === "combo");
-      const comboItems = selectedCourse.comboItems || selectedCourse.combo_items || [];
+      const comboItems = Array.isArray(selectedCourse.comboItems) ? selectedCourse.comboItems : 
+                         Array.isArray(selectedCourse.combo_items) ? selectedCourse.combo_items : [];
+      const isComboService = comboItems.length > 0;
       const pServiceId = selectedCourse.providerServiceId || selectedCourse.provider_service_id || selectedCourse.id || "1";
       const pId = selectedCourse.providerId || selectedCourse.provider_id || "";
 
@@ -320,7 +333,15 @@ export default function Courses() {
       };
 
       let finalProviderOrderId = "PENDING";
-      const res = await axios.post("/api/proxy-provider", orderPayload, { timeout: 30000 });
+      let userToken = "";
+      try {
+        userToken = await user.getIdToken();
+      } catch (tokErr) {}
+
+      const headers: any = { "Content-Type": "application/json" };
+      if (userToken) headers["Authorization"] = `Bearer ${userToken}`;
+
+      const res = await axios.post("/api/proxy-provider", orderPayload, { headers, timeout: 35000 });
       const resData = res.data;
       if (resData && (resData.success === true || resData.providerOrderId)) {
         finalProviderOrderId = String(resData.providerOrderId || "PENDING").trim();
@@ -1003,7 +1024,7 @@ export default function Courses() {
             <CardContent className="p-3 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-gray-500">Service ID</span>
-                <span className="text-xs font-bold">#{selectedCourse.id.slice(0, 8)}</span>
+                <span className="text-xs font-bold">#{String(selectedCourse?.id || "").slice(0, 8) || "SMM"}</span>
               </div>
               {(selectedCourse.isPackage || selectedCourse.is_package) ? (
                 <>

@@ -233,6 +233,15 @@ export const dbClient = {
   },
 
   async getProviders(): Promise<any[]> {
+    try {
+      const { getCachedProviders } = await import('@/lib/cache');
+      const cached = await getCachedProviders();
+      if (Array.isArray(cached) && cached.length > 0) return cached;
+    } catch (e) {}
+    try {
+      const res = await axios.get('/api/providers');
+      if (Array.isArray(res.data) && res.data.length > 0) return res.data;
+    } catch (e) {}
     return this.getDocs('providers', [orderBy('createdAt', 'desc')]);
   },
 

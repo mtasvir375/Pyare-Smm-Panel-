@@ -24,13 +24,7 @@ export const CLOUD_RUN_BACKENDS = [
 
 export function getApiBaseUrl(): string {
   if (typeof window === "undefined") return STABLE_CLOUD_RUN_BACKEND;
-  const host = window.location.hostname.toLowerCase();
-  // If hosted on Cloud Run or Localhost, use relative / same origin
-  if (host.includes("run.app") || host.includes("localhost") || host.includes("127.0.0.1") || host.includes("webcontainer")) {
-    return window.location.origin;
-  }
-  // If visited on custom domain directly before redirect or during proxy, route API to Cloud Run Production URL
-  return STABLE_CLOUD_RUN_BACKEND;
+  return window.location.origin;
 }
 
 // Global setup for axios base URL and request/response interceptors

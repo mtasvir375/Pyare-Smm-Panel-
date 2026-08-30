@@ -295,6 +295,18 @@ export default function Profile() {
     fetchSettings();
   }, []);
 
+  useEffect(() => {
+    if (isAddFundsOpen) {
+      import("@/lib/cache").then(mod => mod.getCachedSettings(true)).then(settings => {
+        if (settings) {
+          setPaymentSettings(settings);
+          const hasAuto = !!(settings.razorpayEnabled || settings.phonepeEnabled || settings.paytmEnabled || settings.qrAutoEnabled);
+          setPaymentMethod(hasAuto ? "auto" : "manual");
+        }
+      }).catch(console.error);
+    }
+  }, [isAddFundsOpen]);
+
   const handleLogout = async () => {
     try {
       console.log("[LOGOUT] Attempting sign out...");

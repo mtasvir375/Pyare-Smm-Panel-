@@ -251,21 +251,14 @@ export default function Admin() {
     setLoading(true);
     try {
       if (tab === "courses") {
-        try {
-          const count = await dbClient.getTableCount("courses");
-          setTotalActiveServices(count);
-        } catch (cErr) {
-          console.error("Error getting courses count:", cErr);
-        }
+        const { getCachedCourses } = await import("@/lib/cache");
+        let allCourses = await getCachedCourses(force);
+        setTotalActiveServices(allCourses.length);
 
-        const constraints: any[] = [];
+        let coursesList = [...allCourses];
         if (courseCategoryFilter && courseCategoryFilter !== "All") {
-          constraints.push(where("category", "==", courseCategoryFilter));
+          coursesList = coursesList.filter((c: any) => c.category === courseCategoryFilter);
         }
-        constraints.push(orderBy("createdAt", "desc"));
-        constraints.push(limit(40)); // Strict limit to prevent reading 7,000+ courses
-
-        let coursesList = await dbClient.getDocs("courses", constraints);
 
         if (courseSearch.trim()) {
           const sTerm = courseSearch.toLowerCase();
@@ -577,8 +570,10 @@ export default function Admin() {
       setProviderApiKey(cleanKey);
       setBackendApiUrl(cleanBackend);
       setQrFile(null);
-      import("@/lib/cache").then(mod => mod.clearCache());
-      toast.success("Global Settings updated!");
+      const cacheMod = await import("@/lib/cache");
+      cacheMod.clearCache();
+      await cacheMod.getCachedSettings(true);
+      toast.success("Payment & Global Settings updated successfully!");
     } catch (error: any) {
       toast.error(`Error saving settings: ${error.message}`);
     } finally {
@@ -703,7 +698,7 @@ export default function Admin() {
       let responseBody: any = null;
 
       try {
-        const response = await axios.post(`${STABLE_CLOUD_RUN_BACKEND}/api/proxy-provider`, {
+        const response = await axios.post(`/api/proxy-provider`, {
           orderId: order.id,
           serviceId: order.serviceId || order.service_id,
           courseId: order.serviceId || order.service_id,

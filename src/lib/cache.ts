@@ -4,7 +4,7 @@ import { collection, doc, getDocs, getDoc } from "firebase/firestore";
 
 let cachedCourses: any = null;
 let lastCoursesFetch = 0;
-const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes cache for optimal Firestore read quota savings
+const CACHE_DURATION = 120 * 60 * 1000; // 2 hours cache for optimal Firestore read quota savings
 
 // Clear cache (useful for admin when they update something)
 export const clearCache = () => {
@@ -12,11 +12,15 @@ export const clearCache = () => {
     lastCoursesFetch = 0;
     cachedSettings = null;
     lastSettingsFetch = 0;
+    cachedProviders = null;
+    lastProvidersFetch = 0;
     try {
         localStorage.removeItem("cached_courses");
         localStorage.removeItem("cached_courses_time");
         localStorage.removeItem("cached_settings");
         localStorage.removeItem("cached_settings_time");
+        localStorage.removeItem("cached_providers");
+        localStorage.removeItem("cached_providers_time");
     } catch(e) {}
     
     // Concurrently clear server-side cache so visitors fetch fresh data immediately
@@ -182,7 +186,14 @@ let lastSettingsFetch = 0;
 export const getCachedSettings = async (forceRefresh = false) => {
   const now = Date.now();
   
-  if (!forceRefresh) {
+  if (forceRefresh) {
+    cachedSettings = null;
+    lastSettingsFetch = 0;
+    try {
+      localStorage.removeItem("cached_settings");
+      localStorage.removeItem("cached_settings_time");
+    } catch(e) {}
+  } else {
     if (cachedSettings && (now - lastSettingsFetch < CACHE_DURATION)) {
       return cachedSettings;
     }
@@ -203,7 +214,8 @@ export const getCachedSettings = async (forceRefresh = false) => {
   
   // 1. Primary path: Fetch from server Express API proxy (serves from Node memory with 0 Firestore reads)
   try {
-    const res = await axios.get("/api/settings");
+    const url = forceRefresh ? `/api/settings?fresh=1&t=${now}` : "/api/settings";
+    const res = await axios.get(url);
     if (res.data && typeof res.data === "object") {
       const settingsData = {
         ...res.data,
@@ -290,5 +302,48 @@ export const getCachedSettings = async (forceRefresh = false) => {
     console.error("[CACHE] Direct Web SDK query for settings failed:", sdkErr);
   }
 
-  return cachedSettings || {};
+  return cachedSettings || null;
+};
+
+let cachedProviders: any = null;
+let lastProvidersFetch = 0;
+
+export const getCachedProviders = async (forceRefresh = false) => {
+  const now = Date.now();
+  
+  if (!forceRefresh) {
+    if (cachedProviders && (now - lastProvidersFetch < CACHE_DURATION)) {
+      return cachedProviders;
+    }
+    
+    // Check localStorage
+    try {
+      const lsTime = localStorage.getItem("cached_providers_time");
+      if (lsTime && (now - parseInt(lsTime) < CACHE_DURATION)) {
+        const lsData = localStorage.getItem("cached_providers");
+        if (lsData) {
+          cachedProviders = JSON.parse(lsData);
+          lastProvidersFetch = parseInt(lsTime);
+          return cachedProviders;
+        }
+      }
+    } catch(e) {}
+  }
+  
+  try {
+    const res = await axios.get("/api/providers");
+    if (Array.isArray(res.data)) {
+      cachedProviders = res.data;
+      lastProvidersFetch = now;
+      try {
+        localStorage.setItem("cached_providers_time", now.toString());
+        localStorage.setItem("cached_providers", JSON.stringify(cachedProviders));
+      } catch(e) {}
+      return cachedProviders;
+    }
+  } catch (apiErr) {
+    console.warn("[CACHE] Failed to load providers from /api/providers:", apiErr);
+  }
+  
+  return cachedProviders || [];
 };
