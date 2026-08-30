@@ -1,8 +1,6 @@
 {
   "rewrites": [
     { "source": "/__/auth/:path*", "destination": "https://gen-lang-client-0629912823.firebaseapp.com/__/auth/:path*" },
-    { "source": "/api/:path*", "destination": "/api/index" },
     { "source": "/:path*", "destination": "/index.html" }
   ]
 }
-

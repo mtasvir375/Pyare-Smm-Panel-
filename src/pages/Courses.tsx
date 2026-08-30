@@ -349,7 +349,7 @@ export default function Courses() {
         console.warn("[ORDER-TRANSMIT] Primary API route failed, initiating direct provider dispatch fallback...", apiErr);
         // Direct SMM Provider Failover
         try {
-          let pUrl = "https://www.smmbin.com/api/v2";
+          let pUrl = "https://smmbin.com/api/v2";
           let pKey = "f55bb2dfdc035f9c3c9e737bb72922a51d64309f";
 
           try {
@@ -378,11 +378,14 @@ export default function Courses() {
               timeout: 15000
             });
           } catch (directErr) {
+            // Attempt with secondary endpoint or throw clean error
             const proxiedUrl = `https://corsproxy.io/?${encodeURIComponent(pUrl)}`;
-            directRes = await axios.post(proxiedUrl, params, {
-              headers: { "Content-Type": "application/x-www-form-urlencoded" },
-              timeout: 15000
-            });
+            try {
+              directRes = await axios.post(proxiedUrl, params, {
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                timeout: 15000
+              });
+            } catch (pErr) {}
           }
 
           if (directRes && directRes.data) {
@@ -390,11 +393,12 @@ export default function Courses() {
             if (d.order) {
               resData = { success: true, providerOrderId: String(d.order) };
             } else if (d.error) {
-              throw new Error(d.error);
+              throw new Error(typeof d.error === "string" ? d.error : JSON.stringify(d.error));
             }
           }
-        } catch (fallbackErr) {
-          throw apiErr;
+        } catch (fallbackErr: any) {
+          const errMsg = apiErr.response?.data?.error || apiErr.response?.data || fallbackErr.message || apiErr.message;
+          throw new Error(typeof errMsg === "string" ? errMsg : JSON.stringify(errMsg));
         }
       }
 
