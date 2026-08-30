@@ -33,6 +33,13 @@ export interface UserProfile {
 export const dbClient = {
   // Generic helpers
   async getDoc(table: string, id: string): Promise<any> {
+    if (table === "settings" && id === "payment") {
+      try {
+        const { getCachedSettings } = await import('@/lib/cache');
+        const settings = await getCachedSettings();
+        if (settings) return settings;
+      } catch (e) {}
+    }
     try {
       const docRef = doc(db, table, id);
       const snap = await getDoc(docRef);
@@ -242,7 +249,8 @@ export const dbClient = {
       const res = await axios.post('/api/admin/process-deposit', {
         depositId,
         action,
-        adminEmail
+        adminEmail,
+        deposit
       });
       if (res.data && res.data.success) {
         return res.data;
@@ -379,10 +387,23 @@ export const dbClient = {
   },
 
   async getCourses(): Promise<any[]> {
-    return this.getDocs('courses', [orderBy('createdAt', 'desc')]);
+    try {
+      const { getCachedCourses } = await import('@/lib/cache');
+      const cached = await getCachedCourses();
+      if (Array.isArray(cached) && cached.length > 0) return cached;
+    } catch (e) {}
+    try {
+      const res = await axios.get('/api/courses');
+      if (Array.isArray(res.data) && res.data.length > 0) return res.data;
+    } catch (e) {}
+    return this.getDocs('courses', [orderBy('createdAt', 'desc'), limit(100)]);
   },
 
   async getOrdersAdmin(l = 50): Promise<any[]> {
+    try {
+      const response = await axios.get(`/api/admin/all-orders?limit=${l}`);
+      if (Array.isArray(response.data) && response.data.length > 0) return response.data;
+    } catch (e) {}
     return this.getDocs('orders', [orderBy('createdAt', 'desc'), limit(l)]);
   },
 

@@ -1318,38 +1318,31 @@ export async function startServer() {
     if (!useRestFallback) {
       try {
         const userRef = fdb.collection("users").doc(user_id);
-        await fdb.runTransaction(async (transaction) => {
-          const userDoc = await transaction.get(userRef);
-          if (!userDoc.exists) {
-            console.log(`[BALANCE-SAFE] User doc ${user_id} missing in transaction. Creating new user document...`);
-            const initBal = Math.max(0, change);
-            transaction.set(userRef, {
+        // Direct atomic increment avoids a Firestore document read entirely!
+        try {
+          await userRef.update({
+            balance: admin.firestore.FieldValue.increment(change),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+          });
+          console.log(`[BALANCE-SAFE] Balance adjusted successfully via atomic increment (0 reads).`);
+          return true;
+        } catch (updateErr: any) {
+          if (updateErr.code === 5 || updateErr.message?.includes("NOT_FOUND")) {
+            await userRef.set({
               uid: user_id,
-              balance: initBal,
+              balance: Math.max(0, change),
               role: "student",
               createdAt: new Date().toISOString(),
               updatedAt: admin.firestore.FieldValue.serverTimestamp()
-            });
-            return;
+            }, { merge: true });
+            return true;
           }
-          
-          const uData = userDoc.data() || {};
-          const currentBalance = Number(uData.balance ?? uData.walletBalance ?? uData.wallet_balance ?? uData.funds ?? 0);
-          const newBalance = Number((currentBalance + change).toFixed(2));
-          transaction.update(userRef, { 
-            balance: newBalance,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp() 
-          });
-        });
-        console.log(`[BALANCE-SAFE] Balance adjusted successfully via transaction.`);
-        return true;
+          throw updateErr;
+        }
       } catch (err: any) {
         console.error(`[BALANCE-SAFE] Error: ${err.message}`);
         if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
-          console.warn("[FIREBASE] Permission denied in transaction. Engaging REST Fallback.");
           useRestFallback = true;
-        } else {
-          // Fallback to REST instead of failing
         }
       }
     }
@@ -1358,8 +1351,8 @@ export async function startServer() {
   };
   
   // Health check
-  // Diagnostic endpoint to read the local debug log (Admin only)
-  app.get("/api/admin/transmission-logs", async (req, res) => {
+  app.get("/api/health", (req, res) => res.json({ status: "ok" }));
+  app.get("/api/admin/transmission-logs", (req, res) => res.json([]));
   // Public SMM Panel Standard API Endpoint
   app.all("/api/v2", async (req, res) => {
     const apiKeyParam = req.body.key || req.query.key;
@@ -1499,6 +1492,7 @@ export async function startServer() {
     }
   });
 
+  app.get("/api/admin/transmission-logs", async (req, res) => {
     try {
       const logPath = path.join(process.cwd(), "backend_debug.log");
       if (!fs.existsSync(logPath)) return res.json({ logs: "No logs found yet." });
@@ -1875,7 +1869,7 @@ export async function startServer() {
   });
 
   app.post("/api/admin/process-deposit", async (req, res) => {
-    const { depositId, action, adminEmail } = req.body;
+    const { depositId, action, adminEmail, deposit: clientDeposit } = req.body;
     if (!depositId || !action) {
       return res.status(400).json({ error: "Missing depositId or action" });
     }
@@ -1883,13 +1877,16 @@ export async function startServer() {
     try {
       console.log(`[DEPOSIT-ACTION] Processing deposit ${depositId} with action ${action} by ${adminEmail}`);
       
-      // 1. Fetch deposit doc (1 single read)
-      const depSnap = await getDocSafe("deposits", depositId, req.headers.authorization as string, true);
-      if (!depSnap.exists) {
-        return res.status(404).json({ error: "Deposit not found" });
+      let depData = clientDeposit;
+      if (!depData || !depData.userId || !depData.amount) {
+        // Fallback: 1 single read if client didn't supply deposit details
+        const depSnap = await getDocSafe("deposits", depositId, req.headers.authorization as string, true);
+        if (!depSnap.exists) {
+          return res.status(404).json({ error: "Deposit not found" });
+        }
+        depData = depSnap.data();
       }
 
-      const depData = depSnap.data();
       const currentStatus = (depData.status || "").toLowerCase();
       if (currentStatus === "approved" && action === "approved") {
         return res.json({ success: true, message: "Deposit is already approved", deposit: depData });
@@ -1909,13 +1906,13 @@ export async function startServer() {
           return res.status(400).json({ error: "Invalid deposit amount" });
         }
 
-        // Adjust user balance safely (1 read, 1 write)
+        // Adjust user balance safely (0 reads, 1 write)
         const balanceAdjusted = await adjustUserBalanceSafe(userId, amount, req.headers.authorization as string);
         if (!balanceAdjusted) {
           return res.status(500).json({ error: "Failed to update user wallet balance" });
         }
 
-        // Update deposit status (1 write)
+        // Update deposit status (0 reads, 1 write)
         const updateData = {
           status: "approved",
           verifiedAt: new Date().toISOString(),
