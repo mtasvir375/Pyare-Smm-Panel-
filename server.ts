@@ -2594,9 +2594,9 @@ export async function startServer() {
       return res.status(400).json({ error: "Invalid deposit amount or user ID." });
     }
 
-    const cleanUtr = String(utr || "").replace(/\D/g, "");
+    const cleanUtr = String(utr || "").replace(/\D/g, "").trim();
     if (cleanUtr.length < 10 || cleanUtr.length > 18) {
-      return res.status(400).json({ error: "Invalid UTR format. Must be a 12-digit UPI reference number." });
+      return res.status(400).json({ error: "Invalid UTR format. Must be a 10-18 digit UPI reference number (normally 12 digits)." });
     }
     
     try {
@@ -2604,11 +2604,11 @@ export async function startServer() {
       let duplicateDeposit = null;
       if (serverCache.deposits.size > 0) {
         const cachedDeps = Array.from(serverCache.deposits.values()).map(d => d.data || d);
-        duplicateDeposit = cachedDeps.find((d: any) => String(d.utr || "").trim().toLowerCase() === cleanUtr.toLowerCase());
+        duplicateDeposit = cachedDeps.find((d: any) => String(d.utr || "").replace(/\D/g, "").trim() === cleanUtr);
       }
 
-      // If not found in cache, query Firestore with exact UTR filter (only 1 read instead of scanning entire collection!)
-      if (!duplicateDeposit) {
+      // If not found in cache, query Firestore with exact UTR filter (only 1 read instead of scanning collection)
+      if (!duplicateDeposit && !useRestFallback) {
         try {
           const snap = await fdb.collection("deposits").where("utr", "==", cleanUtr).limit(1).get();
           if (!snap.empty) {
@@ -2624,36 +2624,45 @@ export async function startServer() {
           return res.status(400).json({ error: "This UTR number has already been verified and credited. Duplicate submissions are not allowed." });
         }
         if (duplicateDeposit.status === "pending") {
-          return res.status(400).json({ error: "A deposit with this UTR is already submitted and pending verification. Please wait." });
+          return res.status(400).json({ error: "A deposit with this UTR is already submitted and pending verification. Please wait a moment." });
         }
       }
 
-      // 2. Check if a matching verified Bank SMS was already received in bank_sms_logs
+      // 2. Check if matching verified Bank SMS was already received in bank_sms_logs (Two-way auto approval)
       let isAutoApproved = false;
       let matchedSmsId = "";
 
-      let matchingSms = null;
+      let matchingSms: any = null;
+      // Step A: Check in-memory SMS logs first (0 Reads)
       if (serverCache.bank_sms_logs.size > 0) {
         const cachedSms = Array.from(serverCache.bank_sms_logs.values()).map(s => s.data || s);
         matchingSms = cachedSms.find((log: any) => {
           if (log.isUsed) return false;
           const utrs: string[] = Array.isArray(log.candidateUtrs) ? log.candidateUtrs : [String(log.utr || "")];
-          const utrMatches = utrs.some((u: string) => String(u).trim().toLowerCase() === cleanUtr.toLowerCase());
-          const amountMatches = !log.parsedAmount || Number(log.parsedAmount) >= depositAmount;
+          const utrMatches = utrs.some((u: string) => String(u).replace(/\D/g, "").trim() === cleanUtr);
+          const amountMatches = !log.parsedAmount || Number(log.parsedAmount) >= depositAmount || Math.abs(Number(log.parsedAmount) - depositAmount) <= 1;
           return utrMatches && amountMatches;
         });
       }
 
-      if (!matchingSms) {
-        const smsLogsSnap = await listDocsSafe("bank_sms_logs", undefined, false);
-        const smsLogs = smsLogsSnap.docs ? smsLogsSnap.docs.map((d: any) => ({ id: d.id, ...(d.data ? d.data() : {}) })) : [];
-        matchingSms = smsLogs.find((log: any) => {
-          if (log.isUsed) return false;
-          const utrs: string[] = Array.isArray(log.candidateUtrs) ? log.candidateUtrs : [String(log.utr || "")];
-          const utrMatches = utrs.some((u: string) => String(u).trim().toLowerCase() === cleanUtr.toLowerCase());
-          const amountMatches = !log.parsedAmount || Number(log.parsedAmount) >= depositAmount;
-          return utrMatches && amountMatches;
-        });
+      // Step B: Target Firestore query with exact index filter (1 single document read)
+      if (!matchingSms && !useRestFallback) {
+        try {
+          const snap = await fdb.collection("bank_sms_logs")
+            .where("candidateUtrs", "array-contains", cleanUtr)
+            .limit(1)
+            .get();
+          if (!snap.empty) {
+            const doc = snap.docs[0];
+            const logData: any = { id: doc.id, ...doc.data() };
+            if (!logData.isUsed) {
+              const amountMatches = !logData.parsedAmount || Number(logData.parsedAmount) >= depositAmount || Math.abs(Number(logData.parsedAmount) - depositAmount) <= 1;
+              if (amountMatches) {
+                matchingSms = logData;
+              }
+            }
+          }
+        } catch (smsErr) {}
       }
 
       if (matchingSms) {
@@ -2668,6 +2677,10 @@ export async function startServer() {
             usedForDepositAmount: depositAmount,
             usedAt: new Date().toISOString()
           });
+          if (serverCache.bank_sms_logs.has(matchingSms.id)) {
+            const c = serverCache.bank_sms_logs.get(matchingSms.id) || {};
+            serverCache.bank_sms_logs.set(matchingSms.id, { ...c, isUsed: true });
+          }
         }
       } else {
         // Check global auto-approve setting if enabled by Admin
@@ -2681,7 +2694,7 @@ export async function startServer() {
         }
       }
 
-      // 3. Save Deposit Record
+      // 3. Save Deposit Record (1 write)
       const newDepositDoc = {
         userId: user_id, 
         userEmail: user_email || "not-provided", 
@@ -2700,11 +2713,12 @@ export async function startServer() {
 
       if (createdDocId) {
         const id = typeof createdDocId === "string" ? createdDocId : (createdDocId as any)?.id;
+        serverCache.deposits.set(id, { data: { id, ...newDepositDoc }, time: Date.now() });
         return res.json({ 
           success: true, 
           isAutoApproved,
           id,
-          message: isAutoApproved ? "Payment verified & Wallet balance credited instantly!" : "Deposit request submitted successfully for verification."
+          message: isAutoApproved ? "Payment verified & ₹" + depositAmount + " added to your wallet instantly!" : "Deposit request submitted successfully. It will auto-approve as soon as your bank SMS is processed."
         });
       } else {
         throw new Error("Failed to write deposit to database.");
@@ -3067,35 +3081,52 @@ export async function startServer() {
         return res.status(400).json({ success: false, error: "Empty message text." });
       }
 
-      // 1. Parse UTR: Match 10-18 digit numeric sequences (UPI UTRs are 12 digits, IMPS/NEFT can be 10-16)
-      const digitSequences: string[] = text.match(/\d+/g) || [];
-      const candidateUtrs = Array.from(new Set(digitSequences.filter((seq: string) => seq.length >= 10 && seq.length <= 18)));
+      // 1. Parse UTR: Extract all potential UTR / RRN / Reference Numbers (10 to 18 digits)
+      const cleanText = text.replace(/,/g, "");
+      const explicitUtrMatches: string[] = [];
+      const utrRegex = /(?:UPI|UTR|RRN|Ref|Reference|Txn\s*ID|Txn\s*No|IMPS)[\s/:\-_#]*([0-9]{10,18})/gi;
+      let match;
+      while ((match = utrRegex.exec(cleanText)) !== null) {
+        if (match[1]) explicitUtrMatches.push(match[1].replace(/\D/g, ""));
+      }
+
+      const digitSequences: string[] = (cleanText.match(/\d+/g) || []).map(s => s.trim());
+      const candidateUtrs = Array.from(new Set([
+        ...explicitUtrMatches,
+        ...digitSequences.filter((seq: string) => seq.length >= 10 && seq.length <= 18)
+      ]));
 
       console.log(`[SMS-WEBHOOK] Extracted candidate UTRs: ${JSON.stringify(candidateUtrs)}`);
 
       // 2. Parse Amount (Indian Rupees format)
-      const cleanText = text.replace(/,/g, "");
-      const amountMatch = cleanText.match(/(?:Rs\.?|INR|₹|amount of|Rs)\s*(\d+(?:\.\d{1,2})?)/i) || 
-                          cleanText.match(/credited with\s*(?:Rs\.?|INR|₹)?\s*(\d+(?:\.\d{1,2})?)/i) ||
-                          cleanText.match(/credited by\s*(?:Rs\.?|INR|₹)?\s*(\d+(?:\.\d{1,2})?)/i) ||
-                          cleanText.match(/rec(?:eive|eived)\s*(?:Rs\.?|INR|₹)?\s*(\d+(?:\.\d{1,2})?)/i) ||
-                          cleanText.match(/(\d+(?:\.\d{1,2})?)\s*(?:credited|deposited|received)/i);
+      // Exclude balance portions like 'Bal: Rs 500' to prevent picking balance instead of credited amount
+      let textWithoutBalance = cleanText.replace(/(?:Avail(?:able)?\s*Bal(?:ance)?|Bal(?:ance)?|Total\s*Bal)[\s:]*(?:Rs\.?|INR|₹)?\s*[\d.]+/gi, "");
+      const amountMatch = textWithoutBalance.match(/credited\s*(?:with|by)?\s*(?:Rs\.?|INR|₹)?\s*(\d+(?:\.\d{1,2})?)/i) ||
+                          textWithoutBalance.match(/rec(?:eived|eive)?\s*(?:with|by)?\s*(?:Rs\.?|INR|₹)?\s*(\d+(?:\.\d{1,2})?)/i) ||
+                          textWithoutBalance.match(/(?:Rs\.?|INR|₹)\s*(\d+(?:\.\d{1,2})?)\s*(?:credited|received|deposited)/i) ||
+                          textWithoutBalance.match(/(?:Rs\.?|INR|₹)\s*(\d+(?:\.\d{1,2})?)/i) ||
+                          textWithoutBalance.match(/(\d+(?:\.\d{1,2})?)\s*(?:credited|deposited|received)/i);
       
       const parsedAmount = amountMatch ? parseFloat(amountMatch[1]) : null;
-      console.log(`[SMS-WEBHOOK] Extracted amount: ₹${parsedAmount}`);
+      console.log(`[SMS-WEBHOOK] Extracted credited amount: ₹${parsedAmount}`);
 
-      // 3. Save SMS to bank_sms_logs
+      // 3. Save SMS to bank_sms_logs & in-memory cache
       let smsLogId = "";
+      const smsLogPayload = {
+        rawText: text,
+        candidateUtrs,
+        parsedAmount,
+        from,
+        isUsed: false,
+        receivedAt: new Date().toISOString()
+      };
+
       try {
-        const smsDoc: any = await addDocSafe("bank_sms_logs", {
-          rawText: text,
-          candidateUtrs,
-          parsedAmount,
-          from,
-          isUsed: false,
-          receivedAt: new Date().toISOString()
-        });
+        const smsDoc: any = await addDocSafe("bank_sms_logs", smsLogPayload);
         smsLogId = typeof smsDoc === "string" ? smsDoc : (smsDoc?.id || "");
+        if (smsLogId) {
+          serverCache.bank_sms_logs.set(smsLogId, { data: { id: smsLogId, ...smsLogPayload }, time: Date.now() });
+        }
       } catch (err: any) {
         console.warn("[SMS-WEBHOOK] Could not record bank SMS log:", err.message);
       }
@@ -3110,26 +3141,33 @@ export async function startServer() {
         });
       }
 
-      // 4. Find matching pending deposit in memory cache or targeted Firestore query
+      // 4. Find matching pending deposit in memory cache or indexed 1-read Firestore query
       let matchedDeposit: any = null;
       if (serverCache.deposits.size > 0) {
         const cachedDeps = Array.from(serverCache.deposits.values()).map(d => d.data || d);
         matchedDeposit = cachedDeps.find((d: any) => {
           if (d.status !== "pending") return false;
-          const depUtr = String(d.utr || "").trim().toLowerCase();
-          return candidateUtrs.some(u => String(u).trim().toLowerCase() === depUtr);
+          const depUtr = String(d.utr || "").replace(/\D/g, "").trim();
+          return candidateUtrs.some(u => u === depUtr);
         });
       }
 
-      if (!matchedDeposit) {
+      if (!matchedDeposit && !useRestFallback) {
         try {
-          const snap = await fdb.collection("deposits").where("status", "==", "pending").limit(20).get();
-          const pendingDeps = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-          pendingDeps.forEach(d => serverCache.deposits.set(d.id, { data: d, time: Date.now() }));
-          matchedDeposit = pendingDeps.find((d: any) => {
-            const depUtr = String(d.utr || "").trim().toLowerCase();
-            return candidateUtrs.some(u => String(u).trim().toLowerCase() === depUtr);
-          });
+          // Precise 1-read indexed query for top candidate UTRs
+          const queryUtrs = candidateUtrs.slice(0, 10);
+          if (queryUtrs.length > 0) {
+            const snap = await fdb.collection("deposits")
+              .where("status", "==", "pending")
+              .where("utr", "in", queryUtrs)
+              .limit(1)
+              .get();
+            if (!snap.empty) {
+              const d = snap.docs[0];
+              matchedDeposit = { id: d.id, ...d.data() };
+              serverCache.deposits.set(d.id, { data: matchedDeposit, time: Date.now() });
+            }
+          }
         } catch (qErr) {}
       }
 
@@ -3144,7 +3182,7 @@ export async function startServer() {
         });
       }
 
-      // 5. If matching pending deposit is found, approve it immediately!
+      // 5. If matching pending deposit is found, approve it immediately! (0 reads, 1 atomic increment)
       const originalAmount = Number(matchedDeposit.amount || 0);
       const targetUserId = matchedDeposit.userId || matchedDeposit.user_id;
       const depositId = matchedDeposit.id;
@@ -3158,9 +3196,14 @@ export async function startServer() {
           status: "approved",
           verifiedAt: new Date().toISOString(),
           processed_by: "automatic-sms-gateway",
-          actual_sms_amount: parsedAmount,
+          actual_sms_amount: parsedAmount || originalAmount,
           smsLogId: smsLogId || null
         });
+
+        if (serverCache.deposits.has(depositId)) {
+          const cached = serverCache.deposits.get(depositId) || {};
+          serverCache.deposits.set(depositId, { ...cached, status: "approved" });
+        }
 
         if (smsLogId) {
           await updateDocSafe("bank_sms_logs", smsLogId, {
@@ -3170,6 +3213,10 @@ export async function startServer() {
             usedForDepositAmount: originalAmount,
             usedAt: new Date().toISOString()
           });
+          if (serverCache.bank_sms_logs.has(smsLogId)) {
+            const cached = serverCache.bank_sms_logs.get(smsLogId) || {};
+            serverCache.bank_sms_logs.set(smsLogId, { ...cached, isUsed: true });
+          }
         }
 
         console.log(`[SMS-WEBHOOK] ✅ Payment of ₹${originalAmount} automatically approved for User ${targetUserId} via UTR: ${matchedUtr}`);
