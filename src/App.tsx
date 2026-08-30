@@ -24,11 +24,17 @@ export const CLOUD_RUN_BACKENDS = [
 
 export function getApiBaseUrl(): string {
   if (typeof window === "undefined") return STABLE_CLOUD_RUN_BACKEND;
-  return window.location.origin;
+  const host = window.location.hostname.toLowerCase();
+  // If hosted on Cloud Run or Localhost, use current origin
+  if (host.includes("run.app") || host.includes("localhost") || host.includes("127.0.0.1") || host.includes("webcontainer") || host.includes("ais-dev") || host.includes("ais-pre")) {
+    return window.location.origin;
+  }
+  // When visited directly on custom domain (e.g. pyaresmmpanel.online), route backend API calls directly to Cloud Run
+  return STABLE_CLOUD_RUN_BACKEND;
 }
 
 // Global setup for axios base URL and request/response interceptors
-axios.defaults.baseURL = "";
+axios.defaults.baseURL = typeof window !== "undefined" ? getApiBaseUrl() : STABLE_CLOUD_RUN_BACKEND;
 
 axios.interceptors.request.use(
   async (config) => {
