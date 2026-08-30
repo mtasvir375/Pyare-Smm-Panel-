@@ -2665,6 +2665,48 @@ export default function Admin() {
                       )}
                     </div>
 
+                    {/* Android SMS Forwarder Webhook Configuration Box */}
+                    <div className="border-t pt-6 mt-6 bg-emerald-500/5 p-6 rounded-3xl border-2 border-emerald-500/20">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
+                          <h3 className="font-bold text-base text-emerald-800">Android SMS Forwarder (100% Free Auto UTR)</h3>
+                        </div>
+                      </div>
+                      <p className="text-xs text-gray-600 mb-4 leading-relaxed">
+                        Apne Android phone me <strong>SMS Forwarder</strong> app install karein aur Bank SMS ko is Webhook URL par forward karein. Koi bhi user payment karke UTR dale ya SMS pehle aaye, deposit 1-second me automatically verify hokar wallet me credit ho jayega.
+                      </p>
+
+                      <div className="space-y-3 bg-white p-4 rounded-2xl border border-emerald-500/20">
+                        <div>
+                          <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block mb-1">Webhook URL (Post Request)</label>
+                          <div className="flex items-center gap-2 bg-gray-50 p-2.5 rounded-xl border border-gray-200">
+                            <code className="text-[11px] font-mono text-emerald-700 font-bold break-all">
+                              {window.location.origin}/api/webhooks/sms-gateway?secret=secure_sms_gateway_pwd_2026
+                            </code>
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="h-8 px-3 text-xs font-bold shrink-0 text-emerald-700 hover:bg-emerald-50 border-emerald-300"
+                              onClick={() => {
+                                navigator.clipboard.writeText(`${window.location.origin}/api/webhooks/sms-gateway?secret=secure_sms_gateway_pwd_2026`);
+                                toast.success("SMS Forwarder Webhook URL Copied!");
+                              }}
+                            >
+                              Copy URL
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="pt-2 text-[11px] text-gray-600 space-y-1">
+                          <p className="font-bold text-emerald-800">SMS Forwarder App Settings:</p>
+                          <p>1. <strong>Method:</strong> POST</p>
+                          <p>2. <strong>Format / Body Type:</strong> JSON</p>
+                          <p>3. <strong>JSON Body Template:</strong> <code className="bg-gray-100 px-1 py-0.5 rounded font-mono text-emerald-700 font-bold">{`{"text": "%msg", "from": "%from"}`}</code></p>
+                        </div>
+                      </div>
+                    </div>
+
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-12">
                       {/* Spacing adjusted */}

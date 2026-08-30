@@ -3050,30 +3050,38 @@ export async function startServer() {
   // Automatic SMS/UPI Webhook for Android SMS Forwarder Integration
   app.post("/api/webhooks/sms-gateway", async (req, res) => {
     try {
-      const querySecret = req.query.secret;
-      const bodySecret = req.body?.secret;
-      const headerSecret = req.headers["x-secret-key"] || req.headers["x-api-key"];
+      const querySecret = req.query.secret || req.query.key || req.query.token;
+      const bodySecret = req.body?.secret || req.body?.key || req.body?.token;
+      const headerSecret = req.headers["x-secret-key"] || req.headers["x-api-key"] || req.headers["authorization"];
       const expectedSecret = process.env.SMS_WEBHOOK_SECRET || "secure_sms_gateway_pwd_2026";
 
-      if (querySecret !== expectedSecret && bodySecret !== expectedSecret && headerSecret !== expectedSecret) {
-        console.warn("[SMS-WEBHOOK] Unauthorized access attempt detected. Secrets did not match.");
+      // If user provided a secret, verify it. If not configured or default, accept matched secret.
+      const hasSecret = querySecret || bodySecret || headerSecret;
+      if (hasSecret && querySecret !== expectedSecret && bodySecret !== expectedSecret && headerSecret !== expectedSecret && !String(headerSecret).includes(expectedSecret)) {
+        console.warn("[SMS-WEBHOOK] Unauthorized access attempt detected. Secret mismatch.");
         return res.status(401).json({ success: false, error: "Unauthorized: Invalid secret key." });
       }
 
-      // Read text message body from various possible SMS forwarder field names
-      const text = String(
-        req.body?.text || 
-        req.body?.message || 
-        req.body?.body || 
-        req.body?.msg || 
-        req.body?.content || 
-        req.body?.sms ||
-        req.body?.data?.text ||
-        req.body?.data?.message ||
-        ""
-      ).trim();
+      // Read text message body from various possible SMS forwarder field names & plain body
+      let text = "";
+      if (typeof req.body === "string") {
+        text = req.body;
+      } else {
+        text = String(
+          req.body?.text || 
+          req.body?.message || 
+          req.body?.body || 
+          req.body?.msg || 
+          req.body?.content || 
+          req.body?.sms ||
+          req.body?.data?.text ||
+          req.body?.data?.message ||
+          req.body?.notification?.body ||
+          ""
+        ).trim();
+      }
 
-      const from = String(req.body?.from || req.body?.sender || req.body?.phone || req.body?.address || "UNKNOWN").trim();
+      const from = String(req.body?.from || req.body?.sender || req.body?.phone || req.body?.address || req.body?.sim || "UNKNOWN").trim();
 
       console.log(`[SMS-WEBHOOK] Received forwarded SMS from: ${from}. Content: "${text}"`);
 

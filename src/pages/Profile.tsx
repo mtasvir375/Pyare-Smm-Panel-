@@ -468,7 +468,14 @@ export default function Profile() {
       });
 
       if (response.data.success) {
-        toast.success("Fund request submitted! Admin will verify it soon.");
+        if (response.data.isAutoApproved) {
+          toast.success("🎉 Payment verified automatically! ₹" + numAmount + " added to your wallet.");
+          if (updateUserProfileLocal) {
+            updateUserProfileLocal({ balance: (profile?.balance || 0) + numAmount });
+          }
+        } else {
+          toast.success("Fund request submitted! Admin will verify it soon.");
+        }
         resetAddFunds();
       } else {
         toast.error(response.data.error || "Submission failed.");

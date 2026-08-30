@@ -544,6 +544,9 @@ export default function Courses() {
       if (response.data.success) {
         if (response.data.isAutoApproved) {
           toast.success("🎉 Payment verified automatically! ₹" + Number(depositAmount) + " has been added to your wallet.");
+          if (updateUserProfileLocal) {
+            updateUserProfileLocal({ balance: (profile?.balance || 0) + Number(depositAmount) });
+          }
         } else {
           toast.success("Fund request submitted! Admin will verify and add balance soon.");
         }
