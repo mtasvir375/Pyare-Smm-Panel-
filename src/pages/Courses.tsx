@@ -341,8 +341,63 @@ export default function Courses() {
       const headers: any = { "Content-Type": "application/json" };
       if (userToken) headers["Authorization"] = `Bearer ${userToken}`;
 
-      const res = await axios.post("/api/proxy-provider", orderPayload, { headers, timeout: 35000 });
-      const resData = res.data;
+      let resData: any = null;
+      try {
+        const res = await axios.post("/api/proxy-provider", orderPayload, { headers, timeout: 35000 });
+        resData = res.data;
+      } catch (apiErr: any) {
+        console.warn("[ORDER-TRANSMIT] Primary API route failed, initiating direct provider dispatch fallback...", apiErr);
+        // Direct SMM Provider Failover
+        try {
+          let pUrl = "https://www.smmbin.com/api/v2";
+          let pKey = "f55bb2dfdc035f9c3c9e737bb72922a51d64309f";
+
+          try {
+            const cachedP = localStorage.getItem("providers_cache") || sessionStorage.getItem("providers_cache");
+            if (cachedP) {
+              const parsedP = JSON.parse(cachedP);
+              const matchP = Array.isArray(parsedP) ? parsedP.find((p: any) => p.id === pId) : null;
+              if (matchP && matchP.apiKey) {
+                pKey = matchP.apiKey.trim();
+                pUrl = (matchP.apiUrl || pUrl).trim();
+              }
+            }
+          } catch (e) {}
+
+          const params = new URLSearchParams();
+          params.append("key", pKey);
+          params.append("action", "add");
+          params.append("service", String(pServiceId).trim());
+          params.append("link", String(formattedLink).trim());
+          params.append("quantity", String(Math.floor(Number(quantity))).trim());
+
+          let directRes: any = null;
+          try {
+            directRes = await axios.post(pUrl, params, {
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              timeout: 15000
+            });
+          } catch (directErr) {
+            const proxiedUrl = `https://corsproxy.io/?${encodeURIComponent(pUrl)}`;
+            directRes = await axios.post(proxiedUrl, params, {
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              timeout: 15000
+            });
+          }
+
+          if (directRes && directRes.data) {
+            const d = directRes.data;
+            if (d.order) {
+              resData = { success: true, providerOrderId: String(d.order) };
+            } else if (d.error) {
+              throw new Error(d.error);
+            }
+          }
+        } catch (fallbackErr) {
+          throw apiErr;
+        }
+      }
+
       if (resData && (resData.success === true || resData.providerOrderId)) {
         finalProviderOrderId = String(resData.providerOrderId || "PENDING").trim();
       } else if (resData && resData.error) {

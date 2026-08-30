@@ -17,9 +17,17 @@ import { getFirestore } from "firebase-admin/firestore";
 dotenv.config();
 
 // Load Firebase Config globally
-const configPath = path.join(process.cwd(), "firebase-applet-config.json");
-const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-const { projectId: configProjectId, apiKey } = firebaseConfig;
+let firebaseConfig: any = {};
+try {
+  const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+  if (fs.existsSync(configPath)) {
+    firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+  }
+} catch (e) {
+  console.warn("[FIREBASE] Could not read firebase-applet-config.json from cwd, using defaults");
+}
+const configProjectId = firebaseConfig.projectId || "ai-studio-f36429fa-50a3-4e58-b960-86b1e1d0141c";
+const apiKey = firebaseConfig.apiKey || "";
 const databaseId = firebaseConfig.firestoreDatabaseId || "ai-studio-f36429fa-50a3-4e58-b960-86b1e1d0141c";
 const dbId = databaseId; 
 const projectId = configProjectId; 
