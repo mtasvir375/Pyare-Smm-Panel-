@@ -3771,7 +3771,9 @@ export async function startServer() {
         let finalErrorStr = typeof errorMsg === "string" ? errorMsg : JSON.stringify(errorMsg);
         const lowerErr = finalErrorStr.toLowerCase();
         
-        if (lowerErr.includes("not enough balance") || lowerErr.includes("insufficient balance") || lowerErr.includes("out of funds") || lowerErr.includes("low balance")) {
+        if (lowerErr.includes("current link already in work") || lowerErr.includes("link already in work") || lowerErr.includes("link is already in work") || lowerErr.includes("link is already in progress")) {
+          finalErrorStr = "Current link already in work";
+        } else if (lowerErr.includes("not enough balance") || lowerErr.includes("insufficient balance") || lowerErr.includes("out of funds") || lowerErr.includes("low balance")) {
           finalErrorStr = "Provider Panel Out of Balance: Your SMM Provider panel account (e.g. SMMBin/SMMSpot) has ₹0 or insufficient funds. Please log into your provider panel account to add funds.";
         } else if (lowerErr.includes("incorrect api key") || lowerErr.includes("user disabled") || lowerErr.includes("invalid api key") || lowerErr.includes("key is missing")) {
           finalErrorStr = "Provider API Key Error: SMM Provider API Key is incorrect or disabled. Please update Provider API Key in Admin -> Settings.";

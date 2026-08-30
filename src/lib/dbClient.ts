@@ -263,6 +263,10 @@ export const dbClient = {
               const oCId = order.courseId || order.serviceId;
               if (oLink !== trimmedLink || oCId !== courseId) return false;
 
+              // Only active pending orders count as duplicate
+              const oStatus = (order.status || "").toLowerCase();
+              if (["completed", "failed", "cancelled", "refunded"].includes(oStatus)) return false;
+
               let createdMs = 0;
               const ca = order.createdAt || order.created_at;
               if (ca) {
@@ -294,6 +298,9 @@ export const dbClient = {
       const data = doc.data();
       const cId = data.courseId || data.serviceId;
       if (cId !== courseId) return false;
+
+      const oStatus = (data.status || "").toLowerCase();
+      if (["completed", "failed", "cancelled", "refunded"].includes(oStatus)) return false;
       
       let createdDate: Date | null = null;
       if (data.createdAt) {

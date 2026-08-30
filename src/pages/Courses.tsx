@@ -480,15 +480,18 @@ export default function Courses() {
       if (transmissionError.includes("[object Object]")) {
         transmissionError = "Failed to connect to provider. Please check provider settings or link format.";
       }
-      console.error("Order transmission failed:", transmissionError);
+      
+      const lowerErr = transmissionError.toLowerCase();
+      if (lowerErr.includes("current link already in work") || lowerErr.includes("link already in work") || lowerErr.includes("link is already in work") || lowerErr.includes("link is already in progress")) {
+        transmissionError = "Current link already in work";
+      } else if (lowerErr.includes("not enough balance") || lowerErr.includes("insufficient balance") || lowerErr.includes("low balance")) {
+        transmissionError = "Provider panel has low balance. Please contact support.";
+      }
 
-      dbClient.updateDoc("orders", orderId, {
-        status: "Failed",
-        error: transmissionError,
-        updatedAt: new Date().toISOString()
-      }).catch(() => {});
+      console.warn("Order transmission rejected/failed:", transmissionError);
 
-      toast.error(`Order Failed: ${transmissionError}`);
+      // Toast exact message to user without any confusing prefix
+      toast.error(transmissionError);
     }
 
     setSubmitting(false);

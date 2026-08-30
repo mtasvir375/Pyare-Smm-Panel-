@@ -198,59 +198,76 @@ export default async function handler(req: any, res: any) {
         });
 
         const data = pRes.data;
-        if (data && data.order) {
+        if (data && (data.order || data.order_id || data.id)) {
           isSuccess = true;
-          providerOrderId = String(data.order).trim();
-        } else if (data && data.error) {
-          providerErrorMessage = typeof data.error === "string" ? data.error : JSON.stringify(data.error);
+          providerOrderId = String(data.order || data.order_id || data.id).trim();
+        } else if (data && (data.error || data.message || data.msg)) {
+          const rawE = data.error || data.message || data.msg;
+          providerErrorMessage = typeof rawE === "string" ? rawE : JSON.stringify(rawE);
         } else {
           providerErrorMessage = "Invalid response from provider panel";
         }
       } catch (postErr: any) {
-        providerErrorMessage = postErr.response?.data?.error || postErr.message || "Failed to reach provider server";
+        const respData = postErr.response?.data;
+        const errVal = respData?.error || respData?.message || respData?.msg || postErr.message;
+        providerErrorMessage = typeof errVal === "string" ? errVal : JSON.stringify(errVal) || "Failed to reach provider server";
       }
     }
 
-    // 3. Save Order to Firestore (Non-blocking / Best Effort)
-    const orderDoc = {
-      id: orderId,
-      userId: finalUserId,
-      userEmail: userEmail || "",
-      serviceId: finalServiceId,
-      courseId: finalServiceId,
-      title: title || "Service Order",
-      category: category || "Other",
-      quantity: finalQuantity,
-      targetLink: finalTargetLink,
-      totalPrice: finalTotalPrice,
-      isCombo: !!isCombo,
-      comboItems: comboList || [],
-      status: isSuccess ? "Pending" : "Failed",
-      providerOrderId: providerOrderId,
-      error: isSuccess ? "" : providerErrorMessage,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-
-    try {
-      const authHeader = req.headers.authorization;
-      const headers: any = { "Content-Type": "application/json" };
-      if (authHeader) headers["Authorization"] = authHeader;
-
-      const firestoreUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/orders/${orderId}?key=${FIREBASE_API_KEY}`;
-      await axios.patch(firestoreUrl, { fields: wrapFirestoreFields(orderDoc) }, { headers, timeout: 5000 }).catch(() => {});
-    } catch (dbErr) {
-      console.warn("[API-PROXY-PROVIDER] Firestore order save non-critical warning:", dbErr);
+    // Format common provider error messages nicely
+    if (providerErrorMessage) {
+      const lower = providerErrorMessage.toLowerCase();
+      if (lower.includes("current link already in work") || lower.includes("link already in work") || lower.includes("link is already in work") || lower.includes("link is already in progress")) {
+        providerErrorMessage = "Current link already in work";
+      } else if (lower.includes("not enough balance") || lower.includes("insufficient balance") || lower.includes("low balance")) {
+        providerErrorMessage = "Provider panel has low balance. Please contact support.";
+      } else if (lower.includes("service inactive") || lower.includes("service disabled")) {
+        providerErrorMessage = "Service is currently inactive on provider panel.";
+      } else if (lower.includes("bad link") || lower.includes("invalid link")) {
+        providerErrorMessage = "Invalid link format. Please check your link.";
+      }
     }
 
-    // 4. Return Result
+    // 3. Save Order to Firestore ONLY IF SUCCESSFUL (prevents ghost/failed order clutter)
     if (isSuccess) {
+      const orderDoc = {
+        id: orderId,
+        userId: finalUserId,
+        userEmail: userEmail || "",
+        serviceId: finalServiceId,
+        courseId: finalServiceId,
+        title: title || "Service Order",
+        category: category || "Other",
+        quantity: finalQuantity,
+        targetLink: finalTargetLink,
+        totalPrice: finalTotalPrice,
+        isCombo: !!isCombo,
+        comboItems: comboList || [],
+        status: "Pending",
+        providerOrderId: providerOrderId,
+        error: "",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      try {
+        const authHeader = req.headers.authorization;
+        const headers: any = { "Content-Type": "application/json" };
+        if (authHeader) headers["Authorization"] = authHeader;
+
+        const firestoreUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/orders/${orderId}?key=${FIREBASE_API_KEY}`;
+        await axios.patch(firestoreUrl, { fields: wrapFirestoreFields(orderDoc) }, { headers, timeout: 5000 }).catch(() => {});
+      } catch (dbErr) {
+        console.warn("[API-PROXY-PROVIDER] Firestore order save non-critical warning:", dbErr);
+      }
+
       return res.status(200).json({
         success: true,
         providerOrderId,
         orderId
       });
     } else {
+      // Return 400 Bad Request with exact clean provider error without creating order or deducting balance
       return res.status(400).json({
         success: false,
         error: providerErrorMessage || "Order placement failed at provider",
