@@ -857,33 +857,11 @@ export default function Admin() {
     setProcessingActions(prev => new Set(prev).add(deposit.id));
 
     try {
-      if (status === 'approved') {
-        const uId = deposit.userId || deposit.user_id;
-        const depositAmount = Number(deposit.amount);
-
-        // Fetch current user profile first
-        const userProfile = await dbClient.getUserProfile(uId);
-        if (!userProfile) throw new Error("User not found");
-
-        const newBalance = Number(userProfile.balance || 0) + depositAmount;
-
-        // Perform updates (sequentially is okay here for simplicity in admin panel)
-        await dbClient.updateUserProfile(uId, { balance: newBalance });
-        await dbClient.updateDoc("deposits", deposit.id, {
-          status: 'approved',
-          updatedAt: new Date().toISOString(),
-          processedBy: user?.email
-        });
-      } else {
-        await dbClient.updateDoc("deposits", deposit.id, { 
-          status: 'cancelled',
-          updatedAt: new Date().toISOString(),
-          processedBy: user?.email
-        });
-      }
-
+      const res = await dbClient.processDepositAction(deposit.id, status, deposit, user?.email || undefined);
+      
+      // Optimistically remove from pending list
       setDeposits(prev => prev.filter(d => d.id !== deposit.id));
-      toast.success(`Deposit ${status}!`);
+      toast.success(`Deposit ${status === 'approved' ? 'Approved & ₹' + (deposit.amount || 0) + ' Credited' : 'Cancelled'} successfully!`);
     } catch (error: any) {
       console.error("Deposit Error:", error);
       toast.error(`Error: ${error.message}`);

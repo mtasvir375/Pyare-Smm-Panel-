@@ -1001,20 +1001,25 @@ export async function startServer() {
     const docMap = new Map<string, any>();
 
     // Check in-memory collection cache first
-    if (collect === "deposits") {
-      serverCache.deposits.forEach((val, id) => docMap.set(id, { id, data: () => val }));
-    } else if (collect === "bank_sms_logs") {
-      serverCache.bank_sms_logs.forEach((val, id) => docMap.set(id, { id, data: () => val }));
+    if (!forceFresh) {
+      if (collect === "deposits" && serverCache.deposits.size > 0) {
+        serverCache.deposits.forEach((val, id) => docMap.set(id, { id, data: () => (val.data || val) }));
+        return { docs: Array.from(docMap.values()) };
+      } else if (collect === "bank_sms_logs" && serverCache.bank_sms_logs.size > 0) {
+        serverCache.bank_sms_logs.forEach((val, id) => docMap.set(id, { id, data: () => (val.data || val) }));
+        return { docs: Array.from(docMap.values()) };
+      }
     }
 
     if (!useRestFallback) {
       try {
-        const snap = await fdb.collection(collect).get();
+        const snap = await fdb.collection(collect).limit(50).get();
         if (!snap.empty) {
           snap.docs.forEach(doc => {
             docMap.set(doc.id, { id: doc.id, data: () => doc.data() });
           });
         }
+        return { docs: Array.from(docMap.values()) };
       } catch (err: any) {
         console.warn(`[LIST-SAFE-FIREBASE] Failed for ${collect}: ${err.message}`);
         if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
@@ -1030,7 +1035,7 @@ export async function startServer() {
       if (authToken) {
         headers["Authorization"] = authToken.startsWith("Bearer ") ? authToken : `Bearer ${authToken}`;
       }
-      const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/${collect}?key=${apiKey}&pageSize=300`;
+      const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/${collect}?key=${apiKey}&pageSize=50`;
       const resRest = await axios.get(url, { headers, timeout: 10000 });
       if (resRest.data && resRest.data.documents) {
         resRest.data.documents.forEach((doc: any) => {
@@ -1819,6 +1824,145 @@ export async function startServer() {
   app.get("/api/admin/all-orders", (req, res) => {
     console.log(`[API] Fetching all memory orders for admin`);
     res.json(serverCache.latestOrders.slice(0, 50));
+  });
+
+  app.get("/api/admin/all-deposits", async (req, res) => {
+    try {
+      const limitCount = Math.min(Number(req.query.limit) || 50, 50);
+      if (serverCache.deposits.size > 0) {
+        const cached = Array.from(serverCache.deposits.values())
+          .map(d => d.data || d)
+          .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+          .slice(0, limitCount);
+        if (cached.length > 0) {
+          return res.json(cached);
+        }
+      }
+
+      if (!useRestFallback) {
+        try {
+          const snap = await fdb.collection("deposits").orderBy("createdAt", "desc").limit(limitCount).get();
+          const results: any[] = [];
+          snap.forEach(doc => {
+            const data = { id: doc.id, ...doc.data() };
+            results.push(data);
+            serverCache.deposits.set(doc.id, { data, time: Date.now() });
+          });
+          return res.json(results);
+        } catch (e: any) {
+          console.warn("[ADMIN-ALL-DEPOSITS-FIRESTORE-ERR]", e.message);
+        }
+      }
+
+      // REST fallback
+      const targetProject = getTargetProject();
+      const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/deposits?key=${apiKey}&pageSize=${limitCount}`;
+      const resRest = await axios.get(url, { timeout: 10000 });
+      const results: any[] = [];
+      if (resRest.data && resRest.data.documents) {
+        resRest.data.documents.forEach((doc: any) => {
+          const id = doc.name.split("/").pop();
+          const data = { id, ...unwrapRestFields(doc.fields || {}) };
+          results.push(data);
+          serverCache.deposits.set(id, { data, time: Date.now() });
+        });
+      }
+      return res.json(results);
+    } catch (err: any) {
+      console.error("[ALL-DEPOSITS-ERR]", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/admin/process-deposit", async (req, res) => {
+    const { depositId, action, adminEmail } = req.body;
+    if (!depositId || !action) {
+      return res.status(400).json({ error: "Missing depositId or action" });
+    }
+
+    try {
+      console.log(`[DEPOSIT-ACTION] Processing deposit ${depositId} with action ${action} by ${adminEmail}`);
+      
+      // 1. Fetch deposit doc (1 single read)
+      const depSnap = await getDocSafe("deposits", depositId, req.headers.authorization as string, true);
+      if (!depSnap.exists) {
+        return res.status(404).json({ error: "Deposit not found" });
+      }
+
+      const depData = depSnap.data();
+      const currentStatus = (depData.status || "").toLowerCase();
+      if (currentStatus === "approved" && action === "approved") {
+        return res.json({ success: true, message: "Deposit is already approved", deposit: depData });
+      }
+      if (currentStatus === "cancelled" && action === "cancelled") {
+        return res.json({ success: true, message: "Deposit is already cancelled", deposit: depData });
+      }
+
+      const userId = depData.userId || depData.user_id;
+      const amount = Number(depData.amount || 0);
+
+      if (action === "approved") {
+        if (!userId) {
+          return res.status(400).json({ error: "Deposit is missing userId" });
+        }
+        if (isNaN(amount) || amount <= 0) {
+          return res.status(400).json({ error: "Invalid deposit amount" });
+        }
+
+        // Adjust user balance safely (1 read, 1 write)
+        const balanceAdjusted = await adjustUserBalanceSafe(userId, amount, req.headers.authorization as string);
+        if (!balanceAdjusted) {
+          return res.status(500).json({ error: "Failed to update user wallet balance" });
+        }
+
+        // Update deposit status (1 write)
+        const updateData = {
+          status: "approved",
+          verifiedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          processedBy: adminEmail || "admin"
+        };
+        await updateDocSafe("deposits", depositId, updateData, req.headers.authorization as string);
+
+        // Update memory cache
+        if (serverCache.deposits.has(depositId)) {
+          const cached = serverCache.deposits.get(depositId) || {};
+          serverCache.deposits.set(depositId, { ...cached, ...updateData });
+        }
+
+        return res.json({ 
+          success: true, 
+          status: "approved",
+          depositId,
+          amount,
+          userId,
+          message: `Deposit ₹${amount} approved successfully!`
+        });
+      } else {
+        // Cancel deposit (0 reads, 1 write)
+        const updateData = {
+          status: "cancelled",
+          updatedAt: new Date().toISOString(),
+          processedBy: adminEmail || "admin"
+        };
+        await updateDocSafe("deposits", depositId, updateData, req.headers.authorization as string);
+
+        if (serverCache.deposits.has(depositId)) {
+          const cached = serverCache.deposits.get(depositId) || {};
+          serverCache.deposits.set(depositId, { ...cached, ...updateData });
+        }
+
+        return res.json({ 
+          success: true, 
+          status: "cancelled",
+          depositId,
+          message: "Deposit rejected/cancelled."
+        });
+      }
+    } catch (err: any) {
+      console.error(`[DEPOSIT-ACTION-ERR] Failed:`, err.message);
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.post("/api/db/get", async (req, res) => {

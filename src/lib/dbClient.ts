@@ -66,15 +66,16 @@ export const dbClient = {
       const snap = await getDocs(q);
       return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     } catch (err: any) {
-      console.warn(`[DB-CLIENT] Direct getDocs with query failed for ${table}: ${err.message}. Retrying simple collection read...`);
+      console.warn(`[DB-CLIENT] Direct getDocs with query failed for ${table}: ${err.message}. Retrying with safe limit...`);
       try {
         const colRef = collection(db, table);
-        const snap = await getDocs(colRef);
+        const qSafe = query(colRef, limit(50));
+        const snap = await getDocs(qSafe);
         return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       } catch (err2: any) {
         console.warn(`[DB-CLIENT] Direct simple getDocs failed for ${table}: ${err2.message}. Falling back to backend proxy...`);
         try {
-          const res = await axios.post('/api/db/list', { collection: table });
+          const res = await axios.post('/api/db/list', { collection: table, limit: 50 });
           if (res.data && res.data.success && Array.isArray(res.data.data)) {
             return res.data.data;
           }
@@ -229,7 +230,49 @@ export const dbClient = {
   },
 
   async getDepositsAdmin(l = 50): Promise<any[]> {
+    try {
+      const res = await axios.get(`/api/admin/all-deposits?limit=${l}`);
+      if (Array.isArray(res.data) && res.data.length > 0) return res.data;
+    } catch (e) {}
     return this.getDocs('deposits', [orderBy('createdAt', 'desc'), limit(l)]);
+  },
+
+  async processDepositAction(depositId: string, action: 'approved' | 'cancelled', deposit?: any, adminEmail?: string): Promise<any> {
+    try {
+      const res = await axios.post('/api/admin/process-deposit', {
+        depositId,
+        action,
+        adminEmail
+      });
+      if (res.data && res.data.success) {
+        return res.data;
+      }
+      throw new Error(res.data?.error || "Process deposit failed");
+    } catch (err: any) {
+      console.warn(`[DB-CLIENT] Backend process-deposit failed: ${err.message}, attempting client-side update...`);
+      if (action === 'approved' && deposit) {
+        const uId = deposit.userId || deposit.user_id;
+        const depositAmount = Number(deposit.amount || 0);
+        const userProfile = await this.getUserProfile(uId);
+        if (!userProfile) throw new Error("User not found");
+        const newBalance = Number(userProfile.balance || 0) + depositAmount;
+        await this.updateUserProfile(uId, { balance: newBalance });
+        await this.updateDoc("deposits", depositId, {
+          status: 'approved',
+          verifiedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          processedBy: adminEmail || 'admin'
+        });
+        return { success: true, status: 'approved' };
+      } else {
+        await this.updateDoc("deposits", depositId, {
+          status: 'cancelled',
+          updatedAt: new Date().toISOString(),
+          processedBy: adminEmail || 'admin'
+        });
+        return { success: true, status: 'cancelled' };
+      }
+    }
   },
 
   async getProviders(): Promise<any[]> {
