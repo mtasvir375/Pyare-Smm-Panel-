@@ -177,17 +177,42 @@ export const dbClient = {
 
   // User specific
   async getUserProfile(uid: string): Promise<UserProfile | null> {
-    return this.getDoc('users', uid);
+    if (!uid) return null;
+    try {
+      const docRef = doc(db, 'users', uid);
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        const data = snap.data() as any;
+        return { id: snap.id, uid, ...data };
+      }
+    } catch (err: any) {
+      console.warn(`[DB-CLIENT] Direct getUserProfile failed for ${uid}: ${err.message}. Trying backend proxy...`);
+    }
+
+    try {
+      const res = await axios.post('/api/db/get', { collection: 'users', id: uid });
+      if (res.data && res.data.success && res.data.data) {
+        return { id: uid, uid, ...res.data.data };
+      }
+    } catch (proxyErr: any) {
+      console.error(`[DB-CLIENT] Proxy getUserProfile failed for ${uid}:`, proxyErr.message);
+    }
+    return null;
   },
 
   async createUserProfile(uid: string, profileData: Partial<UserProfile>): Promise<void> {
+    const existing = await this.getUserProfile(uid);
+    if (existing) {
+      console.log(`[DB-CLIENT] Profile ${uid} already exists with balance ${existing.balance}. Skipping creation.`);
+      return;
+    }
     const data = {
       uid,
       email: profileData.email || '',
       displayName: profileData.displayName || '',
       photoURL: profileData.photoURL || '',
       role: profileData.role || 'student',
-      balance: profileData.balance !== undefined ? profileData.balance : 1,
+      balance: profileData.balance !== undefined ? profileData.balance : 0,
       createdAt: serverTimestamp(),
       ...profileData
     };
@@ -339,7 +364,8 @@ export const dbClient = {
     const q = query(
       collection(db, 'orders'),
       where('userId', '==', userId),
-      where('targetLink', '==', trimmedLink)
+      where('targetLink', '==', trimmedLink),
+      limit(5)
     );
     
     const snap = await getDocs(q);

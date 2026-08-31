@@ -368,11 +368,7 @@ export default function Courses() {
         updateUserProfileLocal({ balance: newBal });
       }
 
-      // Safely update DB balance (non-blocking)
-      dbClient.updateUserProfile(user.uid, { balance: newBal }).catch(() => {});
-
-      // Update local state and UI
-      refreshUserProfile().catch(() => {});
+      // Update local state and UI (Server already deducted balance in Firestore and in-memory cache)
       setLastOrder({ ...orderData, status: "Pending", providerOrderId: finalProviderOrderId });
       setIsOrderSuccessOpen(true);
       toast.success(`Order Placed Successfully! Order ID: ${finalProviderOrderId}`);

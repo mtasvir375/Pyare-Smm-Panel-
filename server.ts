@@ -70,7 +70,7 @@ axios.defaults.httpAgent = keepAliveHttpAgent;
 
 const fdb = getFirestore(admin.apps[0] || admin.app(), dbId);
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+const PORT = 3000;
 
 const app = express();
 export default app;
@@ -1673,20 +1673,52 @@ export async function startServer() {
 
   app.get("/api/user-orders/:userId", async (req, res) => {
     const { userId } = req.params;
-    const limit = parseInt(req.query.limit as string) || 15;
-    console.log(`[API] Fetching orders on-demand from Firestore for user: ${userId}`);
+    const limitCount = Math.min(parseInt(req.query.limit as string) || 20, 50);
     
     // Add super strict validation for invalid or placeholder user IDs
     if (!userId || userId === "undefined" || userId === "null" || userId === "placeholder" || userId.trim() === "") {
-      console.warn(`[API] Rejected invalid or placeholder userId: "${userId}"`);
       return res.json([]);
+    }
+
+    // 1. Check in-memory serverCache orders first (0 Firestore Reads!)
+    if (serverCache.orders.size > 0 || serverCache.latestOrders.length > 0) {
+      const memoryOrders = [
+        ...Array.from(serverCache.orders.values()).map((o: any) => o.data || o),
+        ...serverCache.latestOrders
+      ];
+      
+      const userMemoryOrders = memoryOrders.filter((item: any) => {
+        const orderUserId = item.userId || item.user_id;
+        if (orderUserId !== userId) return false;
+        const pId = item.providerOrderId || item.provider_order_id;
+        const isFailedAborted = item.status?.toLowerCase() === 'failed' && (!pId || pId === 'N/A');
+        return !isFailedAborted;
+      });
+
+      if (userMemoryOrders.length > 0) {
+        // Unique by order id and return latest
+        const map = new Map<string, any>();
+        userMemoryOrders.forEach((o: any) => {
+          const key = o.id || o.createdAt || o.created_at;
+          if (key) map.set(key, o);
+        });
+        const sorted = Array.from(map.values()).sort((a: any, b: any) => {
+          const tA = new Date(a.createdAt || a.created_at || 0).getTime();
+          const tB = new Date(b.createdAt || b.created_at || 0).getTime();
+          return tB - tA;
+        });
+        return res.json(sorted.slice(0, limitCount));
+      }
     }
     
     try {
       let docs: any[] = [];
       if (!useRestFallback) {
         try {
-          const snap = await fdb.collection("orders").where("userId", "==", userId).get();
+          const snap = await fdb.collection("orders")
+            .where("userId", "==", userId)
+            .limit(limitCount)
+            .get();
           docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         } catch (err: any) {
           console.warn("[API] Admin fetch for user orders failed, trying REST:", err.message);
@@ -1706,7 +1738,8 @@ export async function startServer() {
                 op: "EQUAL",
                 value: { stringValue: userId }
               }
-            }
+            },
+            limit: limitCount
           }
         }, req.headers.authorization as string || systemAccessToken);
         
@@ -1764,7 +1797,7 @@ export async function startServer() {
       processedDocs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
       // Limit response to requested amount (strictly 15 orders limit)
-      const userOrders = processedDocs.slice(0, limit);
+      const userOrders = processedDocs.slice(0, limitCount);
       res.json(userOrders);
     } catch (apiErr: any) {
       console.error("[API] Failed to get user orders on-demand:", userId, apiErr.message);
@@ -1979,6 +2012,16 @@ export async function startServer() {
     const { collection: collect, limit: pageSize = 100 } = req.body;
     if (!collect) return res.status(400).json({ error: "Missing collection" });
     
+    // Check serverCache first (0 Reads)
+    if (collect === "courses" && serverCache.courses.size > 0) {
+      const list = Array.from(serverCache.courses.values()).map((c: any) => c.data || c);
+      return res.json({ success: true, data: list.slice(0, pageSize) });
+    }
+    if (collect === "providers" && serverCache.providers.size > 0) {
+      const list = Array.from(serverCache.providers.values()).map((p: any) => p.data || p);
+      return res.json({ success: true, data: list.slice(0, pageSize) });
+    }
+
     try {
       const results: any[] = [];
       const isCore = collect === "providers" || collect === "settings" || collect === "courses" || collect === "services";
@@ -4489,23 +4532,21 @@ export async function startServer() {
     res.status(404).send("Robots.txt not found");
   });
 
-  // Vite
-  const isProductionMode = process.env.NODE_ENV === "production" || fs.existsSync(path.join(process.cwd(), 'dist'));
-  if (!isProductionMode && !process.env.VERCEL) {
-    try {
-      const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
-      app.use(vite.middlewares);
-    } catch (e) {}
-  } else {
-    if (!process.env.VERCEL) {
-      const distPath = path.join(process.cwd(), 'dist');
-      app.use(express.static(distPath));
-      app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
-    }
+  // Vite middleware for development vs static serve for production
+  if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else if (!process.env.VERCEL) {
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
   }
 
   if (!process.env.VERCEL) {
-    app.listen(PORT, "0.0.0.0", () => console.log(`[READY] Port ${PORT}`));
+    app.listen(PORT, "0.0.0.0", () => console.log(`[READY] Server running on http://localhost:${PORT}`));
   }
 }
 

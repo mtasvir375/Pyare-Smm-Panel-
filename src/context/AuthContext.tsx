@@ -70,43 +70,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       if (firebaseUser) {
         try {
-          // Fetch user profile from Firestore
+          // Fetch user profile from Firestore (tries direct SDK + backend proxy)
           let profile = await dbClient.getUserProfile(firebaseUser.uid);
           
           if (!profile) {
-            console.log("[AUTH] Profile not found, attempting to create...");
-            // Create profile if it doesn't exist
+            console.log("[AUTH] Profile not found in database, creating new user profile...");
             const newProfile: any = {
               uid: firebaseUser.uid,
               email: firebaseUser.email || '',
               displayName: firebaseUser.displayName || 'User',
               photoURL: firebaseUser.photoURL || '',
               role: 'student', // Default role
-              balance: 1, // Welcome bonus ₹1
+              balance: 0,
             };
             
             try {
               await dbClient.createUserProfile(firebaseUser.uid, newProfile);
               profile = { ...newProfile, createdAt: new Date() };
-              console.log("[AUTH] Profile created successfully.");
+              console.log("[AUTH] New profile registered successfully.");
             } catch (createErr) {
-              console.error("[AUTH] Error creating profile, using local fallback:", createErr);
-              // Set local profile so user can use the app, backend will auto-create if needed
+              console.error("[AUTH] Error registering new profile:", createErr);
               profile = { ...newProfile, createdAt: new Date() };
             }
           }
           
           setUserProfile(profile);
         } catch (error) {
-          console.error("Error fetching/creating user profile:", error);
-          // Fallback to minimal profile if everything fails to avoid blocking the app
-          setUserProfile({
+          console.error("Error fetching user profile:", error);
+          // Keep existing profile if already in memory, do not clobber with blank state
+          setUserProfile(prev => prev || {
             uid: firebaseUser.uid,
             email: firebaseUser.email || '',
             displayName: firebaseUser.displayName || 'User',
             photoURL: firebaseUser.photoURL || '',
             role: 'student',
-            balance: 1,
+            balance: 0,
             createdAt: new Date(),
             isFallback: true
           });
