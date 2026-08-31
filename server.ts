@@ -2062,10 +2062,6 @@ export async function startServer() {
         });
         savePersistentCache();
       }
-
-      if (collect === "providers" && req.headers.authorization) {
-        syncProvidersToSettings(req.headers.authorization as string).catch(console.error);
-      }
     } catch (err: any) {
       console.error(`[REST-LIST-ERR] Failed to list ${collect}:`, err.response?.data || err.message);
       res.status(500).json({ success: false, error: err.message });
@@ -2688,7 +2684,7 @@ export async function startServer() {
         });
       }
 
-      // Step B: Target Firestore query with exact index filter (1 single document read)
+      // Step B: Target Firestore query with exact index filter or recent logs fallback (1 single document read)
       if (!matchingSms && !useRestFallback) {
         try {
           const snap = await fdb.collection("bank_sms_logs")
@@ -2706,6 +2702,24 @@ export async function startServer() {
             }
           }
         } catch (smsErr) {}
+
+        // Fallback: check recent 10 SMS logs to see if rawText has the UTR
+        if (!matchingSms) {
+          try {
+            const recentSnap = await fdb.collection("bank_sms_logs")
+              .where("isUsed", "==", false)
+              .limit(10)
+              .get();
+            for (const doc of recentSnap.docs) {
+              const logData: any = { id: doc.id, ...doc.data() };
+              const txt = String(logData.rawText || "");
+              if (txt.includes(cleanUtr) || (Array.isArray(logData.candidateUtrs) && logData.candidateUtrs.includes(cleanUtr))) {
+                matchingSms = logData;
+                break;
+              }
+            }
+          } catch (rErr) {}
+        }
       }
 
       if (matchingSms) {
@@ -3109,22 +3123,32 @@ export async function startServer() {
       let text = "";
       if (typeof req.body === "string") {
         text = req.body;
-      } else {
+      } else if (req.body && typeof req.body === "object") {
         text = String(
-          req.body?.text || 
-          req.body?.message || 
-          req.body?.body || 
-          req.body?.msg || 
-          req.body?.content || 
-          req.body?.sms ||
-          req.body?.data?.text ||
-          req.body?.data?.message ||
-          req.body?.notification?.body ||
+          req.body.text || 
+          req.body.message || 
+          req.body.body || 
+          req.body.msg || 
+          req.body.content || 
+          req.body.sms ||
+          req.body.smsContent ||
+          req.body.sms_body ||
+          req.body.notificationText ||
+          req.body.notification ||
+          req.body.data?.text ||
+          req.body.data?.message ||
+          req.body.notification?.body ||
           ""
         ).trim();
+
+        // If still empty, concatenate string values from req.body
+        if (!text) {
+          const stringVals = Object.values(req.body).filter(v => typeof v === "string" && v.length > 3);
+          text = stringVals.join(" ").trim();
+        }
       }
 
-      const from = String(req.body?.from || req.body?.sender || req.body?.phone || req.body?.address || req.body?.sim || "UNKNOWN").trim();
+      const from = String(req.body?.from || req.body?.sender || req.body?.phone || req.body?.address || req.body?.sim || req.query?.from || "UNKNOWN").trim();
 
       console.log(`[SMS-WEBHOOK] Received forwarded SMS from: ${from}. Content: "${text}"`);
 
@@ -3135,7 +3159,7 @@ export async function startServer() {
       // 1. Parse UTR: Extract all potential UTR / RRN / Reference Numbers (10 to 18 digits)
       const cleanText = text.replace(/,/g, "");
       const explicitUtrMatches: string[] = [];
-      const utrRegex = /(?:UPI|UTR|RRN|Ref|Reference|Txn\s*ID|Txn\s*No|IMPS)[\s/:\-_#]*([0-9]{10,18})/gi;
+      const utrRegex = /(?:UPI|UTR|RRN|Ref|Reference|Txn\s*ID|Txn\s*No|IMPS|ORDER|CR|DR)[\s/:\-_#]*([0-9]{10,18})/gi;
       let match;
       while ((match = utrRegex.exec(cleanText)) !== null) {
         if (match[1]) explicitUtrMatches.push(match[1].replace(/\D/g, ""));
@@ -3150,7 +3174,6 @@ export async function startServer() {
       console.log(`[SMS-WEBHOOK] Extracted candidate UTRs: ${JSON.stringify(candidateUtrs)}`);
 
       // 2. Parse Amount (Indian Rupees format)
-      // Exclude balance portions like 'Bal: Rs 500' to prevent picking balance instead of credited amount
       let textWithoutBalance = cleanText.replace(/(?:Avail(?:able)?\s*Bal(?:ance)?|Bal(?:ance)?|Total\s*Bal)[\s:]*(?:Rs\.?|INR|₹)?\s*[\d.]+/gi, "");
       const amountMatch = textWithoutBalance.match(/credited\s*(?:with|by)?\s*(?:Rs\.?|INR|₹)?\s*(\d+(?:\.\d{1,2})?)/i) ||
                           textWithoutBalance.match(/rec(?:eived|eive)?\s*(?:with|by)?\s*(?:Rs\.?|INR|₹)?\s*(\d+(?:\.\d{1,2})?)/i) ||
@@ -3192,34 +3215,55 @@ export async function startServer() {
         });
       }
 
-      // 4. Find matching pending deposit in memory cache or indexed 1-read Firestore query
+      // 4. Find matching pending deposit (Check Memory -> Single-field UTR Firestore queries -> REST queries)
       let matchedDeposit: any = null;
+      
+      // Step A: Memory Cache Check (0 Reads)
       if (serverCache.deposits.size > 0) {
         const cachedDeps = Array.from(serverCache.deposits.values()).map(d => d.data || d);
         matchedDeposit = cachedDeps.find((d: any) => {
           if (d.status !== "pending") return false;
           const depUtr = String(d.utr || "").replace(/\D/g, "").trim();
-          return candidateUtrs.some(u => u === depUtr);
+          return candidateUtrs.some(u => u === depUtr || (depUtr && cleanText.includes(depUtr)));
         });
       }
 
+      // Step B: Direct Single-field Firestore Query for each candidate UTR (No composite index required!)
       if (!matchedDeposit && !useRestFallback) {
-        try {
-          // Precise 1-read indexed query for top candidate UTRs
-          const queryUtrs = candidateUtrs.slice(0, 10);
-          if (queryUtrs.length > 0) {
+        for (const u of candidateUtrs) {
+          try {
             const snap = await fdb.collection("deposits")
-              .where("status", "==", "pending")
-              .where("utr", "in", queryUtrs)
+              .where("utr", "==", u)
               .limit(1)
               .get();
             if (!snap.empty) {
               const d = snap.docs[0];
+              const depData: any = { id: d.id, ...d.data() };
+              if (depData.status === "pending") {
+                matchedDeposit = depData;
+                serverCache.deposits.set(d.id, { data: matchedDeposit, time: Date.now() });
+                break;
+              }
+            }
+          } catch (qErr: any) {
+            console.warn(`[SMS-WEBHOOK] Firestore query for UTR ${u} failed:`, qErr.message);
+          }
+        }
+      }
+
+      // Step C: REST Fallback Query if still not found
+      if (!matchedDeposit) {
+        for (const u of candidateUtrs) {
+          try {
+            const restResults = await findDepositByUtrREST(u, "pending");
+            if (restResults && restResults.length > 0) {
+              const d = restResults[0];
               matchedDeposit = { id: d.id, ...d.data() };
               serverCache.deposits.set(d.id, { data: matchedDeposit, time: Date.now() });
+              break;
             }
-          }
-        } catch (qErr) {}
+          } catch (rErr) {}
+        }
       }
 
       if (!matchedDeposit) {

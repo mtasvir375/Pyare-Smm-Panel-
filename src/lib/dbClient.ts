@@ -96,74 +96,48 @@ export const dbClient = {
 
   async setDoc(table: string, id: string, data: any): Promise<void> {
     try {
-      // For critical collections, attempt backend proxy
-      if (table === 'settings' || table === 'providers' || table === 'orders' || table === 'courses' || table === 'services') {
-        try {
-          const res = await axios.post('/api/db/set', { collection: table, id, data });
-          if (res.data && res.data.success !== false) {
-            return;
-          }
-        } catch (proxyErr: any) {
-          console.warn(`[DB-CLIENT] Proxy setDoc failed for ${table}/${id}, attempting direct Firestore write...`, proxyErr.message);
-        }
+      // Direct single authoritative write via server proxy (0 extra reads, exact 1 write)
+      const res = await axios.post('/api/db/set', { collection: table, id, data });
+      if (res.data && res.data.success !== false) {
+        return;
       }
-
-      const docRef = doc(db, table, id);
-      await setDoc(docRef, { ...data, updatedAt: serverTimestamp() }, { merge: true });
-    } catch (err: any) {
-      console.warn(`[DB-CLIENT] Direct setDoc failed for ${table}/${id}, retrying proxy as last resort...`);
-      try {
-        const res = await axios.post('/api/db/set', { collection: table, id, data });
-        if (res.data && res.data.success === false) {
-          throw new Error(res.data.error || `Failed to set ${table}/${id}`);
-        }
-      } catch (proxyErr: any) {
-        console.error(`[DB-CLIENT] Both direct and proxy setDoc failed for ${table}/${id}`);
-        throw new Error(proxyErr.response?.data?.error || proxyErr.message || `Failed to save ${table}/${id}`);
-      }
+    } catch (proxyErr: any) {
+      console.warn(`[DB-CLIENT] Proxy setDoc failed for ${table}/${id}, attempting direct write...`);
     }
+
+    const docRef = doc(db, table, id);
+    await setDoc(docRef, { ...data, updatedAt: serverTimestamp() }, { merge: true });
   },
 
   async updateDoc(table: string, id: string, data: any): Promise<void> {
-    if (table === 'orders' || table === 'settings' || table === 'providers' || table === 'courses' || table === 'services' || table === 'users') {
-      try {
-        const res = await axios.post('/api/db/update', { collection: table, id, data });
-        if (res.data && res.data.success !== false) {
-          return;
-        }
-      } catch (e: any) {
-        console.warn(`[DB-CLIENT] Proxy update failed for ${table}/${id}, falling back to direct update...`);
-      }
-    }
     try {
-      const docRef = doc(db, table, id);
-      await updateDoc(docRef, { ...data, updatedAt: serverTimestamp() });
-    } catch (directErr: any) {
-      console.warn(`[DB-CLIENT] Direct updateDoc failed for ${table}/${id}`);
-      if (table === 'orders') return;
-      throw directErr;
+      // Direct single authoritative update via server proxy (0 extra reads, exact 1 write)
+      const res = await axios.post('/api/db/update', { collection: table, id, data });
+      if (res.data && res.data.success !== false) {
+        return;
+      }
+    } catch (e: any) {
+      console.warn(`[DB-CLIENT] Proxy update failed for ${table}/${id}, attempting direct update...`);
     }
+
+    const docRef = doc(db, table, id);
+    await updateDoc(docRef, { ...data, updatedAt: serverTimestamp() });
   },
 
   async addDoc(table: string, data: any): Promise<any> {
-    if (table === 'orders' || table === 'courses' || table === 'services' || table === 'providers') {
-      try {
-        const res = await axios.post('/api/db/add', { collection: table, data });
-        if (res.data && res.data.success !== false && res.data.id) {
-          return { id: res.data.id, ...data };
-        }
-      } catch (e: any) {
-        console.warn(`[DB-CLIENT] Proxy add failed for ${table}, attempting direct add...`);
-      }
-    }
     try {
-      const colRef = collection(db, table);
-      const docRef = await firestoreAddDoc(colRef, { ...data, createdAt: serverTimestamp() });
-      return { id: docRef.id, ...data };
-    } catch (directErr: any) {
-      if (table === 'orders') return { id: 'temp_' + Date.now(), ...data };
-      throw directErr;
+      // Single authoritative insert via server proxy (0 extra reads, exact 1 write)
+      const res = await axios.post('/api/db/add', { collection: table, data });
+      if (res.data && res.data.success !== false && res.data.id) {
+        return { id: res.data.id, ...data };
+      }
+    } catch (e: any) {
+      console.warn(`[DB-CLIENT] Proxy add failed for ${table}, attempting direct add...`);
     }
+
+    const colRef = collection(db, table);
+    const docRef = await firestoreAddDoc(colRef, { ...data, createdAt: serverTimestamp() });
+    return { id: docRef.id, ...data };
   },
 
   async saveDoc(table: string, id: string, data: any): Promise<void> {
@@ -258,7 +232,13 @@ export const dbClient = {
   },
 
   async getPendingDeposits(): Promise<any[]> {
-    return this.getDocs('deposits', [where('status', '==', 'pending'), orderBy('createdAt', 'desc')]);
+    try {
+      const res = await axios.get(`/api/admin/all-deposits?limit=50`);
+      if (Array.isArray(res.data) && res.data.length > 0) {
+        return res.data.filter((d: any) => (d.status || '').toLowerCase() === 'pending');
+      }
+    } catch (e) {}
+    return this.getDocs('deposits', [where('status', '==', 'pending'), limit(25)]);
   },
 
   async getDepositsAdmin(l = 50): Promise<any[]> {
