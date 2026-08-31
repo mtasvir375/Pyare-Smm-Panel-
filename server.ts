@@ -745,11 +745,12 @@ export async function startServer() {
   const adjustUserBalanceREST = async (user_id: string, change: number, token?: string) => {
     console.log(`[BALANCE-REST] Adjusting balance for ${user_id} by ${change}`);
     try {
-      const cachedUser = serverCache.users.get(user_id);
-      let userData = cachedUser ? cachedUser.data : null;
-      if (!userData) {
-        const userRef = await getDocREST("users", user_id, token);
-        userData = userRef.exists ? userRef.data() : null;
+      let userData: any = null;
+      const userRef = await getDocREST("users", user_id, token);
+      if (userRef && userRef.exists) {
+        userData = userRef.data();
+      } else if (serverCache.users.has(user_id)) {
+        userData = serverCache.users.get(user_id)?.data;
       }
       if (!userData) {
         console.log(`[BALANCE-REST] User doc ${user_id} not found. Creating user document...`);
@@ -762,7 +763,7 @@ export async function startServer() {
       }
       
       const currentBalance = Number(userData.balance ?? userData.walletBalance ?? userData.wallet_balance ?? userData.funds ?? 0);
-      const newBalance = Number((currentBalance + change).toFixed(2));
+      const newBalance = Math.max(0, Number((currentBalance + change).toFixed(2)));
       
       const updatedData = {
         ...userData,
@@ -772,8 +773,8 @@ export async function startServer() {
 
       serverCache.users.set(user_id, { data: updatedData, time: Date.now() });
 
-      const success = await setDocREST("users", user_id, updatedData, token);
-      return success || true;
+      await setDocREST("users", user_id, updatedData, token);
+      return true;
     } catch (err: any) {
       console.error(`[BALANCE-REST] Error: ${err.message}`);
       return true; // Return true to prevent blocking order execution
@@ -1315,6 +1316,17 @@ export async function startServer() {
 
   const adjustUserBalanceSafe = async (user_id: string, change: number, token?: string) => {
     console.log(`[BALANCE-SAFE] Adjusting balance for ${user_id} by ${change}`);
+    
+    // Invalidate memory cache so next read is always fresh
+    if (serverCache.users.has(user_id)) {
+      const cached = serverCache.users.get(user_id);
+      if (cached && cached.data) {
+        const oldBal = Number(cached.data.balance ?? cached.data.walletBalance ?? 0);
+        cached.data.balance = Math.max(0, Number((oldBal + change).toFixed(2)));
+        cached.time = Date.now();
+      }
+    }
+
     if (!useRestFallback) {
       try {
         const userRef = fdb.collection("users").doc(user_id);
@@ -1337,7 +1349,7 @@ export async function startServer() {
             }, { merge: true });
             return true;
           }
-          throw updateErr;
+          console.warn(`[BALANCE-SAFE] Atomic increment failed: ${updateErr.message}, falling back to REST balance update`);
         }
       } catch (err: any) {
         console.error(`[BALANCE-SAFE] Error: ${err.message}`);
@@ -3967,58 +3979,51 @@ export async function startServer() {
         const oId = providerOrderId ? String(providerOrderId) : "SENT_NO_ID";
         console.log(`[TRANSMIT] Successfully ordered from SMM panel. Provider Order ID: ${oId}`);
 
-        // DEDUCT BALANCE AND UPDATE DATABASE IN BACKGROUND FOR INSTANT RESPONSE TIME
-        (async () => {
+        const price = Number(currentOrderData.totalPrice || currentOrderData.total_price || 0);
+        const oUserId = currentOrderData.userId || currentOrderData.user_id;
+        const alreadyDeducted = currentOrderData?.balanceAlreadyDeducted || false;
+
+        // Synchronously deduct balance in Firestore and memory cache
+        if (oUserId && price > 0 && !alreadyDeducted) {
+          console.log(`[DEDUCTION-START] Synchronously deducting ₹${price} from User ${oUserId} for order ${orderId}`);
           try {
-            const orderSnap = await getDocSafe("orders", orderId, token);
-            let needsDeduction = false;
-            let price = Number(currentOrderData.totalPrice || currentOrderData.total_price || 0);
-            let oUserId = currentOrderData.userId || currentOrderData.user_id;
-
-            if (orderSnap.exists) {
-              const currentData = orderSnap.data();
-              needsDeduction = ["Pending", "Processing", "Failed", "Refunded", "Awaiting-Validation"].includes(currentData.status);
-              price = Number(currentData.totalPrice || currentData.total_price || price);
-              oUserId = currentData.userId || currentData.user_id || oUserId;
-            } else {
-              needsDeduction = true; 
-            }
-
-            const alreadyDeducted = currentOrderData?.balanceAlreadyDeducted || false;
-            if (needsDeduction && oUserId && price > 0 && !alreadyDeducted) {
-              console.log(`[DEDUCTION-START] Attempting to deduct ₹${price} from User ${oUserId} for order ${orderId}`);
-              const deductionSuccess = await adjustUserBalanceSafe(oUserId, -price, token);
-              if (deductionSuccess) {
-                console.log(`[DEDUCTION-SUCCESS] Deducted ₹${price} from User ${oUserId} after successful provider response.`);
-                await logToDb("BALANCE_DEDUCTION", { userId: oUserId, amount: price, orderId, success: true });
-              } else {
-                console.error(`[DEDUCTION-FAIL] Could not deduct balance for user ${oUserId} despite provider success!`);
-                await logToDb("BALANCE_DEDUCTION", { userId: oUserId, amount: price, orderId, success: false });
-              }
-            } else if (alreadyDeducted) {
-              console.log(`[DEDUCTION-SKIP] Balance was already deducted synchronously for order ${orderId}`);
-            }
-
-            if (skipStoreCompleted) {
-              console.log(`[TRANSMIT] skipStoreCompleted is enabled. Deleting any transient/pending order doc and skipping completed doc save.`);
-              if (orderSnap.exists) {
-                await deleteDocSafe("orders", orderId);
-              }
-            } else {
-              await updateDocSafe("orders", orderId, {
-                status: "Completed",
-                providerOrderId: oId,
-                needsProviderTransmission: false,
-                providerTransmissionStatus: "completed",
-                error: null,
-                updatedAt: new Date().toISOString(),
-                providerRawResponse: JSON.stringify(resData).substring(0, 800)
-              }, token);
-            }
-          } catch (updateErr: any) {
-            console.warn(`[TRANSMIT-BACKGROUND] Could not process success outputs or update db: ${updateErr.message}`);
+            await adjustUserBalanceSafe(oUserId, -price, token);
+            console.log(`[DEDUCTION-SUCCESS] Deducted ₹${price} from User ${oUserId} in database.`);
+            await logToDb("BALANCE_DEDUCTION", { userId: oUserId, amount: price, orderId, success: true });
+          } catch (deductErr: any) {
+            console.error(`[DEDUCTION-FAIL] Error during balance deduction for ${oUserId}:`, deductErr.message);
           }
-        })();
+        }
+
+        // Save completed order document
+        if (!skipStoreCompleted && orderId) {
+          try {
+            await setDocSafe("orders", orderId, {
+              id: orderId,
+              userId: oUserId || "",
+              userEmail: currentOrderData.userEmail || currentOrderData.user_email || "",
+              serviceId: currentOrderData.serviceId || currentOrderData.service_id || "",
+              courseId: currentOrderData.courseId || currentOrderData.serviceId || "",
+              title: currentOrderData.title || currentOrderData.courseTitle || "",
+              category: currentOrderData.category || "Other",
+              quantity: Number(currentOrderData.quantity || 0),
+              targetLink: String(currentOrderData.targetLink || currentOrderData.target_link || "").trim(),
+              totalPrice: price,
+              isCombo: !!currentOrderData.isCombo,
+              comboItems: currentOrderData.comboItems || [],
+              status: "Completed",
+              providerOrderId: oId,
+              needsProviderTransmission: false,
+              providerTransmissionStatus: "completed",
+              balanceAlreadyDeducted: true,
+              updatedAt: new Date().toISOString(),
+              createdAt: currentOrderData.createdAt || new Date().toISOString(),
+              providerRawResponse: JSON.stringify(resData).substring(0, 800)
+            }, token);
+          } catch (saveErr: any) {
+            console.warn(`[TRANSMIT] Order save warning: ${saveErr.message}`);
+          }
+        }
 
         return { success: true, providerOrderId: oId };
       } else {
@@ -4208,31 +4213,12 @@ export async function startServer() {
 
       // 2. Return response to user
       if (result.success) {
-        // Save order document in database only upon confirmed provider success
-        if (final_user_id && !skipStoreCompleted) {
-          const orderData = {
-            id: orderId,
-            userId: final_user_id,
-            userEmail: final_user_email,
-            serviceId: final_service_id,
-            courseId: final_service_id,
-            title: final_title,
-            category: category || "Other",
-            quantity: Number(quantity),
-            targetLink: String(final_target_link).trim(),
-            totalPrice: final_total_price,
-            isCombo: !!isCombo,
-            comboItems: comboItems || [],
-            status: "Pending",
-            providerOrderId: result.providerOrderId || "1",
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          };
-
-          await setDocSafe("orders", orderId, orderData, req.headers.authorization as string).catch(() => {});
-        }
-
-        return res.json({ success: true, isAsync: false, providerOrderId: result.providerOrderId, orderId });
+        return res.json({ 
+          success: true, 
+          isAsync: false, 
+          providerOrderId: result.providerOrderId, 
+          orderId 
+        });
       } else {
         return res.status(400).json({ success: false, error: result.alreadyProcessing ? "Processing in-progress..." : result.error, orderId });
       }

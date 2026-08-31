@@ -363,10 +363,13 @@ export default function Courses() {
 
       // Deduct user balance in local state immediately only after provider confirms order ID
       const currentBal = Number(profile?.balance || 0);
-      const newBal = Math.max(0, currentBal - totalPrice);
+      const newBal = Math.max(0, Number((currentBal - totalPrice).toFixed(2)));
       if (updateUserProfileLocal) {
         updateUserProfileLocal({ balance: newBal });
       }
+      try {
+        dbClient.updateUserProfile(user.uid, { balance: newBal }).catch(() => {});
+      } catch (e) {}
 
       // Update local state and UI (Server already deducted balance in Firestore and in-memory cache)
       setLastOrder({ ...orderData, status: "Pending", providerOrderId: finalProviderOrderId });
