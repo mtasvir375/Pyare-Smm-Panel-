@@ -73,6 +73,22 @@ export default function Admin() {
   const [courseSearch, setCourseSearch] = useState("");
   const [courseCategoryFilter, setCourseCategoryFilter] = useState("All");
   const [totalActiveServices, setTotalActiveServices] = useState<number>(0);
+  const [depositFilter, setDepositFilter] = useState<"pending" | "approved" | "cancelled" | "all">("pending");
+  const [depositSearch, setDepositSearch] = useState("");
+  const [isRefreshingDeposits, setIsRefreshingDeposits] = useState(false);
+
+  const handleRefreshDeposits = async () => {
+    setIsRefreshingDeposits(true);
+    try {
+      const depositsList = await dbClient.getDepositsAdmin(50, true);
+      setDeposits(depositsList);
+      toast.success("Deposits list refreshed!");
+    } catch (e: any) {
+      toast.error("Failed to refresh deposits");
+    } finally {
+      setIsRefreshingDeposits(false);
+    }
+  };
 
   const handleSyncStats = async () => {
     if (!user?.uid || isSyncing) return;
@@ -860,8 +876,14 @@ export default function Admin() {
     try {
       const res = await dbClient.processDepositAction(deposit.id, status, deposit, user?.email || undefined);
       
-      // Optimistically remove from pending list
-      setDeposits(prev => prev.filter(d => d.id !== deposit.id));
+      // Update deposit status in local list
+      setDeposits(prev => prev.map(d => d.id === deposit.id ? { 
+        ...d, 
+        status, 
+        processedBy: user?.email || 'admin', 
+        verifiedAt: status === 'approved' ? new Date().toISOString() : d.verifiedAt,
+        updatedAt: new Date().toISOString() 
+      } : d));
       toast.success(`Deposit ${status === 'approved' ? 'Approved & ₹' + (deposit.amount || 0) + ' Credited' : 'Cancelled'} successfully!`);
     } catch (error: any) {
       console.error("Deposit Error:", error);
@@ -1891,92 +1913,278 @@ export default function Admin() {
               renderTabPlaceholder("deposits", "Deposits")
             ) : (
               <>
-                <div className="bg-orange-50 border border-orange-100 p-3 rounded-xl flex items-center gap-3">
-                <AlertCircle className="w-4 h-4 text-orange-600 shrink-0" />
-                <p className="text-[11px] text-orange-800 leading-tight">
-                  <b>कोटा सुरक्षा:</b> केवल 5 सबसे नए पेंडिंग डिपॉजिट्स दिखाए जा रहे हैं। पुराने डिपॉजिट्स ऑटो-हाइड कर दिए गए हैं।
-                </p>
-              </div>
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-bold">Pending Deposits</h2>
-              </div>
-              <div className="space-y-4">
-                {deposits.filter(d => d.status === 'pending').length > 0 ? (
-                  deposits.filter(d => d.status === 'pending').map((deposit) => (
-                    <Card key={deposit.id} className="border-none shadow-sm overflow-hidden">
-                      <CardContent className="p-4 space-y-4">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            <div className="p-2 bg-blue-100 rounded-full">
-                              <Wallet className="w-5 h-5 text-blue-600" />
-                            </div>
-                            <div>
-                              <p className="font-bold">{deposit.userEmail}</p>
-                              <p className="text-[10px] text-gray-400">
-                                {deposit.createdAt?.toDate ? deposit.createdAt.toDate().toLocaleString() : 
-                                 deposit.createdAt ? new Date(deposit.createdAt).toLocaleString() : ""}
-                              </p>
-                              <p className="text-sm font-bold text-primary">Amount: ₹{Number(deposit.amount || 0).toFixed(2)}</p>
-                            </div>
-                          </div>
-                          <Badge className="bg-orange-100 text-orange-700 border-none">
-                            {deposit.status}
-                          </Badge>
-                        </div>
+                {/* Header Actions & Controls */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                      <Wallet className="w-5 h-5 text-primary" />
+                      Deposit Requests Management
+                    </h2>
+                    <p className="text-xs text-gray-500">
+                      Review user payment proofs, verify 12-digit UTRs, and approve wallet balance.
+                    </p>
+                  </div>
+                  
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={handleRefreshDeposits}
+                    disabled={isRefreshingDeposits}
+                    className="rounded-xl border-gray-200 text-xs font-bold gap-2 shrink-0 h-10 px-4"
+                  >
+                    <RefreshCw className={cn("w-3.5 h-3.5", isRefreshingDeposits && "animate-spin text-primary")} />
+                    {isRefreshingDeposits ? "Refreshing..." : "Refresh Deposits"}
+                  </Button>
+                </div>
 
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-1">
-                            <p className="text-[10px] font-bold text-gray-400 uppercase">Transaction ID / UTR</p>
-                            <p className="text-sm font-mono bg-gray-50 p-2 rounded-lg border border-gray-100">
-                              {deposit.utr || "N/A"}
+                {/* Filters & Search */}
+                <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+                    <button
+                      onClick={() => setDepositFilter("pending")}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                        depositFilter === "pending"
+                          ? "bg-amber-500 text-white shadow-sm"
+                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                      }`}
+                    >
+                      Pending Review
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                        depositFilter === "pending" ? "bg-white text-amber-600 font-extrabold" : "bg-gray-200 text-gray-700"
+                      }`}>
+                        {deposits.filter(d => (d.status || '').toLowerCase() === 'pending').length}
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={() => setDepositFilter("approved")}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                        depositFilter === "approved"
+                          ? "bg-emerald-600 text-white shadow-sm"
+                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                      }`}
+                    >
+                      Approved
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                        depositFilter === "approved" ? "bg-white text-emerald-700 font-extrabold" : "bg-gray-200 text-gray-700"
+                      }`}>
+                        {deposits.filter(d => (d.status || '').toLowerCase() === 'approved').length}
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={() => setDepositFilter("cancelled")}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                        depositFilter === "cancelled"
+                          ? "bg-rose-600 text-white shadow-sm"
+                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                      }`}
+                    >
+                      Cancelled
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                        depositFilter === "cancelled" ? "bg-white text-rose-700 font-extrabold" : "bg-gray-200 text-gray-700"
+                      }`}>
+                        {deposits.filter(d => (d.status || '').toLowerCase() === 'cancelled').length}
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={() => setDepositFilter("all")}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                        depositFilter === "all"
+                          ? "bg-gray-900 text-white shadow-sm"
+                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                      }`}
+                    >
+                      All ({deposits.length})
+                    </button>
+                  </div>
+
+                  <div className="relative w-full sm:w-72">
+                    <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <Input
+                      placeholder="Search UTR, Email, Amount..."
+                      value={depositSearch}
+                      onChange={(e) => setDepositSearch(e.target.value)}
+                      className="pl-9 h-10 rounded-xl text-xs bg-white"
+                    />
+                    {depositSearch && (
+                      <button
+                        onClick={() => setDepositSearch("")}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs font-bold"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Deposits List */}
+                <div className="space-y-3">
+                  {(() => {
+                    const filtered = deposits.filter(deposit => {
+                      const status = (deposit.status || '').toLowerCase();
+                      if (depositFilter === "pending" && status !== "pending") return false;
+                      if (depositFilter === "approved" && status !== "approved") return false;
+                      if (depositFilter === "cancelled" && status !== "cancelled") return false;
+
+                      if (depositSearch.trim()) {
+                        const q = depositSearch.toLowerCase().trim();
+                        const utr = String(deposit.utr || '').toLowerCase();
+                        const email = String(deposit.userEmail || '').toLowerCase();
+                        const amount = String(deposit.amount || '');
+                        const id = String(deposit.id || '').toLowerCase();
+                        return utr.includes(q) || email.includes(q) || amount.includes(q) || id.includes(q);
+                      }
+                      return true;
+                    });
+
+                    if (filtered.length === 0) {
+                      return (
+                        <div className="text-center py-16 bg-white rounded-2xl border border-dashed border-gray-200 space-y-3">
+                          <Wallet className="w-10 h-10 text-gray-300 mx-auto" />
+                          <div>
+                            <p className="text-sm font-bold text-gray-700">No deposits found</p>
+                            <p className="text-xs text-gray-400 mt-0.5">
+                              {depositFilter === "pending" 
+                                ? "No pending deposit requests waiting for review." 
+                                : "No deposit records match your current filter."}
                             </p>
                           </div>
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            onClick={handleRefreshDeposits}
+                            className="rounded-xl text-xs"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Check for New Deposits
+                          </Button>
+                        </div>
+                      );
+                    }
 
-                          {deposit.screenshotUrl && (
-                            <div className="space-y-1">
-                              <p className="text-[10px] font-bold text-gray-400 uppercase">Payment Screenshot</p>
-                              <Button 
-                                variant="outline" 
-                                size="sm"
-                                className="flex items-center gap-2 text-xs text-indigo-600 border-indigo-100 hover:bg-indigo-50 w-full h-9"
-                                onClick={() => setSelectedScreenshot(deposit.screenshotUrl)}
-                              >
-                                <ImageIcon className="w-4 h-4" />
-                                View Screenshot
-                              </Button>
+                    return filtered.map((deposit) => {
+                      const isPending = (deposit.status || '').toLowerCase() === 'pending';
+                      const isApproved = (deposit.status || '').toLowerCase() === 'approved';
+                      const isCancelled = (deposit.status || '').toLowerCase() === 'cancelled';
+                      const dateStr = deposit.createdAt?.toDate 
+                        ? deposit.createdAt.toDate().toLocaleString() 
+                        : deposit.createdAt 
+                          ? new Date(deposit.createdAt).toLocaleString() 
+                          : "Just now";
+
+                      return (
+                        <Card key={deposit.id || deposit.utr} className="border border-gray-100 shadow-sm rounded-2xl overflow-hidden hover:border-gray-200 transition-all bg-white">
+                          <CardContent className="p-4 sm:p-5 space-y-4">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-50 pb-3">
+                              <div className="flex items-center gap-3">
+                                <div className={`p-2.5 rounded-xl ${
+                                  isPending ? "bg-amber-50 text-amber-600" : isApproved ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
+                                }`}>
+                                  <Wallet className="w-5 h-5" />
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <p className="font-bold text-gray-900 text-sm">{deposit.userEmail || "User ID: " + (deposit.userId || 'Unknown')}</p>
+                                    <Badge className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 border-none ${
+                                      isPending ? "bg-amber-100 text-amber-800" : isApproved ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+                                    }`}>
+                                      {deposit.status || 'pending'}
+                                    </Badge>
+                                  </div>
+                                  <p className="text-[11px] text-gray-400 mt-0.5">{dateStr}</p>
+                                </div>
+                              </div>
+
+                              <div className="text-left sm:text-right">
+                                <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider block">Requested Amount</span>
+                                <span className="text-xl font-extrabold text-emerald-600">₹{Number(deposit.amount || 0).toFixed(2)}</span>
+                              </div>
                             </div>
-                          )}
-                        </div>
 
-                        <div className="flex gap-2 pt-2">
-                          <Button 
-                            className="flex-1 bg-green-600 hover:bg-green-700"
-                            onClick={() => handleDepositAction(deposit, 'approved')}
-                            disabled={processingActions.has(deposit.id)}
-                          >
-                            <CheckCircle2 className={cn("w-4 h-4 mr-2", processingActions.has(deposit.id) && "animate-spin")} />
-                            {processingActions.has(deposit.id) ? "Checking..." : "Approve"}
-                          </Button>
-                          <Button 
-                            variant="outline"
-                            className="flex-1 text-red-600 border-red-200 hover:bg-red-50"
-                            onClick={() => handleDepositAction(deposit, 'cancelled')}
-                            disabled={processingActions.has(deposit.id)}
-                          >
-                            <XCircle className="w-4 h-4 mr-2" />
-                            Cancel
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))
-                ) : (
-                  <p className="text-gray-500 italic text-center py-12">No pending deposits found.</p>
-                )}
-              </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div className="space-y-1 bg-gray-50 p-3 rounded-xl border border-gray-100">
+                                <div className="flex items-center justify-between">
+                                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">12-Digit UTR / Ref No.</p>
+                                  {deposit.utr && (
+                                    <button 
+                                      onClick={() => {
+                                        navigator.clipboard.writeText(deposit.utr);
+                                        toast.success("UTR copied to clipboard!");
+                                      }}
+                                      className="text-[10px] font-bold text-primary hover:underline"
+                                    >
+                                      Copy UTR
+                                    </button>
+                                  )}
+                                </div>
+                                <p className="text-sm font-mono font-bold text-gray-800 tracking-wider">
+                                  {deposit.utr || "Not Provided"}
+                                </p>
+                              </div>
+
+                              <div className="space-y-1 bg-gray-50 p-3 rounded-xl border border-gray-100 flex items-center justify-between">
+                                <div>
+                                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Payment Proof</p>
+                                  <p className="text-xs text-gray-600 font-medium">
+                                    {deposit.screenshotUrl ? "Screenshot Uploaded" : "No Screenshot"}
+                                  </p>
+                                </div>
+                                {deposit.screenshotUrl ? (
+                                  <Button 
+                                    variant="outline" 
+                                    size="sm"
+                                    className="text-xs text-indigo-600 border-indigo-200 hover:bg-indigo-50 font-bold h-8 rounded-lg"
+                                    onClick={() => setSelectedScreenshot(deposit.screenshotUrl)}
+                                  >
+                                    <ImageIcon className="w-3.5 h-3.5 mr-1" />
+                                    View Image
+                                  </Button>
+                                ) : (
+                                  <span className="text-[10px] text-gray-400 font-bold">N/A</span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Actions if Pending */}
+                            {isPending && (
+                              <div className="flex gap-3 pt-1">
+                                <Button 
+                                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-11 rounded-xl shadow-md shadow-emerald-600/20"
+                                  onClick={() => handleDepositAction(deposit, 'approved')}
+                                  disabled={processingActions.has(deposit.id)}
+                                >
+                                  <CheckCircle2 className={cn("w-4 h-4 mr-2", processingActions.has(deposit.id) && "animate-spin")} />
+                                  {processingActions.has(deposit.id) ? "Crediting Balance..." : `Approve & Add ₹${Number(deposit.amount || 0).toFixed(0)} to User Wallet`}
+                                </Button>
+                                <Button 
+                                  variant="outline"
+                                  className="text-rose-600 border-rose-200 hover:bg-rose-50 font-bold h-11 rounded-xl px-5"
+                                  onClick={() => handleDepositAction(deposit, 'cancelled')}
+                                  disabled={processingActions.has(deposit.id)}
+                                >
+                                  <XCircle className="w-4 h-4 mr-1.5" />
+                                  Reject
+                                </Button>
+                              </div>
+                            )}
+
+                            {/* Verification metadata if processed */}
+                            {!isPending && (
+                              <div className="text-[11px] text-gray-400 bg-gray-50/70 p-2.5 rounded-xl flex items-center justify-between border border-gray-100">
+                                <span>Status: <b className="text-gray-700 capitalize">{deposit.status}</b></span>
+                                <span>Processed: {deposit.processedBy || 'System/Admin'}</span>
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
+                      );
+                    });
+                  })()}
+                </div>
               </>
             )}
-            </TabsContent>
+          </TabsContent>
           </>
         )}
 

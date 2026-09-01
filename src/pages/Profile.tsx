@@ -425,7 +425,9 @@ export default function Profile() {
           const response = await axios.post("/api/deposits/verify-qr-auto", {
             amount: numAmount,
             utr: cleanUtr,
-            userId: user?.uid
+            userId: user?.uid,
+            userEmail: user?.email,
+            client_txn_id: qrAutoData?.client_txn_id
           });
 
           if (response.data.success) {
@@ -433,7 +435,7 @@ export default function Profile() {
             resetAddFunds();
             // Refresh profile balance locally if possible
             if (updateUserProfileLocal) {
-              updateUserProfileLocal({ balance: response.data.newBalance });
+              updateUserProfileLocal({ balance: response.data.newBalance || ((profile?.balance || 0) + numAmount) });
             }
             return;
           }

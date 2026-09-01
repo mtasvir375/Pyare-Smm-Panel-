@@ -1332,16 +1332,16 @@ export async function startServer() {
     const prefix = col === "orders" ? "ord_" : col === "deposits" ? "dep_" : col === "bank_sms_logs" ? "sms_" : col === "transactions" ? "txn_" : "doc_";
     const generatedId = prefix + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
     const now = new Date().toISOString();
-    const docData = { ...data, createdAt: data.createdAt || now, updatedAt: now };
+    const docData = { id: generatedId, ...data, createdAt: data.createdAt || now, updatedAt: now };
 
     if (col === "orders") {
       addOrderToMemory(generatedId, docData);
     }
     if (col === "deposits") {
-      serverCache.deposits.set(generatedId, docData);
+      serverCache.deposits.set(generatedId, { data: docData, time: Date.now() });
     }
     if (col === "bank_sms_logs") {
-      serverCache.bank_sms_logs.set(generatedId, docData);
+      serverCache.bank_sms_logs.set(generatedId, { data: docData, time: Date.now() });
     }
 
     if (!useRestFallback) {
@@ -1969,56 +1969,89 @@ export async function startServer() {
 
   app.get("/api/admin/all-deposits", async (req, res) => {
     try {
-      const limitCount = Math.min(Number(req.query.limit) || 20, 20);
+      const limitCount = Math.min(Number(req.query.limit) || 100, 100);
+      const forceRefresh = req.query.force === "true";
+
+      const depositMap = new Map<string, any>();
+
+      // 1. Collect from memory cache
       if (serverCache.deposits.size > 0) {
-        const cached = Array.from(serverCache.deposits.values())
-          .map(d => d.data || d)
-          .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
-          .slice(0, limitCount);
-        if (cached.length > 0) {
-          console.log(`[API-ALL-DEPOSITS] Returned ${cached.length} deposits from server memory cache (0 Firestore reads)`);
-          return res.json(cached);
+        for (const [key, val] of serverCache.deposits.entries()) {
+          const item = val?.data || val;
+          if (item) {
+            const id = item.id || key;
+            depositMap.set(id, { ...item, id });
+          }
         }
       }
 
+      // 2. Fetch fresh from Firestore if not in rest fallback or if force requested or if map is small
       if (!useRestFallback) {
         try {
-          const snap = await fdb.collection("deposits").orderBy("createdAt", "desc").limit(limitCount).get();
-          const results: any[] = [];
-          snap.forEach(doc => {
+          // A: Always query pending deposits from Firestore so admin never misses unapproved requests
+          const pendingSnap = await fdb.collection("deposits").where("status", "==", "pending").limit(50).get();
+          pendingSnap.forEach(doc => {
             const data = { id: doc.id, ...doc.data() };
-            results.push(data);
+            depositMap.set(doc.id, data);
             serverCache.deposits.set(doc.id, { data, time: Date.now() });
           });
-          if (results.length > 0) {
-            savePersistentCache();
-            console.log(`[API-ALL-DEPOSITS] Fetched ${results.length} deposits from Firestore and cached to disk.`);
-            return res.json(results);
-          }
+
+          // B: Query most recent deposits
+          const recentSnap = await fdb.collection("deposits").orderBy("createdAt", "desc").limit(limitCount).get();
+          recentSnap.forEach(doc => {
+            const data = { id: doc.id, ...doc.data() };
+            depositMap.set(doc.id, data);
+            serverCache.deposits.set(doc.id, { data, time: Date.now() });
+          });
+
+          savePersistentCache();
         } catch (e: any) {
           console.warn("[ADMIN-ALL-DEPOSITS-FIRESTORE-ERR]", e.message);
         }
       }
 
-      // REST fallback
-      const targetProject = getTargetProject();
-      const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/deposits?key=${apiKey}&pageSize=${limitCount}`;
-      const resRest = await axios.get(url, { timeout: 10000 });
-      const results: any[] = [];
-      if (resRest.data && resRest.data.documents) {
-        resRest.data.documents.forEach((doc: any) => {
-          const id = doc.name.split("/").pop();
-          const data = { id, ...unwrapRestFields(doc.fields || {}) };
-          results.push(data);
-          serverCache.deposits.set(id, { data, time: Date.now() });
-        });
-        savePersistentCache();
+      // 3. If still empty, use REST fallback
+      if (depositMap.size === 0) {
+        try {
+          const targetProject = getTargetProject();
+          const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/deposits?key=${apiKey}&pageSize=${limitCount}`;
+          const resRest = await axios.get(url, { timeout: 10000 });
+          if (resRest.data && resRest.data.documents) {
+            resRest.data.documents.forEach((doc: any) => {
+              const id = doc.name.split("/").pop();
+              const data = { id, ...unwrapRestFields(doc.fields || {}) };
+              depositMap.set(id, data);
+              serverCache.deposits.set(id, { data, time: Date.now() });
+            });
+            savePersistentCache();
+          }
+        } catch (rErr: any) {
+          console.warn("[ADMIN-ALL-DEPOSITS-REST-ERR]", rErr.message);
+        }
       }
-      return res.json(results);
+
+      const allList = Array.from(depositMap.values());
+
+      // Sort: Pending first, then newest createdAt first
+      allList.sort((a: any, b: any) => {
+        const aPending = (a.status || "").toLowerCase() === "pending" ? 1 : 0;
+        const bPending = (b.status || "").toLowerCase() === "pending" ? 1 : 0;
+        if (aPending !== bPending) return bPending - aPending;
+
+        const aTime = new Date(a.createdAt || a.timestamp || 0).getTime();
+        const bTime = new Date(b.createdAt || b.timestamp || 0).getTime();
+        return bTime - aTime;
+      });
+
+      console.log(`[API-ALL-DEPOSITS] Returning ${allList.length} deposits (Pending: ${allList.filter(d => (d.status || '').toLowerCase() === 'pending').length})`);
+      return res.json(allList.slice(0, limitCount));
     } catch (err: any) {
       console.error("[ALL-DEPOSITS-ERR]", err.message);
-      const cached = Array.from(serverCache.deposits.values()).map(d => d.data || d);
-      return res.json(cached.slice(0, 20));
+      const cached = Array.from(serverCache.deposits.entries()).map(([k, d]) => {
+        const item = d?.data || d;
+        return { id: item?.id || k, ...item };
+      });
+      return res.json(cached.slice(0, 50));
     }
   });
 
@@ -2975,9 +3008,17 @@ export async function startServer() {
       }
 
       // 3. Save Deposit Record (1 write)
+      let resolvedEmail = user_email;
+      if (!resolvedEmail || resolvedEmail === "not-provided") {
+        const cachedUser = serverCache.users.get(user_id)?.data || serverCache.users.get(user_id);
+        if (cachedUser?.email) {
+          resolvedEmail = cachedUser.email;
+        }
+      }
+
       const newDepositDoc = {
         userId: user_id, 
-        userEmail: user_email || "not-provided", 
+        userEmail: resolvedEmail || "not-provided", 
         amount: depositAmount, 
         utr: cleanUtr, 
         screenshotUrl: screenshotUrl || "", 
@@ -2993,14 +3034,16 @@ export async function startServer() {
 
       if (createdDocId) {
         const id = typeof createdDocId === "string" ? createdDocId : (createdDocId as any)?.id;
-        serverCache.deposits.set(id, { data: { id, ...newDepositDoc }, time: Date.now() });
+        const fullDoc = { id, ...newDepositDoc };
+        serverCache.deposits.set(id, { data: fullDoc, time: Date.now() });
         savePersistentCache();
-        console.log(`[DEPOSIT-SAVED] Saved deposit ${id} (UTR: ${cleanUtr}) to cache & persistent disk.`);
+        console.log(`[DEPOSIT-SAVED] Saved deposit ${id} (UTR: ${cleanUtr}, User: ${resolvedEmail}, Status: ${newDepositDoc.status}) to cache & persistent disk.`);
         return res.json({ 
           success: true, 
           isAutoApproved,
           id,
-          message: isAutoApproved ? "Payment verified & ₹" + depositAmount + " added to your wallet instantly!" : "Deposit request submitted successfully. It will auto-approve as soon as your bank SMS is processed."
+          deposit: fullDoc,
+          message: isAutoApproved ? "Payment verified & ₹" + depositAmount + " added to your wallet instantly!" : "Deposit request submitted successfully. It will be reviewed and approved by admin."
         });
       } else {
         throw new Error("Failed to write deposit to database.");

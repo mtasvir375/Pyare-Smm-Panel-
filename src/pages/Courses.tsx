@@ -452,9 +452,10 @@ export default function Courses() {
     if (file) {
       try {
         const options = {
-          maxSizeMB: 0.5,
-          maxWidthOrHeight: 1024,
-          useWebWorker: true
+          maxSizeMB: 0.1,
+          maxWidthOrHeight: 800,
+          useWebWorker: true,
+          fileType: "image/jpeg"
         };
         const compressedFile = await imageCompression(file, options);
         setScreenshot(compressedFile);
@@ -462,7 +463,15 @@ export default function Courses() {
         reader.onloadend = () => setScreenshotPreview(reader.result as string);
         reader.readAsDataURL(compressedFile);
       } catch (error) {
-        toast.error("Failed to compress image");
+        // Fallback: direct read if compression fails
+        try {
+          const reader = new FileReader();
+          reader.onloadend = () => setScreenshotPreview(reader.result as string);
+          reader.readAsDataURL(file);
+          setScreenshot(file);
+        } catch (e) {
+          toast.error("Failed to load image file");
+        }
       }
     }
   };

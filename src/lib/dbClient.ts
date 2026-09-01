@@ -230,9 +230,9 @@ export const dbClient = {
     }
   },
 
-  async getPendingDeposits(): Promise<any[]> {
+  async getPendingDeposits(force = false): Promise<any[]> {
     try {
-      const res = await axios.get(`/api/admin/all-deposits?limit=25`);
+      const res = await axios.get(`/api/admin/all-deposits?limit=50&force=${force}`);
       if (Array.isArray(res.data)) {
         return res.data.filter((d: any) => (d.status || '').toLowerCase() === 'pending');
       }
@@ -242,9 +242,9 @@ export const dbClient = {
     return [];
   },
 
-  async getDepositsAdmin(l = 25): Promise<any[]> {
+  async getDepositsAdmin(l = 50, force = false): Promise<any[]> {
     try {
-      const res = await axios.get(`/api/admin/all-deposits?limit=${l}`);
+      const res = await axios.get(`/api/admin/all-deposits?limit=${l}&force=${force}`);
       if (Array.isArray(res.data)) return res.data;
     } catch (e) {
       console.warn("[DB-CLIENT] getDepositsAdmin API failed:", e);
