@@ -2978,6 +2978,8 @@ export async function startServer() {
       if (createdDocId) {
         const id = typeof createdDocId === "string" ? createdDocId : (createdDocId as any)?.id;
         serverCache.deposits.set(id, { data: { id, ...newDepositDoc }, time: Date.now() });
+        savePersistentCache();
+        console.log(`[DEPOSIT-SAVED] Saved deposit ${id} (UTR: ${cleanUtr}) to cache & persistent disk.`);
         return res.json({ 
           success: true, 
           isAutoApproved,

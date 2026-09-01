@@ -23,11 +23,26 @@ export const CLOUD_RUN_BACKENDS = [
 ];
 
 export function getApiBaseUrl(): string {
-  return "";
+  if (typeof window === "undefined") return STABLE_CLOUD_RUN_BACKEND;
+  const host = window.location.hostname;
+  
+  // If running inside Google Cloud Run container or local dev server
+  if (
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host.endsWith(".run.app") ||
+    host.includes("googleusercontent.com") ||
+    host.includes("webcontainer.io")
+  ) {
+    return "";
+  }
+  
+  // When accessed via custom domain (e.g. smmpanel.online, Vercel, Netlify, etc.)
+  return STABLE_CLOUD_RUN_BACKEND;
 }
 
 // Global setup for axios base URL and request/response interceptors
-axios.defaults.baseURL = "";
+axios.defaults.baseURL = getApiBaseUrl();
 
 axios.interceptors.request.use(
   async (config) => {
@@ -54,7 +69,24 @@ axios.interceptors.response.use(
     }
     return response;
   },
-  (error) => Promise.reject(error)
+  async (error) => {
+    const originalRequest = error.config;
+    // If a request failed with 405 Method Not Allowed, 404, or HTML response on custom domain or relative URL, retry against Cloud Run backend
+    if (
+      originalRequest &&
+      !originalRequest._retry &&
+      (error.response?.status === 405 || error.response?.status === 404 || error.message?.includes("Received HTML") || !error.response)
+    ) {
+      originalRequest._retry = true;
+      if (!originalRequest.baseURL || !originalRequest.baseURL.includes("run.app")) {
+        console.warn(`[AXIOS-FALLBACK] Retrying ${originalRequest.url} against Cloud Run backend...`);
+        originalRequest.baseURL = STABLE_CLOUD_RUN_BACKEND;
+        axios.defaults.baseURL = STABLE_CLOUD_RUN_BACKEND;
+        return axios(originalRequest);
+      }
+    }
+    return Promise.reject(error);
+  }
 );
 
 export default function App() {

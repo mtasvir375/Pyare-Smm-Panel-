@@ -504,23 +504,22 @@ export default function Courses() {
             updateUserProfileLocal({ balance: (profile?.balance || 0) + Number(response.data.amount) });
           }
           return;
-        } else {
-          toast.error(response.data.error || "Verification failed. Please check UTR/Amount.");
+        }
+      } catch (error: any) {
+        console.warn("Auto verify failed, checking for manual review fallback:", error);
+        const errTxt = error.response?.data?.error || "";
+        if (errTxt.includes("already been used")) {
+          toast.error(errTxt);
           setIsUploading(false);
           return;
         }
-      } catch (error: any) {
-        console.error("Auto verify failed:", error);
-        toast.error(error.response?.data?.error || "Automatic verification failed. You can try manual upload.");
-        setIsUploading(false);
-        // Fallback to manual if auto fails? No, let user decide.
-        return;
+        if (!screenshotPreview) {
+          toast.error("Auto-verification failed: " + (errTxt || "Payment not found.") + " Please upload a screenshot for manual review.");
+          setIsUploading(false);
+          return;
+        }
+        toast.info("Auto-verification failed. Submitting for manual review...");
       }
-    }
-
-    if (!screenshot && !isQrAuto) {
-      toast.error("Please provide a valid 12-digit UTR number");
-      return;
     }
 
     if (!screenshotPreview && !isQrAuto) {
