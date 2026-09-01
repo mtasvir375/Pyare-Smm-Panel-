@@ -273,6 +273,15 @@ export async function startServer() {
           console.log(`[PERSISTENT-CACHE] Loaded ${serverCache.courses.size} courses from disk.`);
         }
 
+        if (parsed.users && Array.isArray(parsed.users)) {
+          serverCache.users.clear();
+          parsed.users.forEach(([id, cacheObj]: [string, any]) => {
+            const uData = cacheObj?.data ? { id, ...cacheObj.data } : { id, ...(cacheObj || {}) };
+            serverCache.users.set(id, { data: uData, time: cacheObj?.time || Date.now() });
+          });
+          console.log(`[PERSISTENT-CACHE] Loaded ${serverCache.users.size} users from disk.`);
+        }
+
         if (parsed.deposits && Array.isArray(parsed.deposits)) {
           serverCache.deposits.clear();
           parsed.deposits.forEach(([id, cacheObj]: [string, any]) => {
@@ -323,11 +332,12 @@ export async function startServer() {
         settings: serverCache.settings,
         providers: Array.from(serverCache.providers.entries()),
         courses: Array.from(serverCache.courses.entries()),
+        users: Array.from(serverCache.users.entries()),
         deposits: Array.from(serverCache.deposits.entries()).slice(-100),
         bank_sms_logs: Array.from(serverCache.bank_sms_logs.entries()).slice(-50)
       };
       fs.writeFileSync(cacheFilePath, JSON.stringify(dataToSave, null, 2), "utf-8");
-      console.log("[PERSISTENT-CACHE] Saved settings, providers, courses & deposits cache to disk.");
+      console.log("[PERSISTENT-CACHE] Saved settings, providers, courses, users & deposits cache to disk.");
     } catch (err: any) {
       console.error("[PERSISTENT-CACHE-ERR] Failed to save persistent cache:", err.message);
     }
@@ -947,6 +957,12 @@ export async function startServer() {
 
     // --- SECONDARY FALLBACK: IF FETCH FAILED BUT WE HAVE ANY CACHED COPY (EVEN IF EXPIRED) ---
     if (!result.exists) {
+      if (collect === "users" && id && serverCache.users && serverCache.users.has(id)) {
+        console.log(`[GET-SAFE-FALLBACK] Live fetch failed for users/${id}. Falling back to cached copy.`);
+        const cached = serverCache.users.get(id);
+        const uData = cached.data || cached;
+        return { exists: true, data: () => uData };
+      }
       if (collect === "settings" && id === "payment" && serverCache.settings) {
         console.log(`[GET-SAFE-FALLBACK] Live fetch failed for settings/payment. Falling back to cached copy and updating timestamp.`);
         serverCache.settings.time = now;
@@ -1006,8 +1022,37 @@ export async function startServer() {
       } else if (collect === "providers" && id) {
         serverCache.providers.set(id, { data, time: now });
         savePersistentCache();
-      } else if (collect === "users" && id && !token) { // Only cache dynamic user profiles when loaded without token to prevent stale balance
-        serverCache.users.set(id, { data, time: now });
+      } else if (collect === "users" && id) {
+        let uData = data;
+        const currentBal = Number(uData?.balance ?? uData?.walletBalance ?? 0);
+        // Automatic balance recovery from approved deposits if balance is zero or missing
+        if (currentBal <= 0) {
+          let totalApproved = 0;
+          serverCache.deposits.forEach((dep: any) => {
+            const d = dep?.data || dep;
+            if ((d.userId === id || d.user_id === id) && d.status === "approved") {
+              totalApproved += Number(d.amount || 0);
+            }
+          });
+          let totalOrdersPrice = 0;
+          serverCache.orders.forEach((ord: any) => {
+            const o = ord?.data || ord;
+            if ((o.userId === id || o.user_id === id) && o.status !== "Failed" && o.status !== "Cancelled") {
+              totalOrdersPrice += Number(o.totalPrice || o.total_price || 0);
+            }
+          });
+          const calculatedBal = Math.max(0, Number((totalApproved - totalOrdersPrice).toFixed(2)));
+          if (calculatedBal > 0) {
+            console.log(`[BALANCE-AUTO-RESTORE] Restoring ₹${calculatedBal} balance for user ${id} (Approved deposits: ₹${totalApproved}, Orders: ₹${totalOrdersPrice})`);
+            uData = { ...uData, balance: calculatedBal };
+            result = { exists: true, data: () => uData };
+            if (!useRestFallback) {
+              fdb.collection("users").doc(id).set({ balance: calculatedBal }, { merge: true }).catch(() => {});
+            }
+          }
+        }
+        serverCache.users.set(id, { data: uData, time: now });
+        savePersistentCache();
       } else if (collect === "orders" && id && !token) {
         serverCache.orders.set(id, { data, time: now });
       }
@@ -1225,7 +1270,14 @@ export async function startServer() {
     if (col === "users") {
       const existing = serverCache.users.get(id);
       const existingData = existing ? (existing.data || existing) : {};
+      const existingBal = Number(existingData.balance ?? existingData.walletBalance ?? 0);
+      const incomingBal = Number(data.balance);
+      if ((data.balance === 0 || data.balance === undefined || isNaN(incomingBal)) && existingBal > 0 && !data.forceReset) {
+        console.log(`[BALANCE-SHIELD] Prevented overwriting balance of user ${id} with 0. Retaining existing balance: ₹${existingBal}`);
+        data.balance = existingBal;
+      }
       serverCache.users.set(id, { data: { ...existingData, ...data }, time: Date.now() });
+      savePersistentCache();
     }
     if (col === "deposits") {
       serverCache.deposits.set(id, { ...data, updatedAt: new Date().toISOString() });
@@ -1353,7 +1405,13 @@ export async function startServer() {
         cached.data.balance = Math.max(0, Number((oldBal + change).toFixed(2)));
         cached.time = Date.now();
       }
+    } else {
+      serverCache.users.set(user_id, {
+        data: { uid: user_id, balance: Math.max(0, change) },
+        time: Date.now()
+      });
     }
+    savePersistentCache();
 
     if (!useRestFallback) {
       try {
@@ -1895,13 +1953,14 @@ export async function startServer() {
 
   app.get("/api/admin/all-deposits", async (req, res) => {
     try {
-      const limitCount = Math.min(Number(req.query.limit) || 50, 50);
+      const limitCount = Math.min(Number(req.query.limit) || 20, 20);
       if (serverCache.deposits.size > 0) {
         const cached = Array.from(serverCache.deposits.values())
           .map(d => d.data || d)
           .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
           .slice(0, limitCount);
         if (cached.length > 0) {
+          console.log(`[API-ALL-DEPOSITS] Returned ${cached.length} deposits from server memory cache (0 Firestore reads)`);
           return res.json(cached);
         }
       }
@@ -1915,7 +1974,11 @@ export async function startServer() {
             results.push(data);
             serverCache.deposits.set(doc.id, { data, time: Date.now() });
           });
-          return res.json(results);
+          if (results.length > 0) {
+            savePersistentCache();
+            console.log(`[API-ALL-DEPOSITS] Fetched ${results.length} deposits from Firestore and cached to disk.`);
+            return res.json(results);
+          }
         } catch (e: any) {
           console.warn("[ADMIN-ALL-DEPOSITS-FIRESTORE-ERR]", e.message);
         }
@@ -1933,11 +1996,13 @@ export async function startServer() {
           results.push(data);
           serverCache.deposits.set(id, { data, time: Date.now() });
         });
+        savePersistentCache();
       }
       return res.json(results);
     } catch (err: any) {
       console.error("[ALL-DEPOSITS-ERR]", err.message);
-      res.status(500).json({ error: err.message });
+      const cached = Array.from(serverCache.deposits.values()).map(d => d.data || d);
+      return res.json(cached.slice(0, 20));
     }
   });
 
@@ -2035,6 +2100,81 @@ export async function startServer() {
     }
   });
 
+  app.post("/api/admin/restore-all-balances", async (req, res) => {
+    try {
+      console.log(`[RESTORE-BALANCES] Starting balance reconciliation...`);
+      const userApprovedMap = new Map<string, number>();
+      const userOrdersMap = new Map<string, number>();
+
+      // 1. Calculate from in-memory and persistent deposits
+      serverCache.deposits.forEach((dep: any) => {
+        const d = dep?.data || dep;
+        const uId = d.userId || d.user_id;
+        if (uId && d.status === "approved") {
+          const amt = Number(d.amount || 0);
+          userApprovedMap.set(uId, (userApprovedMap.get(uId) || 0) + amt);
+        }
+      });
+
+      // Also query Firestore approved deposits if accessible
+      if (!useRestFallback && adminSdkSucceeded) {
+        try {
+          const depSnaps = await fdb.collection("deposits").where("status", "==", "approved").get();
+          depSnaps.forEach(doc => {
+            const d = doc.data();
+            const uId = d.userId || d.user_id;
+            if (uId) {
+              const amt = Number(d.amount || 0);
+              if (!serverCache.deposits.has(doc.id)) {
+                userApprovedMap.set(uId, (userApprovedMap.get(uId) || 0) + amt);
+              }
+            }
+          });
+        } catch (e: any) {
+          console.warn("[RESTORE-BALANCES] Error fetching deposits from DB:", e.message);
+        }
+      }
+
+      // 2. Calculate orders
+      serverCache.orders.forEach((ord: any) => {
+        const o = ord?.data || ord;
+        const uId = o.userId || o.user_id;
+        if (uId && o.status !== "Failed" && o.status !== "Cancelled") {
+          const price = Number(o.totalPrice || o.total_price || 0);
+          userOrdersMap.set(uId, (userOrdersMap.get(uId) || 0) + price);
+        }
+      });
+
+      const restoredList: any[] = [];
+      for (const [uId, totalDep] of userApprovedMap.entries()) {
+        const totalOrd = userOrdersMap.get(uId) || 0;
+        const calculatedBalance = Math.max(0, Number((totalDep - totalOrd).toFixed(2)));
+        
+        const cachedUser = serverCache.users.get(uId);
+        const existingData = cachedUser ? (cachedUser.data || cachedUser) : {};
+        const currentBal = Number(existingData.balance ?? existingData.walletBalance ?? 0);
+
+        if (calculatedBalance > currentBal) {
+          console.log(`[RESTORE-BALANCES] Restoring User ${uId}: Old Bal ₹${currentBal} -> New Bal ₹${calculatedBalance}`);
+          const updatedUser = { ...existingData, uid: uId, balance: calculatedBalance, updatedAt: new Date().toISOString() };
+          serverCache.users.set(uId, { data: updatedUser, time: Date.now() });
+          
+          if (!useRestFallback && adminSdkSucceeded) {
+            fdb.collection("users").doc(uId).set({ balance: calculatedBalance }, { merge: true }).catch(() => {});
+          }
+          
+          restoredList.push({ userId: uId, oldBalance: currentBal, restoredBalance: calculatedBalance });
+        }
+      }
+
+      savePersistentCache();
+      return res.json({ success: true, count: restoredList.length, restored: restoredList });
+    } catch (err: any) {
+      console.error("[RESTORE-BALANCES-ERR] Failed:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post("/api/db/get", async (req, res) => {
     const { collection, id } = req.body;
     if (!collection || !id) return res.status(400).json({ error: "Missing collection or id" });
@@ -2049,7 +2189,7 @@ export async function startServer() {
   });
 
   app.post("/api/db/list", async (req, res) => {
-    const { collection: collect, limit: pageSize = 100 } = req.body;
+    const { collection: collect, limit: pageSize = 25 } = req.body;
     if (!collect) return res.status(400).json({ error: "Missing collection" });
     
     // Check serverCache first (0 Reads)
@@ -2061,13 +2201,23 @@ export async function startServer() {
       const list = Array.from(serverCache.providers.values()).map((p: any) => p.data || p);
       return res.json({ success: true, data: list.slice(0, pageSize) });
     }
+    if (collect === "deposits" && serverCache.deposits.size > 0) {
+      const list = Array.from(serverCache.deposits.values())
+        .map((d: any) => d.data || d)
+        .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      return res.json({ success: true, data: list.slice(0, pageSize) });
+    }
+    if (collect === "orders" && serverCache.latestOrders.length > 0) {
+      return res.json({ success: true, data: serverCache.latestOrders.slice(0, pageSize) });
+    }
 
     try {
       const results: any[] = [];
+      const effectiveLimit = Math.min(pageSize, 25);
       const isCore = collect === "providers" || collect === "settings" || collect === "courses" || collect === "services";
       if (!useRestFallback || (adminSdkSucceeded && isCore)) {
         try {
-          const snap = await fdb.collection(collect).limit(pageSize).get();
+          const snap = await fdb.collection(collect).limit(effectiveLimit).get();
           snap.forEach(doc => results.push({ id: doc.id, ...doc.data() }));
         } catch (err) {
           if (!adminSdkSucceeded) useRestFallback = true;
@@ -2076,8 +2226,8 @@ export async function startServer() {
       
       if ((useRestFallback && !(adminSdkSucceeded && isCore)) || results.length === 0) {
         const targetProject = getTargetProject();
-        const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/${collect}?key=${apiKey}&pageSize=${pageSize}`;
-        const resRest = await axios.get(url);
+        const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/${collect}?key=${apiKey}&pageSize=${effectiveLimit}`;
+        const resRest = await axios.get(url, { timeout: 10000 });
         if (resRest.data && resRest.data.documents) {
           resRest.data.documents.forEach((doc: any) => {
             results.push({ id: doc.name.split("/").pop(), ...unwrapRestFields(doc.fields || {}) });
@@ -2098,6 +2248,13 @@ export async function startServer() {
         results.forEach(c => {
           if (c.id) {
             serverCache.courses.set(c.id, { data: c, time: nowTime });
+          }
+        });
+        savePersistentCache();
+      } else if (collect === "deposits" && results.length > 0) {
+        results.forEach(d => {
+          if (d.id) {
+            serverCache.deposits.set(d.id, { data: d, time: nowTime });
           }
         });
         savePersistentCache();

@@ -235,6 +235,7 @@ export default function Admin() {
   const [lastSearchTime, setLastSearchTime] = useState(0);
 
   const [lastStatsFetchTime, setLastStatsFetchTime] = useState(0);
+  const [isRestoringBalances, setIsRestoringBalances] = useState(false);
 
   const fetchDashboardStats = async (force = false) => {
     // We only fetch stats if they are useful. Since totalEarnings is removed, 
@@ -288,7 +289,7 @@ export default function Admin() {
         const ordersList = await dbClient.getOrdersAdmin(50);
         setOrders(ordersList);
       } else if (tab === "deposits") {
-        const depositsList = await dbClient.getDepositsAdmin(50);
+        const depositsList = await dbClient.getDepositsAdmin(25);
         setDeposits(depositsList);
       } else if (tab === "users" && isAdmin) {
         await handleSearchUser(force);
@@ -875,6 +876,28 @@ export default function Admin() {
   };
 
   // handleWithdrawalAction removed
+
+  const handleRestoreAllBalances = async () => {
+    try {
+      setIsRestoringBalances(true);
+      const res = await axios.post("/api/admin/restore-all-balances");
+      if (res.data && res.data.success) {
+        if (res.data.count > 0) {
+          toast.success(`बैलेंस सफलतापूर्वक रिकवर हो गया! ${res.data.count} यूजर्स के वॉलेट में बैलेंस रीस्टोर किया गया।`);
+        } else {
+          toast.info("सभी यूजर्स के वॉलेट बैलेंस पहले से ही सही और सुरक्षित हैं।");
+        }
+        // Refresh users list if open
+        fetchTabData("users", true);
+      } else {
+        toast.error("रिकवरी प्रक्रिया में समस्या आई: " + (res.data?.error || "अज्ञात त्रुटि"));
+      }
+    } catch (err: any) {
+      toast.error("बैलेंस रिकवरी में त्रुटि: " + err.message);
+    } finally {
+      setIsRestoringBalances(false);
+    }
+  };
 
   const handleUpdateUserBalance = async () => {
     if (!editingUser || newBalance === "") return;
@@ -1972,13 +1995,30 @@ export default function Admin() {
               </div>
 
               <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-                <h2 className="text-lg font-bold">Manage Users</h2>
-                <div className="relative flex items-center w-full md:w-auto gap-2">
+                <div>
+                  <h2 className="text-lg font-bold">Manage Users</h2>
+                  <p className="text-xs text-gray-500">Search users, update wallet balance, or auto-restore balances</p>
+                </div>
+                <div className="flex flex-wrap items-center w-full md:w-auto gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={handleRestoreAllBalances}
+                    disabled={isRestoringBalances}
+                    className="rounded-xl text-xs border-emerald-300 text-emerald-700 hover:bg-emerald-50 shrink-0"
+                    title="डिपॉजिट्स के आधार पर यूजर्स के गुम हुए वॉलेट बैलेंस को सुरक्षित तरीके से रीस्टोर करें"
+                  >
+                    {isRestoringBalances ? (
+                      <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin text-emerald-600" />
+                    ) : (
+                      <CheckCircle2 className="w-3.5 h-3.5 mr-1.5 text-emerald-600" />
+                    )}
+                    {isRestoringBalances ? "Restoring..." : "Restore All Balances"}
+                  </Button>
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
                     <Input 
                       placeholder="Search email or prefix..." 
-                      className="pl-10 rounded-xl bg-white w-full md:w-64"
+                      className="pl-10 rounded-xl bg-white w-full md:w-56"
                       value={userSearch}
                       onChange={(e) => setUserSearch(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && handleSearchUser()}

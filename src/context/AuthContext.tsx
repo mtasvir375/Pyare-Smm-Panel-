@@ -41,7 +41,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (user) {
       try {
         const profile = await dbClient.getUserProfile(user.uid);
-        if (profile) setUserProfile(profile);
+        if (profile) {
+          setUserProfile(profile);
+          try {
+            localStorage.setItem(`user_profile_${user.uid}`, JSON.stringify(profile));
+          } catch (e) {}
+        }
       } catch (error) {
         console.error("Error refreshing user profile:", error);
       }
@@ -69,36 +74,57 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(firebaseUser);
       
       if (firebaseUser) {
+        // First check if we have a locally cached profile to instantly show balance without waiting
+        let localCached: any = null;
         try {
-          // Fetch user profile from Firestore (tries direct SDK + backend proxy)
+          const saved = localStorage.getItem(`user_profile_${firebaseUser.uid}`);
+          if (saved) {
+            localCached = JSON.parse(saved);
+            setUserProfile(localCached);
+          }
+        } catch (e) {}
+
+        try {
+          // Fetch authoritative user profile from backend/database
           let profile = await dbClient.getUserProfile(firebaseUser.uid);
           
           if (!profile) {
-            console.log("[AUTH] Profile not found in database, creating new user profile...");
-            const newProfile: any = {
-              uid: firebaseUser.uid,
-              email: firebaseUser.email || '',
-              displayName: firebaseUser.displayName || 'User',
-              photoURL: firebaseUser.photoURL || '',
-              role: 'student', // Default role
-              balance: 0,
-            };
-            
-            try {
-              await dbClient.createUserProfile(firebaseUser.uid, newProfile);
-              profile = { ...newProfile, createdAt: new Date() };
-              console.log("[AUTH] New profile registered successfully.");
-            } catch (createErr) {
-              console.error("[AUTH] Error registering new profile:", createErr);
-              profile = { ...newProfile, createdAt: new Date() };
+            // If we have a local cached profile, DO NOT overwrite with 0 balance!
+            if (localCached && Number(localCached.balance || 0) > 0) {
+              console.log("[AUTH] Using persistent local cached profile to safeguard wallet balance:", localCached.balance);
+              profile = localCached;
+            } else {
+              console.log("[AUTH] Profile not found in database, creating new user profile...");
+              const newProfile: any = {
+                uid: firebaseUser.uid,
+                email: firebaseUser.email || '',
+                displayName: firebaseUser.displayName || 'User',
+                photoURL: firebaseUser.photoURL || '',
+                role: 'student', // Default role
+                balance: 0,
+              };
+              
+              try {
+                await dbClient.createUserProfile(firebaseUser.uid, newProfile);
+                profile = { ...newProfile, createdAt: new Date() };
+                console.log("[AUTH] New profile registered successfully.");
+              } catch (createErr) {
+                console.error("[AUTH] Error registering new profile:", createErr);
+                profile = { ...newProfile, createdAt: new Date() };
+              }
             }
           }
           
-          setUserProfile(profile);
+          if (profile) {
+            setUserProfile(profile);
+            try {
+              localStorage.setItem(`user_profile_${firebaseUser.uid}`, JSON.stringify(profile));
+            } catch (e) {}
+          }
         } catch (error) {
           console.error("Error fetching user profile:", error);
-          // Keep existing profile if already in memory, do not clobber with blank state
-          setUserProfile(prev => prev || {
+          // Keep existing profile or cached profile if available, do not clobber with blank 0 balance
+          setUserProfile(prev => prev || localCached || {
             uid: firebaseUser.uid,
             email: firebaseUser.email || '',
             displayName: firebaseUser.displayName || 'User',
@@ -125,6 +151,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signOut = async () => {
     try {
       console.log("[AUTH_CONTEXT] Clearing local state and signing out...");
+      if (user) {
+        try { localStorage.removeItem(`user_profile_${user.uid}`); } catch (e) {}
+      }
       setUserProfile(null);
       setUser(null);
       await firebaseSignOut(auth);
@@ -138,10 +167,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const updateUserProfileLocal = (updatedFields: Partial<UserProfile>) => {
     setUserProfile((prev) => {
       if (!prev) return null;
-      return {
+      const updated = {
         ...prev,
         ...updatedFields,
       };
+      if (user) {
+        try {
+          localStorage.setItem(`user_profile_${user.uid}`, JSON.stringify(updated));
+        } catch (e) {}
+      }
+      return updated;
     });
   };
 
