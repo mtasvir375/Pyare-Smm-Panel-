@@ -55,20 +55,36 @@ axios.defaults.httpsAgent = keepAliveAgent;
 axios.defaults.httpAgent = keepAliveHttpAgent;
 
 
-    // Initialize Firebase Admin
+    // Initialize Firebase Admin safely
+    let adminApp: any = null;
     if (!admin.apps.length) {
       try {
-        admin.initializeApp({
+        adminApp = admin.initializeApp({
           credential: admin.credential.applicationDefault()
         });
         console.log(`[FIREBASE] Admin SDK initialized with default credentials.`);
       } catch (error) {
-        admin.initializeApp();
-        console.log(`[FIREBASE] Admin SDK initialized with minimal config.`);
+        try {
+          adminApp = admin.initializeApp();
+          console.log(`[FIREBASE] Admin SDK initialized with minimal config.`);
+        } catch (e2) {
+          console.warn("[FIREBASE] Admin SDK init failed, will use REST API fallback:", e2);
+        }
       }
+    } else {
+      adminApp = admin.apps[0];
     }
 
-const fdb = getFirestore(admin.apps[0] || admin.app(), dbId);
+let fdb: any = null;
+try {
+  fdb = getFirestore(adminApp || admin.app(), dbId);
+} catch (e1) {
+  try {
+    fdb = getFirestore();
+  } catch (e2) {
+    console.warn("[FIREBASE] getFirestore fallback:", e2);
+  }
+}
 
 const PORT = 3000;
 
@@ -141,7 +157,7 @@ export async function startServer() {
     // Seed initial orders into memory after we've checked/retrieved the token
     await seedMemoryOrders();
   };
-  initializeSystemToken();
+  initializeSystemToken().catch(e => console.warn("[STARTUP] Token init non-blocking warning:", e?.message));
   
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
