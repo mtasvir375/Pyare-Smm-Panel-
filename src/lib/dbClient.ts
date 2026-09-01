@@ -152,6 +152,18 @@ export const dbClient = {
   // User specific
   async getUserProfile(uid: string): Promise<UserProfile | null> {
     if (!uid) return null;
+    
+    // 1. Try authoritative backend proxy first (avoids stale client-side cache and guarantees real-time balance)
+    try {
+      const res = await axios.post('/api/db/get', { collection: 'users', id: uid });
+      if (res.data && res.data.success && res.data.data) {
+        return { id: uid, uid, ...res.data.data };
+      }
+    } catch (proxyErr: any) {
+      console.warn(`[DB-CLIENT] Proxy getUserProfile failed for ${uid}:`, proxyErr.message);
+    }
+
+    // 2. Direct Firestore fallback
     try {
       const docRef = doc(db, 'users', uid);
       const snap = await getDoc(docRef);
@@ -160,17 +172,9 @@ export const dbClient = {
         return { id: snap.id, uid, ...data };
       }
     } catch (err: any) {
-      console.warn(`[DB-CLIENT] Direct getUserProfile failed for ${uid}: ${err.message}. Trying backend proxy...`);
+      console.warn(`[DB-CLIENT] Direct getUserProfile failed for ${uid}: ${err.message}`);
     }
 
-    try {
-      const res = await axios.post('/api/db/get', { collection: 'users', id: uid });
-      if (res.data && res.data.success && res.data.data) {
-        return { id: uid, uid, ...res.data.data };
-      }
-    } catch (proxyErr: any) {
-      console.error(`[DB-CLIENT] Proxy getUserProfile failed for ${uid}:`, proxyErr.message);
-    }
     return null;
   },
 

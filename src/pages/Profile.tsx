@@ -478,28 +478,15 @@ export default function Profile() {
         }
         resetAddFunds();
       } else {
-        toast.error(response.data.error || "Submission failed.");
+        toast.error(response.data?.error || "Submission failed.");
       }
-
     } catch (error: any) {
-      console.error("Server payment submission failed, trying client-side fallback...", error);
-      
-      // OPTION 2: Client-side Direct Write Fallback
-      try {
-        const cleanUtr = utr.replace(/\D/g, "");
-        const depositId = "dep_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
-        await dbClient.submitManualDeposit(depositId, {
-          userId: user.uid,
-          userEmail: user.email,
-          amount: Number(amount),
-          utr: cleanUtr,
-          screenshotUrl: screenshotPreview || ""
-        });
-
-        toast.success("Request submitted successfully!");
-        resetAddFunds();
-      } catch (clientError: any) {
-        toast.error(clientError.message || "An unexpected error occurred.");
+      const serverErrMsg = error.response?.data?.error || error.response?.data?.message;
+      if (serverErrMsg) {
+        toast.error(serverErrMsg);
+      } else {
+        console.error("Payment submission failed:", error);
+        toast.error(error.message || "Failed to submit payment request. Please check your internet connection.");
       }
     } finally {
       setIsUploading(false);

@@ -63,6 +63,11 @@ service cloud.firestore {
       allow read, write: if true;
     }
     
+    // Bank SMS logs
+    match /bank_sms_logs/{logId} {
+      allow read, write: if true;
+    }
+
     // API Keys (for SMM provider API)
     match /api_keys/{apiKey} {
       allow read, write: if true;

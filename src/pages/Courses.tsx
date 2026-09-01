@@ -555,42 +555,15 @@ export default function Courses() {
         setScreenshot(null);
         setScreenshotPreview(null);
       } else {
-        toast.error(response.data.error || "Failed to submit request");
+        toast.error(response.data?.error || "Failed to submit request");
       }
     } catch (error: any) {
-      console.error("Server payment submission failed, trying client-side fallback...", error);
-      
-      // OPTION 2: Client-side Direct Write Fallback
-      try {
-        const cleanUtr = utr.replace(/\D/g, "");
-        if (cleanUtr.length !== 12) throw new Error("Invalid UTR format");
-
-        const depositId = "dep_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
-        await dbClient.submitManualDeposit(depositId, {
-          userId: user.uid,
-          userEmail: user.email || "not-provided",
-          amount: Number(depositAmount),
-          utr: cleanUtr,
-          screenshotUrl: screenshotPreview || ""
-        });
-
-        toast.success("Request submitted successfully!");
-        setIsAddFundsOpen(false);
-        setDepositAmount("");
-        setUtr("");
-        setScreenshot(null);
-        setScreenshotPreview(null);
-      } catch (clientError: any) {
-        console.error("Client fallback failed:", clientError);
-        let msg = "Submission failed.";
-        if (clientError.message?.includes("already been submitted")) {
-          msg = "This UTR number has already been used for a payment request.";
-        } else if (clientError.code === "permission-denied" || clientError.message?.includes("permissions")) {
-          msg = "Permission Denied: Please contact admin to check database settings.";
-        } else {
-          msg = clientError.message || "An unexpected error occurred.";
-        }
-        toast.error(msg);
+      const serverErrMsg = error.response?.data?.error || error.response?.data?.message;
+      if (serverErrMsg) {
+        toast.error(serverErrMsg);
+      } else {
+        console.error("Payment submission failed:", error);
+        toast.error(error.message || "Failed to submit payment request. Please check your internet connection.");
       }
     } finally {
       setIsUploading(false);

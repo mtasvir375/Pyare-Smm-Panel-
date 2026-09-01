@@ -272,6 +272,24 @@ export async function startServer() {
           });
           console.log(`[PERSISTENT-CACHE] Loaded ${serverCache.courses.size} courses from disk.`);
         }
+
+        if (parsed.deposits && Array.isArray(parsed.deposits)) {
+          serverCache.deposits.clear();
+          parsed.deposits.forEach(([id, cacheObj]: [string, any]) => {
+            const dData = cacheObj?.data ? { id, ...cacheObj.data } : { id, ...(cacheObj || {}) };
+            serverCache.deposits.set(id, { data: dData, time: cacheObj?.time || Date.now() });
+          });
+          console.log(`[PERSISTENT-CACHE] Loaded ${serverCache.deposits.size} deposits from disk.`);
+        }
+
+        if (parsed.bank_sms_logs && Array.isArray(parsed.bank_sms_logs)) {
+          serverCache.bank_sms_logs.clear();
+          parsed.bank_sms_logs.forEach(([id, cacheObj]: [string, any]) => {
+            const sData = cacheObj?.data ? { id, ...cacheObj.data } : { id, ...(cacheObj || {}) };
+            serverCache.bank_sms_logs.set(id, { data: sData, time: cacheObj?.time || Date.now() });
+          });
+          console.log(`[PERSISTENT-CACHE] Loaded ${serverCache.bank_sms_logs.size} bank SMS logs from disk.`);
+        }
       }
     } catch (err: any) {
       console.error("[PERSISTENT-CACHE-ERR] Failed to load persistent cache:", err.message);
@@ -304,10 +322,12 @@ export async function startServer() {
       const dataToSave = {
         settings: serverCache.settings,
         providers: Array.from(serverCache.providers.entries()),
-        courses: Array.from(serverCache.courses.entries())
+        courses: Array.from(serverCache.courses.entries()),
+        deposits: Array.from(serverCache.deposits.entries()).slice(-100),
+        bank_sms_logs: Array.from(serverCache.bank_sms_logs.entries()).slice(-50)
       };
       fs.writeFileSync(cacheFilePath, JSON.stringify(dataToSave, null, 2), "utf-8");
-      console.log("[PERSISTENT-CACHE] Saved settings and providers cache to disk.");
+      console.log("[PERSISTENT-CACHE] Saved settings, providers, courses & deposits cache to disk.");
     } catch (err: any) {
       console.error("[PERSISTENT-CACHE-ERR] Failed to save persistent cache:", err.message);
     }
@@ -832,16 +852,14 @@ export async function startServer() {
         }
       });
 
-      await fdb.collection("settings").doc("providers").set(providersMap, { merge: true });
-      console.log(`[SYNC-PROVIDERS-STARTUP] ✅ Successfully wrote settings/providers backup document.`);
+      // Provider settings are safely maintained in memory and persistent disk cache.
+      console.log(`[SYNC-PROVIDERS-STARTUP] Providers loaded in memory.`);
     } catch (err: any) {
       console.error(`[SYNC-PROVIDERS-STARTUP-ERROR] Failed to sync on startup:`, err.message);
     }
   };
 
-  if (adminSdkSucceeded) {
-    syncProvidersToSettingsInternal().catch(console.error);
-  }
+  // Skip startup write to save Firestore writes
 
   // Firebase-Firestore Helpers that replace Supabase ones
   const getDocSafe = async (collect: string, id: string, token?: string, forceFresh?: boolean) => {
@@ -1156,6 +1174,11 @@ export async function startServer() {
         serverCache.latestOrders[idx] = { ...serverCache.latestOrders[idx], ...data };
       }
     }
+    if (col === "users") {
+      const existing = serverCache.users.get(id);
+      const existingData = existing ? (existing.data || existing) : {};
+      serverCache.users.set(id, { data: { ...existingData, ...data }, time: Date.now() });
+    }
     if (col === "deposits") {
       const existing = serverCache.deposits.get(id) || {};
       serverCache.deposits.set(id, { ...existing, ...data, updatedAt: new Date().toISOString() });
@@ -1198,6 +1221,11 @@ export async function startServer() {
     if (col === "orders") {
       console.log(`[MEMORY-SET] Syncing memory cache for order ${id}.`);
       addOrderToMemory(id, data);
+    }
+    if (col === "users") {
+      const existing = serverCache.users.get(id);
+      const existingData = existing ? (existing.data || existing) : {};
+      serverCache.users.set(id, { data: { ...existingData, ...data }, time: Date.now() });
     }
     if (col === "deposits") {
       serverCache.deposits.set(id, { ...data, updatedAt: new Date().toISOString() });
@@ -2010,8 +2038,8 @@ export async function startServer() {
   app.post("/api/db/get", async (req, res) => {
     const { collection, id } = req.body;
     if (!collection || !id) return res.status(400).json({ error: "Missing collection or id" });
-    // Bypassing cache for settings and providers to ensure the Admin UI always gets real-time, accurate API details
-    const forceFresh = collection === "settings" || collection === "providers";
+    // Bypassing cache for settings, providers, and users to ensure real-time accuracy and prevent stale balances
+    const forceFresh = collection === "settings" || collection === "providers" || collection === "users";
     const snap = await getDocSafe(collection, id, req.headers.authorization as string, forceFresh);
     if (snap.exists) {
       res.json({ success: true, data: snap.data() });
@@ -2633,6 +2661,8 @@ export async function startServer() {
     }
   });
 
+  const userLastDepositTime = new Map<string, number>();
+
   // Manual Deposit with Smart Anti-Fraud & Instant SMS Reconciliation
   app.post("/api/deposits/submit-manual", async (req, res) => {
     const { amount, utr, screenshotUrl, userId, userEmail } = req.body;
@@ -2644,6 +2674,14 @@ export async function startServer() {
     if (!user_id || !depositAmount || isNaN(depositAmount) || depositAmount <= 0) {
       return res.status(400).json({ error: "Invalid deposit amount or user ID." });
     }
+
+    // Rate-limiting check (prevent duplicate rapid-clicks)
+    const now = Date.now();
+    const lastSub = userLastDepositTime.get(user_id) || 0;
+    if (now - lastSub < 4000) {
+      return res.status(429).json({ error: "Please wait a moment before submitting another request." });
+    }
+    userLastDepositTime.set(user_id, now);
 
     const cleanUtr = String(utr || "").replace(/\D/g, "").trim();
     if (cleanUtr.length < 10 || cleanUtr.length > 18) {
@@ -3171,16 +3209,23 @@ export async function startServer() {
       // 1. Parse UTR: Extract all potential UTR / RRN / Reference Numbers (10 to 18 digits)
       const cleanText = text.replace(/,/g, "");
       const explicitUtrMatches: string[] = [];
-      const utrRegex = /(?:UPI|UTR|RRN|Ref|Reference|Txn\s*ID|Txn\s*No|IMPS|ORDER|CR|DR)[\s/:\-_#]*([0-9]{10,18})/gi;
+      const utrRegex = /(?:UPI|UTR|RRN|Ref(?:erence)?(?:\s*No)?|Txn(?:\s*ID|\s*No)?|IMPS|ORDER|CR|DR|transfer)[\s/:\-_#]*([0-9]{10,18})/gi;
       let match;
       while ((match = utrRegex.exec(cleanText)) !== null) {
         if (match[1]) explicitUtrMatches.push(match[1].replace(/\D/g, ""));
       }
 
-      const digitSequences: string[] = (cleanText.match(/\d+/g) || []).map(s => s.trim());
+      // Also match slash-separated UPI tokens like UPI/CR/424312345678/... or UPI/424312345678
+      const slashUtrRegex = /\/(?:CR|DR|UPI|P2A|P2M|TRANSFER)?\/([0-9]{10,18})/gi;
+      let slashMatch;
+      while ((slashMatch = slashUtrRegex.exec(cleanText)) !== null) {
+        if (slashMatch[1]) explicitUtrMatches.push(slashMatch[1].replace(/\D/g, ""));
+      }
+
+      const digitSequences: string[] = (cleanText.match(/\d{10,18}/g) || []).map(s => s.trim());
       const candidateUtrs = Array.from(new Set([
         ...explicitUtrMatches,
-        ...digitSequences.filter((seq: string) => seq.length >= 10 && seq.length <= 18)
+        ...digitSequences
       ]));
 
       console.log(`[SMS-WEBHOOK] Extracted candidate UTRs: ${JSON.stringify(candidateUtrs)}`);
@@ -3196,9 +3241,45 @@ export async function startServer() {
       const parsedAmount = amountMatch ? parseFloat(amountMatch[1]) : null;
       console.log(`[SMS-WEBHOOK] Extracted credited amount: ₹${parsedAmount}`);
 
-      // 3. Save SMS to bank_sms_logs & in-memory cache
-      let smsLogId = "";
+      // Check if message is related to bank credits/payments
+      const lowerClean = cleanText.toLowerCase();
+      const isPaymentRelated = lowerClean.includes("credit") || 
+                               lowerClean.includes("rec") || 
+                               lowerClean.includes("deposit") || 
+                               lowerClean.includes("upi") || 
+                               lowerClean.includes("imps") || 
+                               lowerClean.includes("inr") || 
+                               lowerClean.includes("rs") || 
+                               lowerClean.includes("₹");
+
+      if (!isPaymentRelated || candidateUtrs.length === 0) {
+        console.log("[SMS-WEBHOOK] Ignoring non-payment / non-UTR SMS to save Firestore quota.");
+        return res.json({ 
+          success: true, 
+          message: "SMS ignored: Not a recognized bank deposit or no valid UTR found.",
+          candidateUtrs,
+          parsedAmount 
+        });
+      }
+
+      // Memory deduplication check (0 Writes)
+      const existingCachedSms = Array.from(serverCache.bank_sms_logs.values()).map(s => s.data || s);
+      const isDuplicateSms = existingCachedSms.some((log: any) => {
+        if (!log) return false;
+        if (log.rawText === text) return true;
+        const utrs: string[] = Array.isArray(log.candidateUtrs) ? log.candidateUtrs : [String(log.utr || "")];
+        return utrs.length > 0 && candidateUtrs.some(u => utrs.includes(u));
+      });
+
+      if (isDuplicateSms) {
+        console.log("[SMS-WEBHOOK] Duplicate SMS already processed in memory cache. Skipping write.");
+        return res.json({ success: true, message: "Duplicate SMS already processed." });
+      }
+
+      // Store in fast memory cache AND persist to Firestore
+      let smsLogId = "sms_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
       const smsLogPayload = {
+        id: smsLogId,
         rawText: text,
         candidateUtrs,
         parsedAmount,
@@ -3206,26 +3287,8 @@ export async function startServer() {
         isUsed: false,
         receivedAt: new Date().toISOString()
       };
-
-      try {
-        const smsDoc: any = await addDocSafe("bank_sms_logs", smsLogPayload);
-        smsLogId = typeof smsDoc === "string" ? smsDoc : (smsDoc?.id || "");
-        if (smsLogId) {
-          serverCache.bank_sms_logs.set(smsLogId, { data: { id: smsLogId, ...smsLogPayload }, time: Date.now() });
-        }
-      } catch (err: any) {
-        console.warn("[SMS-WEBHOOK] Could not record bank SMS log:", err.message);
-      }
-
-      if (candidateUtrs.length === 0) {
-        console.log("[SMS-WEBHOOK] Could not parse any 10-18 digit UTR from the SMS.");
-        return res.json({ 
-          success: true, 
-          message: "SMS received and logged, but no UTR detected in content.",
-          smsLogId,
-          parsedAmount 
-        });
-      }
+      serverCache.bank_sms_logs.set(smsLogId, { data: smsLogPayload, time: Date.now() });
+      await setDocSafe("bank_sms_logs", smsLogId, smsLogPayload);
 
       // 4. Find matching pending deposit (Check Memory -> Single-field UTR Firestore queries -> REST queries)
       let matchedDeposit: any = null;
