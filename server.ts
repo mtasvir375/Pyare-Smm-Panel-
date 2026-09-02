@@ -1968,58 +1968,121 @@ export async function startServer() {
   });
 
   app.post("/api/admin/search-user", async (req, res) => {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: "Email is required" });
-
+    const query = String(req.body.query || req.body.email || "").trim();
+    
     try {
-        const searchEmail = String(email).trim().toLowerCase();
-        let userDoc = null;
-        
-        const usersRef = admin.firestore().collection("users");
-        
-        let querySnapshot = await usersRef.where("email", "==", searchEmail).limit(1).get();
-        if (!querySnapshot.empty) {
-            userDoc = { id: querySnapshot.docs[0].id, ...querySnapshot.docs[0].data() };
-        } else {
-            const exactSnap = await usersRef.where("email", "==", String(email).trim()).limit(1).get();
-            if (!exactSnap.empty) {
-                 userDoc = { id: exactSnap.docs[0].id, ...exactSnap.docs[0].data() };
+      const userMap = new Map<string, any>();
+
+      // 1. Gather users from in-memory cache
+      if (serverCache.users && serverCache.users.size > 0) {
+        serverCache.users.forEach((u: any, id: string) => {
+          const uData = u.data || u;
+          userMap.set(id, { id, uid: id, ...uData });
+        });
+      }
+
+      // 2. Fetch users using listDocsSafe (Firestore SDK / REST with zero crash risk)
+      try {
+        const docsResult = await listDocsSafe("users", undefined, false);
+        if (docsResult && docsResult.docs) {
+          docsResult.docs.forEach((docItem: any) => {
+            const d = typeof docItem.data === "function" ? docItem.data() : docItem.data;
+            const uid = docItem.id;
+            if (d && uid) {
+              const merged = { ...d, id: uid, uid };
+              userMap.set(uid, merged);
+              serverCache.users.set(uid, { data: merged, time: Date.now() });
             }
+          });
         }
-        
-        if (!userDoc) {
-            try {
-                const userRecord = await admin.auth().getUserByEmail(searchEmail);
-                if (userRecord) {
-                    const newUserData = {
-                        email: userRecord.email,
-                        displayName: userRecord.displayName || "",
-                        balance: 0,
-                        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-                        role: "user"
-                    };
-                    await usersRef.doc(userRecord.uid).set(newUserData, { merge: true });
-                    userDoc = { id: userRecord.uid, ...newUserData };
-                }
-            } catch (authErr: any) {
-                if (authErr.code !== 'auth/user-not-found') {
-                    console.error("Auth search error:", authErr);
-                }
+      } catch (listErr: any) {
+        console.warn("[SEARCH-USERS-LIST] Error:", listErr.message);
+      }
+
+      // 3. Fallback Auth lookup for direct email search if not found
+      const searchLower = query.toLowerCase();
+      if (searchLower && searchLower.includes("@")) {
+        const found = Array.from(userMap.values()).some((u: any) => 
+          String(u.email || "").toLowerCase() === searchLower
+        );
+        if (!found && admin && admin.auth) {
+          try {
+            const userRec = await admin.auth().getUserByEmail(searchLower);
+            if (userRec) {
+              const userData = {
+                id: userRec.uid,
+                uid: userRec.uid,
+                email: userRec.email,
+                displayName: userRec.displayName || userRec.email?.split("@")[0] || "User",
+                photoURL: userRec.photoURL || "",
+                balance: 0,
+                role: "student"
+              };
+              userMap.set(userRec.uid, userData);
+              serverCache.users.set(userRec.uid, { data: userData, time: Date.now() });
+              if (fdb) {
+                fdb.collection("users").doc(userRec.uid).set(userData, { merge: true }).catch(() => {});
+              }
             }
+          } catch (authErr: any) {
+            // Ignore not found
+          }
+        }
+      }
+
+      // 4. Filter users based on query
+      let allFoundUsers = Array.from(userMap.values());
+      if (searchLower) {
+        allFoundUsers = allFoundUsers.filter((u: any) => {
+          const uEmail = String(u.email || "").toLowerCase();
+          const uName = String(u.displayName || "").toLowerCase();
+          const uId = String(u.id || u.uid || "").toLowerCase();
+          return uEmail.includes(searchLower) || uName.includes(searchLower) || uId.includes(searchLower);
+        });
+      }
+
+      // 5. Compute balances and sort (latest/most relevant first)
+      const results = allFoundUsers.map((uData: any) => {
+        const uid = uData.id || uData.uid;
+        let bal = Number(uData.balance ?? uData.walletBalance ?? 0);
+
+        // Check if balance can be verified/restored from approved deposits
+        let totalApproved = 0;
+        serverCache.deposits.forEach((dep: any) => {
+          const d = dep?.data || dep;
+          if ((d.userId === uid || d.user_id === uid) && d.status === "approved") {
+            totalApproved += Number(d.amount || 0);
+          }
+        });
+        let totalOrders = 0;
+        serverCache.orders.forEach((ord: any) => {
+          const o = ord?.data || ord;
+          if ((o.userId === uid || o.user_id === uid) && o.status !== "Failed" && o.status !== "Cancelled") {
+            totalOrders += Number(o.totalPrice || o.total_price || 0);
+          }
+        });
+
+        if (bal === 0 && totalApproved > 0) {
+          bal = Math.max(0, Number((totalApproved - totalOrders).toFixed(2)));
         }
 
-        if (userDoc) {
-            // Check cache for balance updates
-            const uid = userDoc.id;
-            let currentBalance = Number(userDoc.balance || 0);
-            
-            return res.json({ success: true, user: { ...userDoc, balance: currentBalance } });
-        } else {
-            return res.status(404).json({ error: "User not found" });
-        }
+        return {
+          ...uData,
+          id: uid,
+          uid: uid,
+          balance: bal
+        };
+      });
+
+      console.log(`[SEARCH-USERS] Query "${query}" returned ${results.length} users`);
+      return res.json({
+        success: true,
+        users: results.slice(0, 50),
+        user: results.length > 0 ? results[0] : null
+      });
     } catch (e: any) {
-        console.error("Search user error:", e);
-        return res.status(500).json({ error: e.message });
+      console.error("[SEARCH-USERS] Global error:", e);
+      return res.status(500).json({ error: e.message });
     }
   });
 

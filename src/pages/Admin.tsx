@@ -602,55 +602,50 @@ export default function Admin() {
 
   const handleSearchUser = async (force = false) => {
     if (isSearchingUser) return;
-    
-    const now = Date.now();
-    // Throttle ALL searches (including with text) to once every 1 minute to prevent re-fetch loops
-    // Throttle empty searches to once every 10 minutes
-    const throttleTime = userSearch ? 60000 : 600000;
-    if (!force && (now - lastSearchTime < throttleTime) && lastSearchTime !== 0) return;
 
     setIsSearchingUser(true);
-    setLastSearchTime(now);
     try {
-      if (!userSearch) {
-        // Simple query for latest users
-        const recentUsers = await dbClient.getDocs("users", [
-          orderBy("createdAt", "desc"),
-          limit(15)
-        ]);
-        setAllUsers(recentUsers || []);
-      } else {
-        const searchTerm = userSearch.toLowerCase().trim();
-        let searchResults = await dbClient.getDocs("users", [
-          where("email", ">=", searchTerm),
-          where("email", "<=", searchTerm + "\uf8ff"),
-          limit(20)
-        ]) || [];
+      const q = userSearch.trim();
+      const res = await axios.post("/api/admin/search-user", { query: q });
+      if (res.data && res.data.success) {
+        let users = res.data.users || (res.data.user ? [res.data.user] : []);
 
-        if (searchTerm.includes("@")) {
+        // Fallback: If query was entered and server list returned 0, search direct Firestore via client SDK
+        if (users.length === 0 && q) {
           try {
-             const res = await axios.post("/api/admin/search-user", { email: searchTerm });
-             if (res.data && res.data.success && res.data.user) {
-                const foundUser = res.data.user;
-                if (!searchResults.some((u: any) => u.id === foundUser.id)) {
-                   searchResults = [foundUser, ...searchResults];
-                }
-             }
-          } catch(e) {
-             console.log("Admin search API fallback failed", e);
+            const { collection, getDocs, limit: fsLimit, query: fsQuery } = await import("firebase/firestore");
+            const { db } = await import("@/lib/firebase");
+            const snap = await getDocs(fsQuery(collection(db, "users"), fsLimit(100)));
+            const directUsers = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const qLower = q.toLowerCase();
+            const matched = directUsers.filter((u: any) => {
+              const uEmail = String(u.email || "").toLowerCase();
+              const uName = String(u.displayName || "").toLowerCase();
+              const uId = String(u.id || u.uid || "").toLowerCase();
+              return uEmail.includes(qLower) || uName.includes(qLower) || uId.includes(qLower);
+            });
+            if (matched.length > 0) {
+              users = matched;
+            }
+          } catch (clientErr) {
+            console.warn("Client fallback search error:", clientErr);
           }
         }
 
-        if (searchResults && searchResults.length === 0) {
-          toast.error("No users found matching that term");
-        } else if (searchResults) {
-          toast.success(`Found ${searchResults.length} users`);
+        setAllUsers(users);
+        if (q) {
+          if (users.length === 0) {
+            toast.error("No user found with this email or keyword");
+          } else {
+            toast.success(`Found ${users.length} user${users.length > 1 ? 's' : ''}`);
+          }
         }
-        setAllUsers(searchResults);
+      } else {
+        toast.error("Failed to search users");
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Search error:", err);
-      toast.error("Failed to search users");
+      toast.error(err.response?.data?.error || "Failed to search users");
     } finally {
       setIsSearchingUser(false);
     }
@@ -939,10 +934,12 @@ export default function Admin() {
   const handleUpdateUserBalance = async () => {
     if (!editingUser || newBalance === "") return;
     try {
+      const updatedBal = Number(newBalance);
       await dbClient.updateDoc("users", editingUser.id, {
-        balance: Number(newBalance)
+        balance: updatedBal
       });
-      toast.success("User finances updated!");
+      setAllUsers(prev => prev.map(u => u.id === editingUser.id ? { ...u, balance: updatedBal } : u));
+      toast.success("User wallet balance updated!");
       setEditingUser(null);
       setNewBalance("");
     } catch (error: any) {
@@ -2220,32 +2217,37 @@ export default function Admin() {
               <div className="flex flex-col md:flex-row items-center justify-between gap-4">
                 <div>
                   <h2 className="text-lg font-bold">Manage Users</h2>
-                  <p className="text-xs text-gray-500">Search users, update wallet balance, or auto-restore balances</p>
+                  <p className="text-xs text-gray-500">Search users and update wallet balances</p>
                 </div>
                 <div className="flex flex-wrap items-center w-full md:w-auto gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={handleRestoreAllBalances}
-                    disabled={isRestoringBalances}
-                    className="rounded-xl text-xs border-emerald-300 text-emerald-700 hover:bg-emerald-50 shrink-0"
-                    title="डिपॉजिट्स के आधार पर यूजर्स के गुम हुए वॉलेट बैलेंस को सुरक्षित तरीके से रीस्टोर करें"
-                  >
-                    {isRestoringBalances ? (
-                      <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin text-emerald-600" />
-                    ) : (
-                      <CheckCircle2 className="w-3.5 h-3.5 mr-1.5 text-emerald-600" />
-                    )}
-                    {isRestoringBalances ? "Restoring..." : "Restore All Balances"}
-                  </Button>
-                  <div className="relative">
+                  <div className="relative flex-1 md:w-72">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
                     <Input 
-                      placeholder="Search email or prefix..." 
-                      className="pl-10 rounded-xl bg-white w-full md:w-56"
+                      placeholder="Search email, name or ID..." 
+                      className="pl-9 pr-8 rounded-xl bg-white w-full"
                       value={userSearch}
                       onChange={(e) => setUserSearch(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleSearchUser()}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleSearchUser(true);
+                        }
+                      }}
                     />
+                    {userSearch && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUserSearch("");
+                          axios.post("/api/admin/search-user", { query: "" }).then(res => {
+                            if (res.data && res.data.users) setAllUsers(res.data.users);
+                          });
+                        }}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs font-bold"
+                      >
+                        ✕
+                      </button>
+                    )}
                   </div>
                   <Button 
                     onClick={() => handleSearchUser(true)} 
