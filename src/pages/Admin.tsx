@@ -621,17 +621,32 @@ export default function Admin() {
         setAllUsers(recentUsers || []);
       } else {
         const searchTerm = userSearch.toLowerCase().trim();
-        const searchResults = await dbClient.getDocs("users", [
+        let searchResults = await dbClient.getDocs("users", [
           where("email", ">=", searchTerm),
           where("email", "<=", searchTerm + "\uf8ff"),
           limit(20)
-        ]);
+        ]) || [];
+
+        if (searchTerm.includes("@")) {
+          try {
+             const res = await axios.post("/api/admin/search-user", { email: searchTerm });
+             if (res.data && res.data.success && res.data.user) {
+                const foundUser = res.data.user;
+                if (!searchResults.some((u: any) => u.id === foundUser.id)) {
+                   searchResults = [foundUser, ...searchResults];
+                }
+             }
+          } catch(e) {
+             console.log("Admin search API fallback failed", e);
+          }
+        }
+
         if (searchResults && searchResults.length === 0) {
           toast.error("No users found matching that term");
         } else if (searchResults) {
           toast.success(`Found ${searchResults.length} users`);
         }
-        setAllUsers(searchResults || []);
+        setAllUsers(searchResults);
       }
     } catch (err) {
       console.error("Search error:", err);

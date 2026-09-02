@@ -1967,6 +1967,62 @@ export async function startServer() {
     res.json(serverCache.latestOrders.slice(0, 50));
   });
 
+  app.post("/api/admin/search-user", async (req, res) => {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "Email is required" });
+
+    try {
+        const searchEmail = String(email).trim().toLowerCase();
+        let userDoc = null;
+        
+        const usersRef = admin.firestore().collection("users");
+        
+        let querySnapshot = await usersRef.where("email", "==", searchEmail).limit(1).get();
+        if (!querySnapshot.empty) {
+            userDoc = { id: querySnapshot.docs[0].id, ...querySnapshot.docs[0].data() };
+        } else {
+            const exactSnap = await usersRef.where("email", "==", String(email).trim()).limit(1).get();
+            if (!exactSnap.empty) {
+                 userDoc = { id: exactSnap.docs[0].id, ...exactSnap.docs[0].data() };
+            }
+        }
+        
+        if (!userDoc) {
+            try {
+                const userRecord = await admin.auth().getUserByEmail(searchEmail);
+                if (userRecord) {
+                    const newUserData = {
+                        email: userRecord.email,
+                        displayName: userRecord.displayName || "",
+                        balance: 0,
+                        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                        role: "user"
+                    };
+                    await usersRef.doc(userRecord.uid).set(newUserData, { merge: true });
+                    userDoc = { id: userRecord.uid, ...newUserData };
+                }
+            } catch (authErr: any) {
+                if (authErr.code !== 'auth/user-not-found') {
+                    console.error("Auth search error:", authErr);
+                }
+            }
+        }
+
+        if (userDoc) {
+            // Check cache for balance updates
+            const uid = userDoc.id;
+            let currentBalance = Number(userDoc.balance || 0);
+            
+            return res.json({ success: true, user: { ...userDoc, balance: currentBalance } });
+        } else {
+            return res.status(404).json({ error: "User not found" });
+        }
+    } catch (e: any) {
+        console.error("Search user error:", e);
+        return res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/admin/all-deposits", async (req, res) => {
     try {
       const limitCount = Math.min(Number(req.query.limit) || 100, 100);
