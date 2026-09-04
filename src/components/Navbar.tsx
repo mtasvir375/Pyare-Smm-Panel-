@@ -22,7 +22,7 @@ export default function Navbar() {
     <nav className="fixed bottom-0 left-0 right-0 z-50 bg-card border-t border-border pb-safe md:top-0 md:bottom-auto md:border-t-0 md:border-b transition-colors duration-500 shadow-md md:shadow-none">
       <div className="max-w-md mx-auto px-6 h-16 flex items-center justify-between md:max-w-7xl">
         <Link to="/" className="hidden md:flex items-center gap-2 font-bold text-xl text-primary mr-8">
-          <img src="/favicon.png" alt="Pyare SMM" className="w-8 h-8 rounded-lg" />
+          <img src="/favicon.png" alt="Pyare SMM" className="w-8 h-8 rounded-lg object-cover shadow-sm" referrerPolicy="no-referrer" />
           <span>Pyare SMM Panel</span>
         </Link>
         

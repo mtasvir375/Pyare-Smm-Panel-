@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { auth, googleProvider } from "@/lib/firebase";
 import { signInWithPopup } from "firebase/auth";
 import { useAuth } from "@/context/AuthContext";
+import pLogo from "@/assets/images/p_logo_icon_1788523129432.jpg";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -47,8 +48,18 @@ export default function Login() {
 
       <div className="w-full max-w-md relative z-10">
         <Card className="border-none shadow-[0_20px_60px_-15px_rgba(0,0,0,0.08)] bg-white/90 backdrop-blur-xl rounded-[2.5rem]">
-          <CardHeader className="p-8 pt-10 text-center space-y-3 flex flex-col items-center">
-            <img src="/logo.png" alt="Pyare SMM Panel" className="w-16 h-16 rounded-2xl shadow-md border border-white/50" />
+          <CardHeader className="p-8 pt-10 text-center space-y-4 flex flex-col items-center">
+            <div className="w-20 h-20 rounded-2xl overflow-hidden shadow-xl shadow-purple-500/20 border-2 border-white/80 bg-slate-950 flex items-center justify-center transition-transform duration-300 hover:scale-105">
+              <img 
+                src={pLogo} 
+                alt="Pyare SMM Panel" 
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = "/logo.png";
+                }}
+              />
+            </div>
             <CardTitle className="text-2xl font-bold tracking-tight text-gray-900">
               Welcome Back
             </CardTitle>
