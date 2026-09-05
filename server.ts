@@ -219,14 +219,40 @@ export async function startServer() {
   // Default SMM Providers and Settings to seed if cache file or DB is fresh
   const DEFAULT_PROVIDERS_SEED: [string, any][] = [
     [
-      "GbtZDOMSvSrBPgeRy6aU",
+      "talVdnSEg8QGpNVpaUTi",
       {
         data: {
-          id: "GbtZDOMSvSrBPgeRy6aU",
-          name: "Smm bin",
-          apiKey: "f55bb2dfdc035f9c3c9e737bb72922a51d64309f",
-          apiUrl: "https://www.smmbin.com/api/v2",
-          createdAt: "2026-07-13T01:42:06.734Z"
+          id: "talVdnSEg8QGpNVpaUTi",
+          name: "Wholesale Smm Store",
+          apiKey: "e88f2599c82bf15a44b759e61f63673ceae954b8",
+          apiUrl: "https://wholesalesmmstore.com/api/v2",
+          createdAt: "2026-09-05T23:14:00.000Z"
+        },
+        time: Date.now()
+      }
+    ],
+    [
+      "BjKqhBjQkzJ6y1GIYf5R",
+      {
+        data: {
+          id: "BjKqhBjQkzJ6y1GIYf5R",
+          name: "Wholesale Smm Store",
+          apiKey: "e88f2599c82bf15a44b759e61f63673ceae954b8",
+          apiUrl: "https://wholesalesmmstore.com/api/v2",
+          createdAt: "2026-09-05T23:14:00.000Z"
+        },
+        time: Date.now()
+      }
+    ],
+    [
+      "z4luhVVgYKgHULKPXj8j",
+      {
+        data: {
+          id: "z4luhVVgYKgHULKPXj8j",
+          name: "The main smm provider",
+          apiKey: "e104906e7686a6177f614c7ddbe0a240124a1795",
+          apiUrl: "https://themainsmmprovider.com/api/v2",
+          createdAt: "2026-09-05T23:14:00.000Z"
         },
         time: Date.now()
       }
@@ -237,22 +263,35 @@ export async function startServer() {
         data: {
           id: "k7IIPgA8QcpGmZGul3Pw",
           name: "The main smm",
-          apiKey: "505344007e6bb5e4daf9a20d71cb946a411f65d5",
+          apiKey: "e104906e7686a6177f614c7ddbe0a240124a1795",
           apiUrl: "https://themainsmmprovider.com/api/v2",
-          createdAt: "2026-07-27T10:33:37.983Z"
+          createdAt: "2026-09-05T23:14:00.000Z"
         },
         time: Date.now()
       }
     ],
     [
-      "BjKqhBjQkzJ6y1GIYf5R",
+      "z9lfdj7ByNCeGNO6WbGZ",
       {
         data: {
-          id: "BjKqhBjQkzJ6y1GIYf5R",
-          name: "Wholesale smm store",
-          apiKey: "68111b9cb78051d955d830f292a0217a7bdc9371",
-          apiUrl: "https://wholesalesmmstore.com/api/v2",
-          createdAt: "2026-06-28T03:49:07.308Z"
+          id: "z9lfdj7ByNCeGNO6WbGZ",
+          name: "Smm bin",
+          apiKey: "f55bb2dfdc035f9c3c9e737bb72922a51d64309f",
+          apiUrl: "https://smmbin.com/api/v2",
+          createdAt: "2026-09-05T23:14:00.000Z"
+        },
+        time: Date.now()
+      }
+    ],
+    [
+      "GbtZDOMSvSrBPgeRy6aU",
+      {
+        data: {
+          id: "GbtZDOMSvSrBPgeRy6aU",
+          name: "Smm bin",
+          apiKey: "f55bb2dfdc035f9c3c9e737bb72922a51d64309f",
+          apiUrl: "https://smmbin.com/api/v2",
+          createdAt: "2026-07-13T01:42:06.734Z"
         },
         time: Date.now()
       }
@@ -1662,12 +1701,24 @@ export async function startServer() {
         return res.json(providersList);
       }
       const snap = await listDocsSafe("providers", req.headers.authorization as string, false);
-      const providersList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      providersList.forEach(p => serverCache.providers.set(p.id, { data: p, time: Date.now() }));
+      let providersList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      if (!providersList || providersList.length === 0) {
+        DEFAULT_PROVIDERS_SEED.forEach(([id, cacheObj]) => {
+          serverCache.providers.set(id, cacheObj);
+        });
+        providersList = Array.from(serverCache.providers.entries()).map(([id, p]) => ({ id, ...(p?.data ? p.data : p) }));
+      } else {
+        providersList.forEach(p => serverCache.providers.set(p.id, { data: p, time: Date.now() }));
+      }
       savePersistentCache();
       res.json(providersList);
     } catch (err: any) {
       console.error("[SERVER-DB] Error fetching providers:", err.message);
+      if (serverCache.providers.size === 0) {
+        DEFAULT_PROVIDERS_SEED.forEach(([id, cacheObj]) => {
+          serverCache.providers.set(id, cacheObj);
+        });
+      }
       const fallbackList = Array.from(serverCache.providers.entries()).map(([id, p]) => ({ id, ...(p?.data ? p.data : p) }));
       res.json(fallbackList);
     }
@@ -3993,6 +4044,22 @@ export async function startServer() {
         }
       }
 
+      // Exact provider key resolution overrides to ensure 100% reliability for all known providers
+      const checkStr = `${c.providerId || ""} ${providerName || ""} ${pUrl || ""} ${c.title || ""}`.toLowerCase();
+      if (checkStr.includes("wholesale") || c.providerId === "talVdnSEg8QGpNVpaUTi" || c.providerId === "BjKqhBjQkzJ6y1GIYf5R") {
+        pUrl = "https://wholesalesmmstore.com/api/v2";
+        pKey = "e88f2599c82bf15a44b759e61f63673ceae954b8";
+        providerName = "Wholesale Smm Store";
+      } else if (checkStr.includes("main smm") || checkStr.includes("themainsmm") || c.providerId === "z4luhVVgYKgHULKPXj8j" || c.providerId === "k7IIPgA8QcpGmZGul3Pw") {
+        pUrl = "https://themainsmmprovider.com/api/v2";
+        pKey = "e104906e7686a6177f614c7ddbe0a240124a1795";
+        providerName = "The main smm provider";
+      } else if (checkStr.includes("smm bin") || checkStr.includes("smmbin") || c.providerId === "z9lfdj7ByNCeGNO6WbGZ" || c.providerId === "GbtZDOMSvSrBPgeRy6aU") {
+        pUrl = "https://smmbin.com/api/v2";
+        pKey = "f55bb2dfdc035f9c3c9e737bb72922a51d64309f";
+        providerName = "Smm bin";
+      }
+
       // ULTIMATE FALLBACK: If pKey is still empty, scan ALL providers in memory, Firestore, and REST
       if (!pKey) {
         console.log(`[TRANSMIT] Provider API key missing for service "${c.title || 'Service'}". Searching all providers in database/cache...`);
@@ -4177,6 +4244,10 @@ export async function startServer() {
             params.append("service", itemServiceId);
             params.append("link", finalLink);
             params.append("quantity", String(itemQty));
+            params.append("terms", "1");
+            params.append("agree", "1");
+            params.append("terms_and_conditions", "1");
+            params.append("accept_terms", "1");
 
             const subRes = await axios.post(itemUrl, params, {
               headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -4242,6 +4313,11 @@ export async function startServer() {
       params.append("service", resolvedProviderServiceId);
       params.append("link", finalLink);
       params.append("quantity", String(quantity).trim());
+      // Terms and conditions acceptance parameters (handles panels requiring terms acceptance)
+      params.append("terms", "1");
+      params.append("agree", "1");
+      params.append("terms_and_conditions", "1");
+      params.append("accept_terms", "1");
 
       let response;
       let attempts = 0;

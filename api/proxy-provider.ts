@@ -2,20 +2,35 @@ import axios from "axios";
 
 // Default known providers registry for instant zero-latency lookup
 const KNOWN_PROVIDERS: Record<string, { apiUrl: string; apiKey: string; name: string }> = {
+  "talVdnSEg8QGpNVpaUTi": {
+    name: "Wholesale Smm Store",
+    apiUrl: "https://wholesalesmmstore.com/api/v2",
+    apiKey: "e88f2599c82bf15a44b759e61f63673ceae954b8"
+  },
+  "BjKqhBjQkzJ6y1GIYf5R": {
+    name: "Wholesale Smm Store",
+    apiUrl: "https://wholesalesmmstore.com/api/v2",
+    apiKey: "e88f2599c82bf15a44b759e61f63673ceae954b8"
+  },
+  "z4luhVVgYKgHULKPXj8j": {
+    name: "The main smm provider",
+    apiUrl: "https://themainsmmprovider.com/api/v2",
+    apiKey: "e104906e7686a6177f614c7ddbe0a240124a1795"
+  },
+  "k7IIPgA8QcpGmZGul3Pw": {
+    name: "The main smm provider",
+    apiUrl: "https://themainsmmprovider.com/api/v2",
+    apiKey: "e104906e7686a6177f614c7ddbe0a240124a1795"
+  },
   "z9lfdj7ByNCeGNO6WbGZ": {
     name: "Smm bin",
     apiUrl: "https://smmbin.com/api/v2",
     apiKey: "f55bb2dfdc035f9c3c9e737bb72922a51d64309f"
   },
-  "BjKqhBjQkzJ6y1GIYf5R": {
-    name: "Wholesale smm store",
-    apiUrl: "https://wholesalesmmstore.com/api/v2",
-    apiKey: "68111b06da8d3f6d7281e2eb90317e33"
-  },
-  "k7IIPgA8QcpGmZGul3Pw": {
-    name: "The main smm",
-    apiUrl: "https://themainsmmprovider.com/api/v2",
-    apiKey: "5053443feff7b12d7c5ee3a652613ba2"
+  "GbtZDOMSvSrBPgeRy6aU": {
+    name: "Smm bin",
+    apiUrl: "https://smmbin.com/api/v2",
+    apiKey: "f55bb2dfdc035f9c3c9e737bb72922a51d64309f"
   }
 };
 
@@ -190,6 +205,10 @@ export default async function handler(req: any, res: any) {
       params.append("service", String(finalProviderServiceId).trim());
       params.append("link", String(finalTargetLink).trim());
       params.append("quantity", String(finalQuantity).trim());
+      params.append("terms", "1");
+      params.append("agree", "1");
+      params.append("terms_and_conditions", "1");
+      params.append("accept_terms", "1");
 
       try {
         const pRes = await axios.post(provider.apiUrl, params, {
