@@ -1,11 +1,48 @@
 {
   "settings": {
     "data": {
-      "providerApiKey": "f55bb2dfdc035f9c3c9e737bb72922a51d64309f",
-      "providerApiUrl": "https://www.smmbin.com/api/v2",
-      "merchantName": "Pyare SMM Panel"
+      "razorpayKeySecret": "dl50MrTHG0esZA3rjRA1ReK1",
+      "merchantName": "Pyare Smm panel",
+      "qrAutoProvider": "upigateway",
+      "autoApproveDeposits": false,
+      "customGateway2Name": "",
+      "paytmEnv": "sandbox",
+      "selectedFestivalTheme": "none",
+      "guideVideoUrl": "https://youtube.com/watch?v=oRZ0cfZ9SeU&si=SGu5I-e_TfWkukSz",
+      "paytmMerchantKey": "",
+      "customGateway2Secret": "",
+      "customGateway2Url": "",
+      "customGateway1Name": "Upi pay",
+      "qrAutoUrl": "",
+      "razorpayKeyId": "rzp_test_T7t3jWdort7zKi",
+      "qrAutoEnabled": false,
+      "qrAutoToken": "",
+      "whatsappLink": "https://whatsapp.com/channel/0029Vb7zsyi6RGJFemxpzy0b",
+      "paytmEnabled": false,
+      "phonepeMerchantId": "",
+      "customGateway2Key": "",
+      "whatsappChatNumber": "+91 87892 84309",
+      "backendApiUrl": "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app",
+      "selectedTheme": "amber",
+      "phonepeSaltKey": "",
+      "customGateway1Secret": "aad9befe-802c-4b3f-b3e7-26cae4640b8c",
+      "customGateway1Url": "https://www.pyaresmmpanel.online",
+      "customGateway1Enabled": false,
+      "customGateway2Enabled": false,
+      "phonepeEnv": "production",
+      "providerApiUrl": "",
+      "upiId": "mdsaudalam621@okicici",
+      "updatedAt": "2026-09-05T17:35:15.488Z",
+      "qrAutoApiKey": "aad9befe-802c-4b3f-b3e7-26cae4640b8c",
+      "phonepeEnabled": false,
+      "paytmMid": "",
+      "providerApiKey": "",
+      "customGateway1Key": "aad9befe-802c-4b3f-b3e7-26cae4640b8c",
+      "razorpayEnabled": false,
+      "phonepeSaltIndex": "1",
+      "paymentQrUrl": ""
     },
-    "time": 1788653019319
+    "time": 1788679606948
   },
   "providers": [
     [
@@ -563,26 +600,26 @@
       {
         "data": {
           "id": "QEoZRQTbf05OXL9gASVV",
-          "title": "Post/Video Views ♻️",
-          "category": "Twitter",
-          "pricePerThousand": 10,
-          "serviceType": "views",
-          "providerServiceId": "5846",
-          "preventDuplicateLink": false,
           "iconUrl": "data:image/jpeg;base64,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",
-          "status": "published",
-          "description": "High quality views service",
-          "isPackage": false,
-          "packagePrice": null,
           "packageQuantity": null,
+          "minLimit": 300,
+          "updatedAt": "2026-09-05T23:45:45.337Z",
+          "providerId": "talVdnSEg8QGpNVpaUTi",
+          "providerServiceId": "5846",
+          "serviceType": "views",
+          "isPackage": false,
+          "title": "Post/Video Views ♻️",
+          "packagePrice": null,
+          "preventDuplicateLink": false,
           "createdAt": "2026-06-27T16:43:02.651Z",
+          "pricePerThousand": 10,
+          "category": "Twitter",
+          "status": "published",
           "comboItems": [],
           "isCombo": false,
-          "providerId": "talVdnSEg8QGpNVpaUTi",
-          "minLimit": 300,
-          "updatedAt": "2026-09-05T23:45:45.337Z"
+          "description": "High quality views service"
         },
-        "time": 1788653237686
+        "time": 1788678644047
       }
     ],
     [
@@ -725,19 +762,19 @@
       "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
       {
         "data": {
-          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIVDCPXKVjVCP0jqcCpWx5c759WFIsH20U7smDKXtVCJQmldT5A=s96-c",
-          "email": "mtasvir375@gmail.com",
-          "displayName": "Md Saad Alam",
-          "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-          "role": "student",
-          "createdAt": "2026-08-31T20:20:41.033Z",
-          "updatedAt": "2026-09-05T23:20:09.248Z",
+          "lastActive": "2026-06-17T09:24:31.827Z",
           "lastOrderedAt": "2026-06-16T15:45:53.831Z",
           "last_ordered_at": "2026-07-12T20:24:51.921Z",
-          "lastActive": "2026-06-17T09:24:31.827Z",
-          "balance": 944.92
+          "email": "mtasvir375@gmail.com",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIVDCPXKVjVCP0jqcCpWx5c759WFIsH20U7smDKXtVCJQmldT5A=s96-c",
+          "displayName": "Md Saad Alam",
+          "balance": 889.88,
+          "createdAt": "2026-08-31T20:20:41.033Z",
+          "role": "student",
+          "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "updatedAt": "2026-09-06T07:12:22.109Z"
         },
-        "time": 1788650409616
+        "time": 1788679616202
       }
     ]
   ],

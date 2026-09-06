@@ -619,16 +619,23 @@ export async function startServer() {
     return configProjectId || "gen-lang-client-0629912823";
   };
 
+  const getGoogleAuthHeaders = async (token?: string) => {
+    const headers: any = {};
+    const authToken = (token && (token.startsWith("ya29.") || token.startsWith("Bearer ya29."))) 
+      ? token 
+      : await getValidSystemAccessToken();
+    if (authToken && (authToken.startsWith("ya29.") || authToken.startsWith("Bearer ya29."))) {
+      headers["Authorization"] = authToken.startsWith("Bearer ") ? authToken : `Bearer ${authToken}`;
+    }
+    return headers;
+  };
+
   const getDocREST = async (collect: string, id: string, token?: string) => {
     const targetProject = getTargetProject();
     try {
-      const headers: any = {};
       const isConfigColl = collect === "providers" || collect === "settings" || collect === "courses" || collect === "services";
       const effectiveToken = isConfigColl ? undefined : token;
-      const authToken = effectiveToken || (await getValidSystemAccessToken());
-      if (authToken) {
-        headers["Authorization"] = authToken.startsWith("Bearer ") ? authToken : `Bearer ${authToken}`;
-      }
+      const headers = await getGoogleAuthHeaders(effectiveToken);
       const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/${collect}/${id}?key=${apiKey}`;
       const res = await axios.get(url, { headers, timeout: 10000 });
       if (res.data && res.data.fields) {
@@ -659,11 +666,7 @@ export async function startServer() {
   const setDocREST = async (collect: string, id: string, data: any, token?: string) => {
     const targetProject = getTargetProject();
     try {
-      const headers: any = {};
-      const authToken = token || (await getValidSystemAccessToken());
-      if (authToken) {
-        headers["Authorization"] = authToken.startsWith("Bearer ") ? authToken : `Bearer ${authToken}`;
-      }
+      const headers = await getGoogleAuthHeaders(token);
       const dataWithTime = { ...data, updatedAt: new Date().toISOString() };
       const keys = Object.keys(dataWithTime);
       const maskParams = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
@@ -696,11 +699,7 @@ export async function startServer() {
   const updateDocREST = async (collect: string, id: string, data: any, token?: string) => {
     const targetProject = getTargetProject();
     try {
-      const headers: any = {};
-      const authToken = token || (await getValidSystemAccessToken());
-      if (authToken) {
-        headers["Authorization"] = authToken.startsWith("Bearer ") ? authToken : `Bearer ${authToken}`;
-      }
+      const headers = await getGoogleAuthHeaders(token);
       const keys = Object.keys(data);
       if (keys.length === 0) return true;
       
@@ -731,11 +730,7 @@ export async function startServer() {
   const addDocREST = async (collect: string, data: any, token?: string) => {
     const targetProject = getTargetProject();
     try {
-      const headers: any = {};
-      const authToken = token || (await getValidSystemAccessToken());
-      if (authToken) {
-        headers["Authorization"] = authToken.startsWith("Bearer ") ? authToken : `Bearer ${authToken}`;
-      }
+      const headers = await getGoogleAuthHeaders(token);
       const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/${collect}?key=${apiKey}`;
       const fields = wrapRestFields({
         ...data,
@@ -771,11 +766,7 @@ export async function startServer() {
   const runQueryREST = async (queryPayload: any, token?: string) => {
     try {
       const targetProject = getTargetProject();
-      const headers: any = {};
-      const authToken = token || (await getValidSystemAccessToken());
-      if (authToken) {
-        headers["Authorization"] = authToken.startsWith("Bearer ") ? authToken : `Bearer ${authToken}`;
-      }
+      const headers = await getGoogleAuthHeaders(token);
       const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents:runQuery?key=${apiKey}`;
       const res = await axios.post(url, queryPayload, { headers, timeout: 10000 });
       console.log(`[REST-QUERY] Payload: ${JSON.stringify(queryPayload)} Result count: ${res.data?.length || 0}`);
@@ -833,43 +824,71 @@ export async function startServer() {
     return runQueryREST(payload);
   };
 
-  const adjustUserBalanceREST = async (user_id: string, change: number, token?: string) => {
-    console.log(`[BALANCE-REST] Adjusting balance for ${user_id} by ${change}`);
-    try {
-      let userData: any = null;
-      const userRef = await getDocREST("users", user_id, token);
-      if (userRef && userRef.exists) {
-        userData = userRef.data();
-      } else if (serverCache.users.has(user_id)) {
-        userData = serverCache.users.get(user_id)?.data;
-      }
-      if (!userData) {
-        console.log(`[BALANCE-REST] User doc ${user_id} not found. Creating user document...`);
-        userData = {
-          uid: user_id,
-          balance: 0,
-          role: "student",
-          createdAt: new Date().toISOString()
-        };
-      }
-      
-      const currentBalance = Number(userData.balance ?? userData.walletBalance ?? userData.wallet_balance ?? userData.funds ?? 0);
-      const newBalance = Math.max(0, Number((currentBalance + change).toFixed(2)));
-      
-      const updatedData = {
-        ...userData,
-        balance: newBalance,
-        updatedAt: new Date().toISOString()
-      };
+  const adjustUserBalanceSafe = async (user_id: string, change: number, token?: string) => {
+    console.log(`[BALANCE-SAFE] Adjusting balance for ${user_id} by ${change}`);
+    
+    // 1. Determine current balance accurately
+    let currentBalance = 0;
+    let existingUserData: any = null;
 
-      serverCache.users.set(user_id, { data: updatedData, time: Date.now() });
-
-      await setDocREST("users", user_id, updatedData, token);
-      return true;
-    } catch (err: any) {
-      console.error(`[BALANCE-REST] Error: ${err.message}`);
-      return true; // Return true to prevent blocking order execution
+    if (serverCache.users.has(user_id)) {
+      const cached = serverCache.users.get(user_id);
+      if (cached && (cached.data || cached.balance !== undefined)) {
+        existingUserData = cached.data || cached;
+        currentBalance = Number(existingUserData.balance ?? existingUserData.walletBalance ?? existingUserData.wallet_balance ?? 0);
+      }
     }
+
+    if (!existingUserData) {
+      try {
+        const userRef = await getDocREST("users", user_id, token);
+        if (userRef && userRef.exists) {
+          existingUserData = userRef.data();
+          currentBalance = Number(existingUserData.balance ?? existingUserData.walletBalance ?? existingUserData.wallet_balance ?? 0);
+        }
+      } catch (e) {}
+    }
+
+    const newBalance = Math.max(0, Number((currentBalance + change).toFixed(2)));
+    console.log(`[BALANCE-SAFE] User ${user_id}: ₹${currentBalance} -> ₹${newBalance} (change: ${change})`);
+
+    const updatedData = {
+      ...(existingUserData || { uid: user_id, role: "student", createdAt: new Date().toISOString() }),
+      balance: newBalance,
+      updatedAt: new Date().toISOString()
+    };
+
+    // 2. Immediately update in-memory cache and persistent disk cache
+    serverCache.users.set(user_id, { data: updatedData, time: Date.now() });
+    savePersistentCache();
+
+    // 3. Persist immediately to Firestore via REST
+    try {
+      const restOk = await setDocREST("users", user_id, { balance: newBalance, updatedAt: new Date().toISOString() }, token);
+      if (restOk) {
+        console.log(`[BALANCE-SAFE] Successfully persisted balance ₹${newBalance} to Firestore for ${user_id}`);
+      } else {
+        console.warn(`[BALANCE-SAFE] setDocREST returned false for user ${user_id}`);
+      }
+    } catch (persistErr: any) {
+      console.error(`[BALANCE-SAFE] Warning: REST balance persist error for ${user_id}:`, persistErr.message);
+    }
+
+    // Try Admin SDK atomic increment as secondary sync if available
+    if (!useRestFallback && adminSdkSucceeded) {
+      try {
+        await fdb.collection("users").doc(user_id).set({
+          balance: newBalance,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+      } catch (e) {}
+    }
+
+    return { success: true, newBalance };
+  };
+
+  const adjustUserBalanceREST = async (user_id: string, change: number, token?: string) => {
+    return adjustUserBalanceSafe(user_id, change, token);
   };
 
   // Startup permissions test to enable automatic Firestore REST fallback before handling requests
@@ -1447,60 +1466,6 @@ export async function startServer() {
     }
   };
   ensureBackendUrlIsSet();
-
-  const adjustUserBalanceSafe = async (user_id: string, change: number, token?: string) => {
-    console.log(`[BALANCE-SAFE] Adjusting balance for ${user_id} by ${change}`);
-    
-    // Invalidate memory cache so next read is always fresh
-    if (serverCache.users.has(user_id)) {
-      const cached = serverCache.users.get(user_id);
-      if (cached && cached.data) {
-        const oldBal = Number(cached.data.balance ?? cached.data.walletBalance ?? 0);
-        cached.data.balance = Math.max(0, Number((oldBal + change).toFixed(2)));
-        cached.time = Date.now();
-      }
-    } else {
-      serverCache.users.set(user_id, {
-        data: { uid: user_id, balance: Math.max(0, change) },
-        time: Date.now()
-      });
-    }
-    savePersistentCache();
-
-    if (!useRestFallback) {
-      try {
-        const userRef = fdb.collection("users").doc(user_id);
-        // Direct atomic increment avoids a Firestore document read entirely!
-        try {
-          await userRef.update({
-            balance: admin.firestore.FieldValue.increment(change),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp()
-          });
-          console.log(`[BALANCE-SAFE] Balance adjusted successfully via atomic increment (0 reads).`);
-          return true;
-        } catch (updateErr: any) {
-          if (updateErr.code === 5 || updateErr.message?.includes("NOT_FOUND")) {
-            await userRef.set({
-              uid: user_id,
-              balance: Math.max(0, change),
-              role: "student",
-              createdAt: new Date().toISOString(),
-              updatedAt: admin.firestore.FieldValue.serverTimestamp()
-            }, { merge: true });
-            return true;
-          }
-          console.warn(`[BALANCE-SAFE] Atomic increment failed: ${updateErr.message}, falling back to REST balance update`);
-        }
-      } catch (err: any) {
-        console.error(`[BALANCE-SAFE] Error: ${err.message}`);
-        if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
-          useRestFallback = true;
-        }
-      }
-    }
-
-    return adjustUserBalanceREST(user_id, change, token);
-  };
   
   // Health check
   app.get("/api/health", (req, res) => res.json({ status: "ok" }));
@@ -4463,12 +4428,14 @@ export async function startServer() {
         const alreadyDeducted = currentOrderData?.balanceAlreadyDeducted || false;
 
         // Synchronously deduct balance in Firestore and memory cache
+        let updatedUserBal: number | undefined = undefined;
         if (oUserId && price > 0 && !alreadyDeducted) {
           console.log(`[DEDUCTION-START] Synchronously deducting ₹${price} from User ${oUserId} for order ${orderId}`);
           try {
-            await adjustUserBalanceSafe(oUserId, -price, token);
-            console.log(`[DEDUCTION-SUCCESS] Deducted ₹${price} from User ${oUserId} in database.`);
-            await logToDb("BALANCE_DEDUCTION", { userId: oUserId, amount: price, orderId, success: true });
+            const deductRes: any = await adjustUserBalanceSafe(oUserId, -price, token);
+            updatedUserBal = deductRes?.newBalance !== undefined ? deductRes.newBalance : (typeof deductRes === "number" ? deductRes : undefined);
+            console.log(`[DEDUCTION-SUCCESS] Deducted ₹${price} from User ${oUserId} in database. New balance: ₹${updatedUserBal}`);
+            await logToDb("BALANCE_DEDUCTION", { userId: oUserId, amount: price, orderId, success: true, newBalance: updatedUserBal });
           } catch (deductErr: any) {
             console.error(`[DEDUCTION-FAIL] Error during balance deduction for ${oUserId}:`, deductErr.message);
           }
@@ -4504,7 +4471,7 @@ export async function startServer() {
           }
         }
 
-        return { success: true, providerOrderId: oId };
+        return { success: true, providerOrderId: oId, newBalance: updatedUserBal };
       } else {
         // Collect rejection errors cleanly
         const rawError = resData?.error || resData?.message || resData?.msg || resData?.errors || resData?.ERR || resData?.status || resData?.reason || resData?.error_message || resData?.msg_error || resData?.data?.error;
@@ -4696,7 +4663,8 @@ export async function startServer() {
           success: true, 
           isAsync: false, 
           providerOrderId: result.providerOrderId, 
-          orderId 
+          orderId,
+          newBalance: result.newBalance
         });
       } else {
         return res.status(400).json({ success: false, error: result.alreadyProcessing ? "Processing in-progress..." : result.error, orderId });
