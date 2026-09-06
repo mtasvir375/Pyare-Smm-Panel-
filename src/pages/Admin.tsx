@@ -1781,10 +1781,23 @@ export default function Admin() {
 
                         <div className="p-2 bg-gray-50 rounded-lg border border-gray-100">
                           <p className="text-[9px] font-bold text-gray-400 uppercase mb-1">Target Link</p>
-                          <a href={order.targetLink || order.target_link} target="_blank" rel="noreferrer" className="text-[10px] text-primary hover:underline break-all flex items-center gap-1">
-                            <ExternalLink className="w-3 h-3 shrink-0" />
-                            {order.targetLink || order.target_link}
-                          </a>
+                          {(() => {
+                            const linkVal = String(order.targetLink || order.target_link || "").trim();
+                            const isUrl = linkVal.startsWith("http://") || linkVal.startsWith("https://");
+                            if (isUrl) {
+                              return (
+                                <a href={linkVal} target="_blank" rel="noreferrer" className="text-[10px] text-primary hover:underline break-all flex items-center gap-1">
+                                  <ExternalLink className="w-3 h-3 shrink-0" />
+                                  {linkVal}
+                                </a>
+                              );
+                            }
+                            return (
+                              <p className="text-[10px] text-gray-800 font-medium break-all select-all">
+                                {linkVal}
+                              </p>
+                            );
+                          })()}
                         </div>
 
                         {order.status?.toLowerCase() === 'failed' && (

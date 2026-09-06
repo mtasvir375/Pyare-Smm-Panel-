@@ -4136,41 +4136,8 @@ export async function startServer() {
         throw new Error(`Service ID for service "${c.title || currentOrderData?.title || 'Selected Service'}" is missing or not configured with a valid provider service ID.`);
       }
 
-      // 4. Link & Username Normalization
-      let finalLink = String(targetLink).trim();
-      const catTitle = `${c.category || ""} ${currentOrderData?.category || ""} ${c.title || ""} ${currentOrderData?.title || ""}`.toLowerCase();
-      
-      const isIg = catTitle.includes("instagram") || catTitle.includes("ig ") || catTitle.includes(" ig") || catTitle.includes("reels") || catTitle.includes("followers") || catTitle.includes("likes");
-      const isYt = catTitle.includes("youtube") || catTitle.includes("yt ") || catTitle.includes(" yt") || catTitle.includes("subscriber");
-      const isTg = catTitle.includes("telegram") || catTitle.includes("tg ");
-      const isTt = catTitle.includes("tiktok") || catTitle.includes("tik tok");
-      const isTw = catTitle.includes("twitter") || catTitle.includes("x.com") || catTitle.includes(" x ");
-      const isFb = catTitle.includes("facebook") || catTitle.includes("fb ");
-
-      if (!finalLink.startsWith("http://") && !finalLink.startsWith("https://")) {
-        let handle = finalLink.replace(/^@+/, "").trim();
-        if (!finalLink.includes("://") && !finalLink.includes(".")) {
-          handle = handle.replace(/\s+/g, "");
-          if (isIg) finalLink = `https://www.instagram.com/${handle}/`;
-          else if (isYt) finalLink = `https://www.youtube.com/@${handle}`;
-          else if (isTg) finalLink = `https://t.me/${handle}`;
-          else if (isTt) finalLink = `https://www.tiktok.com/@${handle}`;
-          else if (isTw) finalLink = `https://x.com/${handle}/`;
-          else if (isFb) finalLink = `https://www.facebook.com/${handle}`;
-          else if (handle.length > 0) finalLink = `https://${handle}`;
-        } else if (!finalLink.includes("://")) {
-          finalLink = "https://" + finalLink.replace(/\s+/g, "");
-        }
-      }
-
-      try {
-        if (finalLink.includes("?")) {
-          const urlObj = new URL(finalLink);
-          const trackers = ["igshid", "utm_source", "utm_medium", "utm_campaign", "fbclid", "s", "t"];
-          trackers.forEach(t => urlObj.searchParams.delete(t));
-          finalLink = urlObj.toString();
-        }
-      } catch (err) {}
+      // 4. Target Link (Preserve user's exact input without altering or converting)
+      let finalLink = String(targetLink || "").trim();
 
       // --- MULTI-SERVICE COMBO PACKAGE PROCESSING ---
       if (isComboService && comboItemList.length > 0) {

@@ -214,34 +214,9 @@ export default function Courses() {
     return String(err);
   };
 
-  const normalizeTargetLink = (rawLink: string, category: string = ""): string => {
-    let link = rawLink.trim();
-    if (!link) return "";
-    
-    // Fix relative protocol e.g. //www.instagram.com -> https://www.instagram.com
-    if (link.startsWith("//")) {
-      link = "https:" + link;
-    }
-    // Fix handles @username -> https://instagram.com/username
-    else if (link.startsWith("@")) {
-      link = `https://instagram.com/${link.substring(1)}`;
-    }
-    // Fix missing http/https protocol
-    else if (!link.startsWith("http://") && !link.startsWith("https://")) {
-      if (link.includes(".") || link.includes("/")) {
-        link = "https://" + link;
-      } else {
-        const catLower = (category || "").toLowerCase();
-        if (catLower.includes("youtube")) {
-          link = `https://youtube.com/@${link}`;
-        } else if (catLower.includes("telegram")) {
-          link = `https://t.me/${link}`;
-        } else {
-          link = `https://instagram.com/${link}`;
-        }
-      }
-    }
-    return link;
+  const normalizeTargetLink = (rawLink: string, _category: string = ""): string => {
+    // Preserve user's input exactly as entered without altering or converting
+    return (rawLink || "").trim();
   };
 
   const handleSubmitOrder = async () => {
@@ -958,7 +933,7 @@ export default function Courses() {
           <div className="space-y-1.5">
             <Label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Link</Label>
             <Input 
-              placeholder="https://instagram.com/p/..." 
+              placeholder="https://... or username" 
               className="rounded-xl h-10 bg-muted/20 border-border text-sm focus-visible:bg-card transition-all duration-300"
               value={targetLink}
               onChange={(e) => setTargetLink(e.target.value)}
