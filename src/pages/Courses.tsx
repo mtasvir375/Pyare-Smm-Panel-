@@ -367,9 +367,6 @@ export default function Courses() {
       if (updateUserProfileLocal) {
         updateUserProfileLocal({ balance: newBal });
       }
-      try {
-        dbClient.updateUserProfile(user.uid, { balance: newBal }).catch(() => {});
-      } catch (e) {}
 
       // Update local state and UI (Server already deducted balance in Firestore and in-memory cache)
       setLastOrder({ ...orderData, status: "Pending", providerOrderId: finalProviderOrderId });

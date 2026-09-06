@@ -16,6 +16,14 @@ import { getFirestore } from "firebase-admin/firestore";
 
 dotenv.config();
 
+// Global process crash guards to ensure dev server remains resilient and never terminates unexpectedly
+process.on("uncaughtException", (err) => {
+  console.error("[CRITICAL] Uncaught exception:", err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.warn("[WARNING] Unhandled rejection:", reason);
+});
+
 // Load Firebase Config globally
 let firebaseConfig: any = {};
 try {
@@ -114,30 +122,10 @@ export async function startServer() {
   let tokenExpiryTime = 0;
 
   const getValidSystemAccessToken = async () => {
-    if (process.env.VERCEL) return "";
-    const now = Date.now();
-    // If we have a cached token and it's valid for at least another 5 minutes, return it
-    if (systemAccessToken && now < tokenExpiryTime - 5 * 60 * 1000) {
-      return systemAccessToken;
-    }
-
-    try {
-      console.log("[TOKEN] Refreshing system access token from metadata server...");
-      const res = await axios.get(
-        "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
-        { headers: { "Metadata-Flavor": "Google" }, timeout: 2500 }
-      );
-      if (res.data?.access_token) {
-        systemAccessToken = res.data.access_token;
-        const expiresIn = res.data.expires_in || 3600; // default to 1 hour
-        tokenExpiryTime = now + expiresIn * 1000;
-        console.log(`[TOKEN] Successfully refreshed system access token. Expires in ${expiresIn}s.`);
-        return systemAccessToken;
-      }
-    } catch (err: any) {
-      console.warn("[TOKEN-ERR] Failed to refresh metadata token dynamically:", err.message);
-    }
-    return systemAccessToken;
+    // Return empty string because container compute metadata token belongs to the hosting Cloud Run project,
+    // which does not have IAM access to the external Firebase project. Firestore REST calls authenticate
+    // directly via ?key=${apiKey} per firestore.rules.
+    return "";
   };
 
   // Try to detect environment identity
@@ -295,6 +283,19 @@ export async function startServer() {
         },
         time: Date.now()
       }
+    ],
+    [
+      "1RmzJhc5ZeyOCU23uZMy",
+      {
+        data: {
+          id: "1RmzJhc5ZeyOCU23uZMy",
+          name: "MainSMMpanel ♥️",
+          apiKey: "5a2749e1fdafdf50cd81f2137f9b5806",
+          apiUrl: "https://mainsmmpanel.in/api/v2",
+          createdAt: "2026-09-05T23:14:00.000Z"
+        },
+        time: Date.now()
+      }
     ]
   ];
 
@@ -326,6 +327,11 @@ export async function startServer() {
             serverCache.courses.set(id, { data: cData, time: cacheObj?.time || Date.now() });
           });
           console.log(`[PERSISTENT-CACHE] Loaded ${serverCache.courses.size} courses from disk.`);
+          if (serverCache.courses.size > 0) {
+            serverCachedCourses = Array.from(serverCache.courses.values()).map(c => c.data);
+            serverCachedCoursesTime = Date.now();
+            console.log(`[PERSISTENT-CACHE] Populated ${serverCachedCourses.length} in-memory courses (0 Firestore reads required).`);
+          }
         }
 
         if (parsed.users && Array.isArray(parsed.users)) {
@@ -970,7 +976,7 @@ export async function startServer() {
       }
     }
 
-    if (!token && !forceFresh) { // Only use cache for other dynamic data when unauthenticated
+    if (!forceFresh) { // Cache user balance within dynamic TTL to avoid redundant reads on rapid orders
       if (collect === "users" && id && serverCache.users && serverCache.users.has(id)) {
         const cached = serverCache.users.get(id);
         if (now - cached.time < DYNAMIC_CACHE_TTL) {
@@ -1148,22 +1154,15 @@ export async function startServer() {
     }
 
     try {
-      const targetProject = getTargetProject();
-      const headers: any = {};
-      const authToken = token || (await getValidSystemAccessToken());
-      if (authToken) {
-        headers["Authorization"] = authToken.startsWith("Bearer ") ? authToken : `Bearer ${authToken}`;
-      }
-      const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/${collect}?key=${apiKey}&pageSize=50`;
-      const resRest = await axios.get(url, { headers, timeout: 10000 });
-      if (resRest.data && resRest.data.documents) {
-        resRest.data.documents.forEach((doc: any) => {
-          const id = doc.name.split("/").pop();
-          const data = unwrapRestFields(doc.fields || {});
-          docMap.set(id, {
-            id,
-            data: () => data
-          });
+      const results = await runQueryREST({
+        structuredQuery: {
+          from: [{ collectionId: collect }],
+          limit: 50
+        }
+      }, token);
+      if (results && results.length > 0) {
+        results.forEach((item: any) => {
+          docMap.set(item.id, item);
         });
       }
     } catch (restErr: any) {
@@ -4058,6 +4057,10 @@ export async function startServer() {
         pUrl = "https://smmbin.com/api/v2";
         pKey = "f55bb2dfdc035f9c3c9e737bb72922a51d64309f";
         providerName = "Smm bin";
+      } else if (checkStr.includes("mainsmmpanel") || checkStr.includes("main smm panel") || c.providerId === "1RmzJhc5ZeyOCU23uZMy") {
+        pUrl = "https://mainsmmpanel.in/api/v2";
+        pKey = "5a2749e1fdafdf50cd81f2137f9b5806";
+        providerName = "MainSMMpanel ♥️";
       }
 
       // ULTIMATE FALLBACK: If pKey is still empty, scan ALL providers in memory, Firestore, and REST
