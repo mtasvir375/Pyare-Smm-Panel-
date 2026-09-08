@@ -643,11 +643,9 @@ export async function startServer() {
 
   const getGoogleAuthHeaders = async (token?: string) => {
     const headers: any = {};
-    const authToken = (token && (token.startsWith("ya29.") || token.startsWith("Bearer ya29."))) 
-      ? token 
-      : await getValidSystemAccessToken();
-    if (authToken && (authToken.startsWith("ya29.") || authToken.startsWith("Bearer ya29."))) {
-      headers["Authorization"] = authToken.startsWith("Bearer ") ? authToken : `Bearer ${authToken}`;
+    if (token && typeof token === "string" && token.trim().length > 0) {
+      const cleanToken = token.startsWith("Bearer ") ? token.trim() : `Bearer ${token.trim()}`;
+      headers["Authorization"] = cleanToken;
     }
     return headers;
   };
@@ -4745,58 +4743,97 @@ export async function startServer() {
   // Improved Proxy for Provider with better logging and headers
   app.post("/api/proxy-provider", async (req, res) => {
     try {
-      const { 
-        userId, 
-        user_id: bodyUserId,
-        userEmail, 
-        user_email: bodyUserEmail,
-        courseId, 
-        serviceId,
-        service_id: bodyServiceId,
-        courseTitle, 
-        title: bodyTitle,
-        category, 
-        quantity, 
-        targetLink, 
-        target_link: bodyTargetLink,
-        totalPrice,
-        total_price: bodyTotalPrice,
-        orderId: passedOrderId,
-        isCombo,
-        comboItems
-      } = req.body;
+      const b = req.body || {};
+      const orderData = b.orderData || {};
+      const payload = b.payload || {};
+      const customFields = payload.customFields || b.customFields || {};
 
-      const final_user_id = bodyUserId || userId;
-      const final_user_email = bodyUserEmail || userEmail || "";
-      const final_service_id = bodyServiceId || serviceId || courseId;
-      const final_title = bodyTitle || courseTitle || "";
-      const final_target_link = bodyTargetLink || targetLink || "";
-      const final_total_price = Number(bodyTotalPrice !== undefined ? bodyTotalPrice : totalPrice) || 0;
+      const final_user_id = String(
+        b.userId || b.user_id || 
+        orderData.userId || orderData.user_id || 
+        customFields.userId || 
+        (req as any).user?.uid || ""
+      ).trim();
 
-      let orderId = passedOrderId;
-      const skipStoreCompleted = req.body.skipStoreCompleted || false;
+      const final_user_email = String(
+        b.userEmail || b.user_email || 
+        orderData.userEmail || orderData.user_email || 
+        customFields.userEmail || ""
+      ).trim();
+
+      const final_service_id = String(
+        b.serviceId || b.service_id || b.courseId || 
+        orderData.serviceId || orderData.courseId || 
+        payload.service || b.service || ""
+      ).trim();
+
+      const final_title = String(
+        b.title || b.courseTitle || 
+        orderData.title || orderData.courseTitle || ""
+      ).trim();
+
+      const final_category = String(b.category || orderData.category || "Other").trim();
+
+      const final_target_link = String(
+        b.targetLink || b.target_link || b.link || 
+        orderData.targetLink || orderData.target_link || 
+        payload.link || ""
+      ).trim();
+
+      const rawTotalPrice = 
+        b.totalPrice !== undefined ? b.totalPrice : 
+        b.total_price !== undefined ? b.total_price : 
+        orderData.totalPrice !== undefined ? orderData.totalPrice : 
+        orderData.total_price !== undefined ? orderData.total_price : 
+        customFields.totalPrice !== undefined ? customFields.totalPrice : 0;
+      const final_total_price = Math.max(0, Number(rawTotalPrice) || 0);
+
+      const rawQuantity = b.quantity || orderData.quantity || payload.quantity || 1;
+      const final_quantity = Math.max(1, Number(rawQuantity) || 1);
+
+      const isCombo = !!(b.isCombo ?? orderData.isCombo ?? false);
+      const comboItems = Array.isArray(b.comboItems) ? b.comboItems : (Array.isArray(orderData.comboItems) ? orderData.comboItems : []);
+
+      const providerServiceId = String(
+        b.providerServiceId || b.provider_service_id || 
+        orderData.providerServiceId || orderData.provider_service_id || 
+        payload.service || b.service || ""
+      ).trim();
+
+      const providerId = String(
+        b.providerId || b.provider_id || 
+        orderData.providerId || orderData.provider_id || ""
+      ).trim();
+
+      let orderId = b.orderId || b.id || orderData.orderId || orderData.id;
+      const skipStoreCompleted = b.skipStoreCompleted || orderData.skipStoreCompleted || false;
 
       if (!orderId) {
         orderId = "ord_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
       }
 
-      console.log(`[HTTP Proxy] Order transmission call received for order: ${orderId} (skipStoreCompleted = ${skipStoreCompleted})`);
+      console.log(`[HTTP Proxy] Order transmission call received for order: ${orderId} (User: ${final_user_id}, Price: ₹${final_total_price}, Amount: ${final_quantity})`);
 
       const payloadData = {
         userId: final_user_id,
+        user_id: final_user_id,
         userEmail: final_user_email,
+        user_email: final_user_email,
         serviceId: final_service_id,
         courseId: final_service_id,
         title: final_title,
-        category: category || "Other",
-        quantity: Number(quantity),
-        targetLink: String(final_target_link).trim(),
+        category: final_category,
+        quantity: final_quantity,
+        targetLink: final_target_link,
+        target_link: final_target_link,
+        link: final_target_link,
         totalPrice: final_total_price,
-        isCombo: !!isCombo,
-        comboItems: comboItems || [],
+        total_price: final_total_price,
+        isCombo: isCombo,
+        comboItems: comboItems,
         status: "Pending",
-        providerServiceId: req.body.providerServiceId || req.body.provider_service_id,
-        providerId: req.body.providerId || req.body.provider_id
+        providerServiceId: providerServiceId,
+        providerId: providerId
       };
 
       const userToken = (req.headers.authorization as string) || "";

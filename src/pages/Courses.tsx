@@ -293,18 +293,34 @@ export default function Courses() {
       // 3. Transmit order directly via backend proxy (/api/proxy-provider)
       const orderPayload = {
         orderId,
+        orderData,
         userId: user.uid,
+        user_id: user.uid,
         userEmail: user.email || "",
+        user_email: user.email || "",
         serviceId: selectedCourse.id,
+        courseId: selectedCourse.id,
+        service: pServiceId,
+        providerServiceId: pServiceId,
+        providerId: pId,
         title: selectedCourse.title,
+        courseTitle: selectedCourse.title,
         category: selectedCourse.category || "Other",
         quantity: Math.floor(Number(quantity)),
         targetLink: formattedLink,
+        target_link: formattedLink,
+        link: formattedLink,
         totalPrice: Number(totalPrice),
+        total_price: Number(totalPrice),
         isCombo: isComboService,
         comboItems: comboItems,
-        providerServiceId: pServiceId,
-        providerId: pId
+        customFields: {
+          userId: user.uid,
+          userEmail: user.email || "",
+          courseId: selectedCourse.id,
+          totalPrice: Number(totalPrice),
+          quantity: Math.floor(Number(quantity))
+        }
       };
 
       let finalProviderOrderId = "";
@@ -349,11 +365,18 @@ export default function Courses() {
         updateUserProfileLocal({ balance: finalBal });
       }
 
+      // Also directly update database via dbClient so all sources stay 100% in sync
+      try {
+        dbClient.updateUserProfile(user.uid, { balance: finalBal }).catch((err) => {
+          console.warn("[COURSES] Direct balance sync error:", err);
+        });
+      } catch (e) {}
+
       // Refresh user profile in background
       if (refreshUserProfile) {
         setTimeout(() => {
           refreshUserProfile();
-        }, 1000);
+        }, 1500);
       }
 
       // Update local state and UI (Server already deducted balance in Firestore and in-memory cache)

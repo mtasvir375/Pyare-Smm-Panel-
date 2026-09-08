@@ -74,52 +74,80 @@ export default function Dashboard() {
     
     const fetchOrders = async () => {
       try {
-        // 1. Check Chrome Cache (localStorage & sessionStorage) for UID and Email keys
         const uidKey = `orders_${user.uid}`;
         const emailKey = user.email ? `orders_${user.email.toLowerCase()}` : null;
         
+        // 1. Check Chrome Cache (localStorage & sessionStorage) for instant 0ms rendering
         let cachedData = localStorage.getItem(uidKey) || sessionStorage.getItem(uidKey);
-        let cacheTime = localStorage.getItem(`${uidKey}_time`) || sessionStorage.getItem(`${uidKey}_time`);
-        
-        // If not found by UID, check by Email key
         if (!cachedData && emailKey) {
           cachedData = localStorage.getItem(emailKey) || sessionStorage.getItem(emailKey);
-          cacheTime = localStorage.getItem(`${emailKey}_time`) || sessionStorage.getItem(`${emailKey}_time`);
         }
 
-        const now = Date.now();
-        // A 7-day TTL cache guarantees zero Firebase reads across page loads/navigation
-        const isExpired = cacheTime ? (now - parseInt(cacheTime) > 7 * 24 * 60 * 60 * 1000) : true;
+        const parseOrdersList = (dataList: any[]): any[] => {
+          const mergedMap = new Map();
+          const uUid = user.uid;
+          const uEmail = (user.email || "").trim().toLowerCase();
 
-        let dbOrders: any[] = [];
-        let hasValidCache = false;
+          if (Array.isArray(dataList)) {
+            dataList.forEach(order => {
+              if (!order) return;
+              const orderUid = order.userId || order.user_id;
+              const orderEmail = String(order.userEmail || order.user_email || "").trim().toLowerCase();
+              
+              const matchesUser = (orderUid && orderUid === uUid) || (uEmail && orderEmail && orderEmail === uEmail);
+              if (!matchesUser) return;
 
-        if (cachedData && !isExpired) {
+              const pId = order.providerOrderId || order.provider_order_id;
+              const isFailedAborted = order.status?.toLowerCase() === 'failed' && (!pId || pId === 'N/A');
+              if (!isFailedAborted) {
+                const key = order.id || pId || order.createdAt || order.created_at;
+                if (key) {
+                  mergedMap.set(key, order);
+                }
+              }
+            });
+          }
+
+          const result = Array.from(mergedMap.values());
+          result.sort((a, b) => {
+            const timeA = getTimestampMs(a.createdAt || a.created_at);
+            const timeB = getTimestampMs(b.createdAt || b.created_at);
+            return timeB - timeA;
+          });
+          return result;
+        };
+
+        let initialOrders: any[] = [];
+        if (cachedData) {
           try {
             const parsed = JSON.parse(cachedData);
-            if (Array.isArray(parsed)) {
-              dbOrders = parsed;
-              hasValidCache = true;
-              console.log(`[DASHBOARD] ✅ Using persistent local cache (${dbOrders.length} orders) - 0 Firestore reads!`);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              initialOrders = parseOrdersList(parsed);
+              if (isMounted && initialOrders.length > 0) {
+                setOrders(initialOrders.slice(0, 15));
+                setLoading(false);
+                console.log(`[DASHBOARD] ✅ Displaying ${initialOrders.length} orders instantly from Chrome cache`);
+              }
             }
           } catch (e) {
             cachedData = null;
-            hasValidCache = false;
           }
         }
 
-        // If cache is missing or expired, fetch from server (which uses memory/disk cache first to avoid Firestore reads)
-        if (!hasValidCache) {
-          try {
-            console.log("[DASHBOARD] Local cache empty/expired. Fetching orders from server cache...");
-            const fetched = await dbClient.getUserOrders(user.uid, 50, user.email || undefined);
-            if (Array.isArray(fetched)) {
-              dbOrders = fetched;
-            }
-            
-            // Save to both UID and Email keys in localStorage and sessionStorage
-            const jsonStr = JSON.stringify(dbOrders);
-            const nowStr = now.toString();
+        // 2. Stale-While-Revalidate: Always fetch latest orders from server cache (0 Firestore reads!)
+        // to ensure any newly placed orders on custom domains or other devices appear seamlessly
+        try {
+          const fetched = await dbClient.getUserOrders(user.uid, 50, user.email || undefined);
+          if (Array.isArray(fetched) && isMounted) {
+            // Combine initial cache with fetched orders to ensure no order is lost
+            const combined = [...initialOrders, ...fetched];
+            const freshParsed = parseOrdersList(combined);
+
+            setOrders(freshParsed.slice(0, 15));
+
+            // Update Chrome cache with fresh consolidated list
+            const jsonStr = JSON.stringify(freshParsed);
+            const nowStr = Date.now().toString();
             const keysToSave = [uidKey];
             if (emailKey) keysToSave.push(emailKey);
 
@@ -133,58 +161,11 @@ export default function Dashboard() {
                 console.warn("[DASHBOARD] Storage save notice:", storageErr);
               }
             });
-          } catch (error) {
-            console.error("[DASHBOARD] Error fetching orders from DB:", error);
           }
+        } catch (serverErr) {
+          console.warn("[DASHBOARD] Notice while fetching orders from server cache:", serverErr);
         }
 
-        // 2. Clear deprecated device-cached orders key if present
-        try {
-          const localOrdersKey = `local_orders_${user.uid}`;
-          localStorage.removeItem(localOrdersKey);
-        } catch (e) {
-          // ignore
-        }
-
-        // 3. Merge collection and remove any duplicates by order ID
-        const mergedMap = new Map();
-        const uUid = user.uid;
-        const uEmail = (user.email || "").trim().toLowerCase();
-        
-        // Filter orders belonging to the user (by UID or Email)
-        // Exclude failed aborted orders that do not have a valid provider ID
-        if (Array.isArray(dbOrders)) {
-          dbOrders.forEach(order => {
-            if (!order) return;
-            const orderUid = order.userId || order.user_id;
-            const orderEmail = String(order.userEmail || order.user_email || "").trim().toLowerCase();
-            
-            const matchesUser = (orderUid && orderUid === uUid) || (uEmail && orderEmail && orderEmail === uEmail);
-            if (!matchesUser) return;
-
-            const pId = order.providerOrderId || order.provider_order_id;
-            const isFailedAborted = order.status?.toLowerCase() === 'failed' && (!pId || pId === 'N/A');
-            if (!isFailedAborted) {
-              const key = order.id || pId || order.createdAt || order.created_at;
-              if (key) {
-                mergedMap.set(key, order);
-              }
-            }
-          });
-        }
-
-        const mergedOrders = Array.from(mergedMap.values());
-
-        // 4. Sort order history by creation date descending robustly using helper
-        mergedOrders.sort((a, b) => {
-          const timeA = getTimestampMs(a.createdAt || a.created_at);
-          const timeB = getTimestampMs(b.createdAt || b.created_at);
-          return timeB - timeA;
-        });
-
-        if (isMounted) {
-          setOrders(mergedOrders.slice(0, 15));
-        }
       } catch (err) {
         console.error("[DASHBOARD] Error loading orders:", err);
       } finally {
