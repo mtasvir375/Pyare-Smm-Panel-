@@ -3872,8 +3872,29 @@ export async function startServer() {
     }
   });
 
-  // IN-MEMORY SET TO PREVENT MULTIPLE TRANSMISSIONS
+  // IN-MEMORY SET TO PREVENT MULTIPLE TRANSMISSIONS OF THE SAME ORDER ID
   const processingOrders = new Set<string>();
+
+  // CONCURRENCY LOCK PER USER TO PREVENT DOUBLE-SPEND ATTACKS ACROSS MULTIPLE DEVICES (E.G. WEBSITE + MOBILE APP)
+  const userOrderMutex = new Map<string, Promise<any>>();
+  async function withUserOrderLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+    if (!userId) return await fn();
+    const currentLock = userOrderMutex.get(userId) || Promise.resolve();
+    let release: () => void;
+    const nextLock = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    userOrderMutex.set(userId, currentLock.then(() => nextLock));
+    try {
+      await currentLock;
+      return await fn();
+    } finally {
+      release!();
+      if (userOrderMutex.get(userId) === nextLock) {
+        userOrderMutex.delete(userId);
+      }
+    }
+  }
 
   // Helper to transmit single order to SMM provider directly
   async function transmitOrderToProviderDirect(orderId: string, orderData: any, skipStoreCompleted = false, token?: string) {
@@ -3888,15 +3909,60 @@ export async function startServer() {
 
     let currentOrderData = orderData;
     try {
-      // 0. Resolve orderData or fallback to Supabase fetch to avoid redundant DB reads
+      // 0. Resolve orderData or fallback to Supabase/Firestore fetch to avoid redundant DB reads
       let userId = currentOrderData?.userId || currentOrderData?.user_id;
       let serviceId = currentOrderData?.serviceId || currentOrderData?.service_id;
 
       const refundIfDeducted = async (uid: string, oId: string, amt: number) => {
         try {
           if (currentOrderData?.balanceAlreadyDeducted && uid && amt > 0) {
-            console.log(`[REFUND-PROCESS] Refunding ₹${amt} to user ${uid} for order ${oId}`);
-            await adjustUserBalanceSafe(uid, amt, token);
+            console.log(`[REFUND-PROCESS] Refunding ₹${amt} to user ${uid} for rejected order ${oId}`);
+            
+            // Refund directly in Firebase Firestore
+            let currentBal = 0;
+            if (serverCache.users.has(uid)) {
+              const cached = serverCache.users.get(uid);
+              currentBal = Number((cached?.data || cached)?.balance || 0);
+            } else if (currentOrderData?.newBalance !== undefined) {
+              currentBal = Number(currentOrderData.newBalance);
+            }
+            const refundedBal = Number((currentBal + amt).toFixed(2));
+
+            let refundOk = false;
+            if (!useRestFallback && adminSdkSucceeded) {
+              try {
+                await fdb.collection("users").doc(uid).set({
+                  balance: refundedBal,
+                  updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                }, { merge: true });
+                refundOk = true;
+              } catch (e: any) {
+                console.warn(`[REFUND-FAIL] Admin SDK refund error:`, e.message);
+              }
+            }
+
+            if (!refundOk) {
+              try {
+                await setDocREST("users", uid, { balance: refundedBal, updatedAt: new Date().toISOString() }, token);
+                refundOk = true;
+              } catch (e: any) {
+                console.warn(`[REFUND-FAIL] REST refund error:`, e.message);
+              }
+            }
+
+            // Sync in-memory and persistent cache
+            if (serverCache.users.has(uid)) {
+              const cached = serverCache.users.get(uid);
+              serverCache.users.set(uid, {
+                data: { ...(cached?.data || cached || { uid }), balance: refundedBal, updatedAt: new Date().toISOString() },
+                time: Date.now()
+              });
+            }
+            savePersistentCache();
+
+            currentOrderData.balanceAlreadyDeducted = false;
+            currentOrderData.newBalance = refundedBal;
+            console.log(`[REFUND-SUCCESS] Successfully refunded ₹${amt} to user ${uid}. Restored balance: ₹${refundedBal}`);
             await logToDb("BALANCE_REFUND", { userId: uid, amount: amt, orderId: oId, reason: "Provider transmission failure/rejection" });
           }
         } catch (refundErr: any) {
@@ -3926,11 +3992,128 @@ export async function startServer() {
         throw new Error("Missing required field: service_id");
       }
 
-      // 1. Fetch User, Settings, and Course in parallel
-      console.log(`[TRANSMIT] Retrieving User, Settings, and Course for order ${orderId} (User ID: ${userId})`);
+      // 1. Direct live check of user balance from Firebase Firestore
+      console.log(`[TRANSMIT] Checking live balance directly in Firebase for order ${orderId} (User ID: ${userId}, Amount: ₹${orderAmount})`);
       
-      let [userSnap, sS, cS] = await Promise.all([
-        getDocSafe("users", userId, token),
+      let userDocData: any = null;
+      let liveBalance = 0;
+      let userFound = false;
+
+      // Check Admin SDK directly if available (0 REST overhead)
+      if (!useRestFallback && adminSdkSucceeded) {
+        try {
+          const directUserSnap = await fdb.collection("users").doc(userId).get();
+          if (directUserSnap.exists) {
+            userDocData = directUserSnap.data();
+            userFound = true;
+            liveBalance = Number(userDocData.balance ?? userDocData.walletBalance ?? userDocData.wallet_balance ?? 0);
+          }
+        } catch (e: any) {
+          console.warn(`[DIRECT-BALANCE] Admin SDK direct get error: ${e.message}`);
+        }
+      }
+
+      // Fallback: Direct Firestore REST get (fresh, 1 read directly from Firebase, bypassing stale memory)
+      if (!userFound) {
+        try {
+          const restSnap = await getDocREST("users", userId, token);
+          if (restSnap && restSnap.exists) {
+            userDocData = restSnap.data();
+            userFound = true;
+            liveBalance = Number(userDocData.balance ?? userDocData.walletBalance ?? userDocData.wallet_balance ?? 0);
+          }
+        } catch (e: any) {
+          console.warn(`[DIRECT-BALANCE] REST direct get error: ${e.message}`);
+        }
+      }
+
+      // Robust fallback for alternate user collection naming if needed
+      if (!userFound) {
+        const altCollections = ["profiles", "user", "accounts"];
+        for (const coll of altCollections) {
+          try {
+            const altSnap = await getDocREST(coll, userId, token);
+            if (altSnap && altSnap.exists) {
+              userDocData = altSnap.data();
+              userFound = true;
+              liveBalance = Number(userDocData.balance ?? userDocData.walletBalance ?? userDocData.wallet_balance ?? 0);
+              break;
+            }
+          } catch (e) {}
+        }
+      }
+
+      // Fallback to serverCache only if Firestore network blip occurred
+      if (!userFound && serverCache.users.has(userId)) {
+        const cached = serverCache.users.get(userId);
+        if (cached && (cached.data || cached.balance !== undefined)) {
+          userDocData = cached.data || cached;
+          userFound = true;
+          liveBalance = Number(userDocData.balance ?? userDocData.walletBalance ?? 0);
+        }
+      }
+
+      if (!userFound) {
+        const notFoundErr: any = new Error("User account not found. Please log in again.");
+        notFoundErr.statusCode = 404;
+        throw notFoundErr;
+      }
+
+      const isAlreadyDeducted = currentOrderData?.balanceAlreadyDeducted || false;
+
+      // ATOMIC BALANCE VERIFICATION & DIRECT DEDUCTION IN FIREBASE BEFORE PROVIDER TRANSMISSION
+      if (!isAlreadyDeducted && orderAmount > 0) {
+        if (liveBalance < orderAmount) {
+          console.log(`[ORDER-REJECT-BALANCE] User ${userId} has insufficient live balance in Firebase: ₹${liveBalance} < required ₹${orderAmount}`);
+          const lowBalErr: any = new Error(`Insufficient balance! Your wallet balance is ₹${liveBalance.toFixed(2)}, but this order requires ₹${orderAmount.toFixed(2)}. Please recharge your wallet.`);
+          lowBalErr.currentBalance = liveBalance;
+          lowBalErr.statusCode = 400;
+          throw lowBalErr;
+        }
+
+        // Deduct upfront directly in Firebase Firestore so no subsequent order from website or app can reuse the same funds!
+        const newBalance = Math.max(0, Number((liveBalance - orderAmount).toFixed(2)));
+        console.log(`[FIREBASE-DIRECT-DEDUCT] Deducting ₹${orderAmount} from User ${userId} in Firebase. Live balance: ₹${liveBalance} -> ₹${newBalance}`);
+
+        let directDeductSuccess = false;
+        if (!useRestFallback && adminSdkSucceeded) {
+          try {
+            await fdb.collection("users").doc(userId).set({
+              balance: newBalance,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+            directDeductSuccess = true;
+          } catch (e: any) {
+            console.warn(`[FIREBASE-DIRECT-DEDUCT] Admin SDK write failed: ${e.message}`);
+          }
+        }
+
+        if (!directDeductSuccess) {
+          try {
+            const ok = await setDocREST("users", userId, { balance: newBalance, updatedAt: new Date().toISOString() }, token);
+            if (ok) directDeductSuccess = true;
+          } catch (e: any) {
+            console.warn(`[FIREBASE-DIRECT-DEDUCT] REST write failed: ${e.message}`);
+          }
+        }
+
+        // Immediately update server RAM & disk cache so all internal endpoints see updated balance instantly (0 extra reads)
+        const updatedUserData = {
+          ...(userDocData || { uid: userId }),
+          balance: newBalance,
+          updatedAt: new Date().toISOString()
+        };
+        serverCache.users.set(userId, { data: updatedUserData, time: Date.now() });
+        savePersistentCache();
+
+        currentOrderData.balanceAlreadyDeducted = true;
+        currentOrderData.deductedAmount = orderAmount;
+        currentOrderData.newBalance = newBalance;
+        currentOrderData.previousBalance = liveBalance;
+      }
+
+      // Fetch Settings and Course (cached to avoid redundant reads)
+      let [sS, cS] = await Promise.all([
         getDocSafe("settings", "payment", token),
         getDocSafe("courses", serviceId, token)
       ]);
@@ -3938,72 +4121,6 @@ export async function startServer() {
       if (!cS || !cS.exists) {
         const serviceAlt = await getDocSafe("services", serviceId, token);
         if (serviceAlt && serviceAlt.exists) cS = serviceAlt;
-      }
-
-      // Robust fallback for user profile collection naming inconsistencies
-      if (!userSnap.exists) {
-        console.warn(`[TRANSMIT] User not found in 'users' collection for ID: ${userId}. Trying alternatives...`);
-        // Try 'profiles' and 'accounts'
-        const alternativeCollections = ["profiles", "user", "accounts"];
-        for (const coll of alternativeCollections) {
-          const altSnap = await getDocSafe(coll, userId, token);
-          if (altSnap.exists) {
-            console.log(`[TRANSMIT] User found in '${coll}' collection.`);
-            userSnap = altSnap;
-            break;
-          }
-        }
-      }
-
-      // Final fallback: try to auto-create user if missing but exists in Auth
-      if (!userSnap.exists) {
-        try {
-          console.log(`[TRANSMIT] Attempting to verify user ${userId} via Firebase Auth...`);
-          const authUser = await admin.auth().getUser(userId);
-          if (authUser) {
-            console.log(`[TRANSMIT] User ${userId} found in Auth but missing Firestore profile. Auto-creating...`);
-            const newProfile = {
-              uid: userId,
-              email: authUser.email || "",
-              displayName: authUser.displayName || "User",
-              photoURL: authUser.photoURL || "",
-              role: "student",
-              balance: 1, // Welcome bonus
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
-            };
-            const saveSuccess = await setDocSafe("users", userId, newProfile);
-            if (saveSuccess) {
-              console.log(`[TRANSMIT] Auto-created user profile for ${userId}`);
-              userSnap = { exists: true, data: () => newProfile };
-            }
-          }
-        } catch (authErr: any) {
-          console.warn(`[TRANSMIT] Auth verification failed for ${userId}: ${authErr.message}`);
-        }
-      }
-
-      if (!userSnap.exists) {
-        const currentProject = getTargetProject();
-        console.warn(`[TRANSMIT] User profile NOT FOUND for ID: ${userId} in project ${currentProject}. Using anonymous fallback profile to prevent order failure.`);
-        // Create a dummy snap so the order can proceed
-        userSnap = {
-          exists: true,
-          data: () => ({
-            uid: userId,
-            balance: 1000000, // High balance to pass checks if profile is missing
-            email: "anonymous@user.internal",
-            role: "student",
-            displayName: "Anonymous User"
-          })
-        };
-      }
-      const uData = userSnap.data() || {};
-      const userBalance = Number(uData.balance ?? uData.walletBalance ?? uData.wallet_balance ?? uData.funds ?? 0);
-      const isDeducted = currentOrderData?.balanceAlreadyDeducted || false;
-
-      if (!isDeducted && userBalance < orderAmount) {
-        throw new Error(`Insufficient balance (Current: ₹${userBalance}, Required: ₹${orderAmount}). Order rejected.`);
       }
 
       if (cS && cS.exists) {
@@ -4452,8 +4569,8 @@ export async function startServer() {
         const oUserId = currentOrderData.userId || currentOrderData.user_id;
         const alreadyDeducted = currentOrderData?.balanceAlreadyDeducted || false;
 
-        // Synchronously deduct balance in Firestore and memory cache
-        let updatedUserBal: number | undefined = undefined;
+        // Synchronously deduct balance in Firestore and memory cache (if not already deducted upfront)
+        let updatedUserBal: number | undefined = currentOrderData.newBalance;
         if (oUserId && price > 0 && !alreadyDeducted) {
           console.log(`[DEDUCTION-START] Synchronously deducting ₹${price} from User ${oUserId} for order ${orderId}`);
           try {
@@ -4566,6 +4683,11 @@ export async function startServer() {
       }
     } catch (e: any) {
       console.error(`[TRANSMIT] Severe Exception: ${e.message}`);
+      if (e.statusCode === 400 && e.currentBalance !== undefined) {
+        // Insufficient balance directly from Firebase, do not write a failed order doc (saves quota)
+        return { success: false, error: e.message, currentBalance: e.currentBalance, statusCode: 400 };
+      }
+
       if (skipStoreCompleted) {
         await setDocSafe("orders", orderId, {
           ...currentOrderData,
@@ -4679,8 +4801,11 @@ export async function startServer() {
 
       const userToken = (req.headers.authorization as string) || "";
 
-      // 1. Dispatch synchronous transmission to SMM provider panel
-      const result = await transmitOrderToProviderDirect(orderId, payloadData, skipStoreCompleted, userToken);
+      // 1. Dispatch synchronous transmission to SMM provider panel with per-user mutex lock
+      // to ensure concurrent orders from multiple devices (e.g. website + mobile app) do not double-spend
+      const result = await withUserOrderLock(final_user_id, async () => {
+        return await transmitOrderToProviderDirect(orderId, payloadData, skipStoreCompleted, userToken);
+      });
 
       // 2. Return response to user
       if (result.success) {
@@ -4692,12 +4817,25 @@ export async function startServer() {
           newBalance: result.newBalance
         });
       } else {
-        return res.status(400).json({ success: false, error: result.alreadyProcessing ? "Processing in-progress..." : result.error, orderId });
+        const statusCode = result.statusCode || 400;
+        return res.status(statusCode).json({ 
+          success: false, 
+          error: result.alreadyProcessing ? "Processing in-progress..." : result.error, 
+          orderId,
+          currentBalance: result.currentBalance,
+          newBalance: result.newBalance
+        });
       }
 
     } catch (e: any) {
       console.error(`[HTTP Proxy] Severe endpoint exception: ${e.message}`);
-      return res.status(500).json({ success: false, error: e.message || "Unknown endpoint exception.", orderId: req.body?.orderId || "ord_" + Date.now() });
+      const status = e.statusCode || 500;
+      return res.status(status).json({ 
+        success: false, 
+        error: e.message || "Unknown endpoint exception.", 
+        currentBalance: e.currentBalance,
+        orderId: req.body?.orderId || "ord_" + Date.now() 
+      });
     }
   });
 

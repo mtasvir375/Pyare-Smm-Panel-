@@ -321,7 +321,11 @@ export default function Courses() {
         const res = await axios.post("/api/proxy-provider", orderPayload, { headers, timeout: 35000 });
         resData = res.data;
       } catch (apiErr: any) {
-        const respErr = apiErr.response?.data?.error || apiErr.response?.data?.message || apiErr.response?.data;
+        const respData = apiErr.response?.data;
+        if (respData && typeof respData.currentBalance === "number" && updateUserProfileLocal) {
+          updateUserProfileLocal({ balance: respData.currentBalance });
+        }
+        const respErr = respData?.error || respData?.message || respData;
         if (respErr) {
           const cleanErrStr = typeof respErr === "string" ? respErr : JSON.stringify(respErr);
           throw new Error(cleanErrStr);
@@ -344,13 +348,6 @@ export default function Courses() {
       if (updateUserProfileLocal) {
         updateUserProfileLocal({ balance: finalBal });
       }
-
-      // Also directly update database via dbClient so all sources stay 100% in sync
-      try {
-        dbClient.updateUserProfile(user.uid, { balance: finalBal }).catch((err) => {
-          console.warn("[COURSES] Direct balance sync error:", err);
-        });
-      } catch (e) {}
 
       // Refresh user profile in background
       if (refreshUserProfile) {
