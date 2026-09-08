@@ -361,22 +361,9 @@ export default function Courses() {
       const calculatedBal = Math.max(0, Number((currentBal - totalPrice).toFixed(2)));
       const finalBal = (resData && typeof resData.newBalance === "number") ? resData.newBalance : calculatedBal;
       
+      // Local profile is immediately synchronized with the exact Firebase remaining balance returned by server (0 extra Firebase writes/reads)
       if (updateUserProfileLocal) {
         updateUserProfileLocal({ balance: finalBal });
-      }
-
-      // Also directly update database via dbClient so all sources stay 100% in sync
-      try {
-        dbClient.updateUserProfile(user.uid, { balance: finalBal }).catch((err) => {
-          console.warn("[COURSES] Direct balance sync error:", err);
-        });
-      } catch (e) {}
-
-      // Refresh user profile in background
-      if (refreshUserProfile) {
-        setTimeout(() => {
-          refreshUserProfile();
-        }, 1500);
       }
 
       // Update local state and UI (Server already deducted balance in Firestore and in-memory cache)

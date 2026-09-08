@@ -644,8 +644,13 @@ export async function startServer() {
   const getGoogleAuthHeaders = async (token?: string) => {
     const headers: any = {};
     if (token && typeof token === "string" && token.trim().length > 0) {
-      const cleanToken = token.startsWith("Bearer ") ? token.trim() : `Bearer ${token.trim()}`;
-      headers["Authorization"] = cleanToken;
+      const stripped = token.replace(/^Bearer\s+/i, "").trim();
+      // Google Cloud Firestore REST API ONLY accepts Google OAuth 2.0 access tokens (which start with 'ya29.')
+      // Firebase User ID tokens (JWTs starting with 'eyJ') are rejected by Google API Gateway with 401.
+      // Firestore security rules (allow read, write: if true) work seamlessly with apiKey.
+      if (stripped.startsWith("ya29.")) {
+        headers["Authorization"] = `Bearer ${stripped}`;
+      }
     }
     return headers;
   };
@@ -1365,8 +1370,7 @@ export async function startServer() {
       const existingData = existing ? (existing.data || existing) : {};
       const existingBal = Number(existingData.balance ?? existingData.walletBalance ?? 0);
       const incomingBal = Number(data.balance);
-      if ((data.balance === 0 || data.balance === undefined || isNaN(incomingBal)) && existingBal > 0 && !data.forceReset) {
-        console.log(`[BALANCE-SHIELD] Prevented overwriting balance of user ${id} with 0. Retaining existing balance: ₹${existingBal}`);
+      if ((data.balance === undefined || isNaN(incomingBal)) && existingBal > 0) {
         data.balance = existingBal;
       }
       serverCache.users.set(id, { data: { ...existingData, ...data }, time: Date.now() });
@@ -4014,7 +4018,7 @@ export async function startServer() {
       // Fallback: Direct Firestore REST get (fresh, 1 read directly from Firebase, bypassing stale memory)
       if (!userFound) {
         try {
-          const restSnap = await getDocREST("users", userId, token);
+          const restSnap = await getDocREST("users", userId);
           if (restSnap && restSnap.exists) {
             userDocData = restSnap.data();
             userFound = true;
@@ -4030,7 +4034,7 @@ export async function startServer() {
         const altCollections = ["profiles", "user", "accounts"];
         for (const coll of altCollections) {
           try {
-            const altSnap = await getDocREST(coll, userId, token);
+            const altSnap = await getDocREST(coll, userId);
             if (altSnap && altSnap.exists) {
               userDocData = altSnap.data();
               userFound = true;
@@ -4088,7 +4092,7 @@ export async function startServer() {
 
         if (!directDeductSuccess) {
           try {
-            const ok = await setDocREST("users", userId, { balance: newBalance, updatedAt: new Date().toISOString() }, token);
+            const ok = await setDocREST("users", userId, { balance: newBalance, updatedAt: new Date().toISOString() });
             if (ok) directDeductSuccess = true;
           } catch (e: any) {
             console.warn(`[FIREBASE-DIRECT-DEDUCT] REST write failed: ${e.message}`);
@@ -4720,7 +4724,12 @@ export async function startServer() {
       } catch (refundErr: any) {
         console.error(`[REFUND-CRITICAL-ERROR] Failed to refund on severe exception:`, refundErr.message);
       }
-      return { success: false, error: e.message || "Unknown internal processing error" };
+      return { 
+        success: false, 
+        error: e.message || "Unknown internal processing error",
+        statusCode: e.statusCode || 400,
+        currentBalance: e.currentBalance 
+      };
     } finally {
       processingOrders.delete(orderId);
       console.log(`[TRANSMIT] Unlocked orderId: ${orderId}`);
