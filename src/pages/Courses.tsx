@@ -367,40 +367,63 @@ export default function Courses() {
       setTargetLink("");
       setQuantity(String(selectedCourse.minLimit || 1000));
 
-      // Update local storage order cache
+      // Update local storage order cache (Chrome cache memory - 0 Firebase reads)
       try {
-        const cacheKey = `orders_${user.uid}`;
-        const cachedData = localStorage.getItem(cacheKey) || sessionStorage.getItem(cacheKey);
-        let cachedOrders: any[] = [];
-        if (cachedData) {
-          try {
-            cachedOrders = JSON.parse(cachedData);
-          } catch (e) {}
+        const cacheKeys = [`orders_${user.uid}`];
+        if (user.email) {
+          cacheKeys.push(`orders_${user.email.toLowerCase()}`);
+        }
+
+        let existingOrders: any[] = [];
+        for (const key of cacheKeys) {
+          const cachedData = localStorage.getItem(key) || sessionStorage.getItem(key);
+          if (cachedData) {
+            try {
+              const parsed = JSON.parse(cachedData);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                existingOrders = parsed;
+                break;
+              }
+            } catch (e) {}
+          }
         }
 
         const newOrderObj = {
           id: orderId,
           userId: user.uid,
+          userEmail: user.email || "",
           courseId: selectedCourse.id,
+          serviceId: selectedCourse.id,
+          title: selectedCourse.title,
           courseTitle: selectedCourse.title,
           category: selectedCourse.category || "Other",
           quantity: Math.floor(Number(quantity)),
           targetLink: formattedLink,
           totalPrice: Number(totalPrice),
-          status: "Pending",
+          status: "In progress",
           providerOrderId: finalProviderOrderId,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         };
 
-        cachedOrders = cachedOrders.filter(o => o.id !== orderId);
-        cachedOrders.unshift(newOrderObj);
-        cachedOrders = cachedOrders.slice(0, 50);
+        const updatedOrders = [
+          newOrderObj,
+          ...existingOrders.filter((o: any) => o && o.id !== orderId && o.providerOrderId !== finalProviderOrderId)
+        ].slice(0, 50);
 
-        localStorage.setItem(cacheKey, JSON.stringify(cachedOrders));
-        localStorage.setItem(`${cacheKey}_time`, Date.now().toString());
-        sessionStorage.setItem(cacheKey, JSON.stringify(cachedOrders));
-        sessionStorage.setItem(`${cacheKey}_time`, Date.now().toString());
+        const nowStr = Date.now().toString();
+        const jsonStr = JSON.stringify(updatedOrders);
+
+        cacheKeys.forEach(key => {
+          try {
+            localStorage.setItem(key, jsonStr);
+            localStorage.setItem(`${key}_time`, nowStr);
+            sessionStorage.setItem(key, jsonStr);
+            sessionStorage.setItem(`${key}_time`, nowStr);
+          } catch (storageErr) {
+            console.warn("Storage quota or restriction for key:", key, storageErr);
+          }
+        });
       } catch (cacheErr) {
         console.warn("Failed to update orders local cache:", cacheErr);
       }

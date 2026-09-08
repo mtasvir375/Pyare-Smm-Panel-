@@ -73,77 +73,124 @@ export default function Dashboard() {
     let isMounted = true;
     
     const fetchOrders = async () => {
-      // 1. Check Session Storage and Local Storage Cache
-      const cacheKey = `orders_${user.uid}`;
-      let cachedData = localStorage.getItem(cacheKey) || sessionStorage.getItem(cacheKey);
-      let cacheTime = localStorage.getItem(`${cacheKey}_time`) || sessionStorage.getItem(`${cacheKey}_time`);
-      const now = Date.now();
-
-      let dbOrders: any[] = [];
-
-      // A 7-day TTL cache guarantees zero Firebase reads across page loads/navigation
-      const isExpired = cacheTime ? (now - parseInt(cacheTime) > 7 * 24 * 60 * 60 * 1000) : true;
-
-      if (cachedData && !isExpired) {
-        console.log("[DASHBOARD] ✅ Using persistent local cache for orders - 0 Firestore reads!");
-        try {
-          dbOrders = JSON.parse(cachedData);
-        } catch (e) {
-          cachedData = null;
-        }
-      }
-
-      if (!cachedData || isExpired || dbOrders.length === 0) {
-        try {
-          console.log("[DASHBOARD] Local cache empty/expired. Reading orders from Firestore...");
-          dbOrders = await dbClient.getUserOrders(user.uid, 50); // Fetch more for better history
-          localStorage.setItem(cacheKey, JSON.stringify(dbOrders));
-          localStorage.setItem(`${cacheKey}_time`, now.toString());
-          sessionStorage.setItem(cacheKey, JSON.stringify(dbOrders));
-          sessionStorage.setItem(`${cacheKey}_time`, now.toString());
-        } catch (error) {
-          console.error("Error fetching orders from DB:", error);
-        }
-      }
-
-      // 2. Clear deprecated device-cached orders from device memory
       try {
-        const localOrdersKey = `local_orders_${user.uid}`;
-        localStorage.removeItem(localOrdersKey);
-      } catch (e) {
-        console.warn("[DASHBOARD] Failed to clear device-cached orders:", e);
-      }
+        // 1. Check Chrome Cache (localStorage & sessionStorage) for UID and Email keys
+        const uidKey = `orders_${user.uid}`;
+        const emailKey = user.email ? `orders_${user.email.toLowerCase()}` : null;
+        
+        let cachedData = localStorage.getItem(uidKey) || sessionStorage.getItem(uidKey);
+        let cacheTime = localStorage.getItem(`${uidKey}_time`) || sessionStorage.getItem(`${uidKey}_time`);
+        
+        // If not found by UID, check by Email key
+        if (!cachedData && emailKey) {
+          cachedData = localStorage.getItem(emailKey) || sessionStorage.getItem(emailKey);
+          cacheTime = localStorage.getItem(`${emailKey}_time`) || sessionStorage.getItem(`${emailKey}_time`);
+        }
 
-      // 3. Merge both collections and remove any duplicates by order ID
-      const mergedMap = new Map();
-      
-      // Load DB orders first and ensure strict filtering by user's UID to prevent showing "fake" or other users' orders
-      // Also exclude "failed" aborted orders that do not have a valid provider ID (e.g. they failed before transmission)
-      dbOrders.forEach(order => {
-        if (order && (order.userId === user.uid || order.user_id === user.uid)) {
-          const pId = order.providerOrderId || order.provider_order_id;
-          const isFailedAborted = order.status?.toLowerCase() === 'failed' && (!pId || pId === 'N/A');
-          if (!isFailedAborted) {
-            if (order.id || order.createdAt || order.created_at) {
-              const key = order.id || order.createdAt || order.created_at;
-              mergedMap.set(key, order);
+        const now = Date.now();
+        // A 7-day TTL cache guarantees zero Firebase reads across page loads/navigation
+        const isExpired = cacheTime ? (now - parseInt(cacheTime) > 7 * 24 * 60 * 60 * 1000) : true;
+
+        let dbOrders: any[] = [];
+        let hasValidCache = false;
+
+        if (cachedData && !isExpired) {
+          try {
+            const parsed = JSON.parse(cachedData);
+            if (Array.isArray(parsed)) {
+              dbOrders = parsed;
+              hasValidCache = true;
+              console.log(`[DASHBOARD] ✅ Using persistent local cache (${dbOrders.length} orders) - 0 Firestore reads!`);
             }
+          } catch (e) {
+            cachedData = null;
+            hasValidCache = false;
           }
         }
-      });
 
-      const mergedOrders = Array.from(mergedMap.values());
+        // If cache is missing or expired, fetch from server (which uses memory/disk cache first to avoid Firestore reads)
+        if (!hasValidCache) {
+          try {
+            console.log("[DASHBOARD] Local cache empty/expired. Fetching orders from server cache...");
+            const fetched = await dbClient.getUserOrders(user.uid, 50, user.email || undefined);
+            if (Array.isArray(fetched)) {
+              dbOrders = fetched;
+            }
+            
+            // Save to both UID and Email keys in localStorage and sessionStorage
+            const jsonStr = JSON.stringify(dbOrders);
+            const nowStr = now.toString();
+            const keysToSave = [uidKey];
+            if (emailKey) keysToSave.push(emailKey);
 
-      // 4. Sort order history by creation date descending robustly using helper
-      mergedOrders.sort((a, b) => {
-        const timeA = getTimestampMs(a.createdAt || a.created_at);
-        const timeB = getTimestampMs(b.createdAt || b.created_at);
-        return timeB - timeA;
-      });
+            keysToSave.forEach(k => {
+              try {
+                localStorage.setItem(k, jsonStr);
+                localStorage.setItem(`${k}_time`, nowStr);
+                sessionStorage.setItem(k, jsonStr);
+                sessionStorage.setItem(`${k}_time`, nowStr);
+              } catch (storageErr) {
+                console.warn("[DASHBOARD] Storage save notice:", storageErr);
+              }
+            });
+          } catch (error) {
+            console.error("[DASHBOARD] Error fetching orders from DB:", error);
+          }
+        }
 
-      if (isMounted) {
-        setOrders(mergedOrders.slice(0, 15)); // Show 15 instead of 10
-        setLoading(false);
+        // 2. Clear deprecated device-cached orders key if present
+        try {
+          const localOrdersKey = `local_orders_${user.uid}`;
+          localStorage.removeItem(localOrdersKey);
+        } catch (e) {
+          // ignore
+        }
+
+        // 3. Merge collection and remove any duplicates by order ID
+        const mergedMap = new Map();
+        const uUid = user.uid;
+        const uEmail = (user.email || "").trim().toLowerCase();
+        
+        // Filter orders belonging to the user (by UID or Email)
+        // Exclude failed aborted orders that do not have a valid provider ID
+        if (Array.isArray(dbOrders)) {
+          dbOrders.forEach(order => {
+            if (!order) return;
+            const orderUid = order.userId || order.user_id;
+            const orderEmail = String(order.userEmail || order.user_email || "").trim().toLowerCase();
+            
+            const matchesUser = (orderUid && orderUid === uUid) || (uEmail && orderEmail && orderEmail === uEmail);
+            if (!matchesUser) return;
+
+            const pId = order.providerOrderId || order.provider_order_id;
+            const isFailedAborted = order.status?.toLowerCase() === 'failed' && (!pId || pId === 'N/A');
+            if (!isFailedAborted) {
+              const key = order.id || pId || order.createdAt || order.created_at;
+              if (key) {
+                mergedMap.set(key, order);
+              }
+            }
+          });
+        }
+
+        const mergedOrders = Array.from(mergedMap.values());
+
+        // 4. Sort order history by creation date descending robustly using helper
+        mergedOrders.sort((a, b) => {
+          const timeA = getTimestampMs(a.createdAt || a.created_at);
+          const timeB = getTimestampMs(b.createdAt || b.created_at);
+          return timeB - timeA;
+        });
+
+        if (isMounted) {
+          setOrders(mergedOrders.slice(0, 15));
+        }
+      } catch (err) {
+        console.error("[DASHBOARD] Error loading orders:", err);
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
     
@@ -182,12 +229,28 @@ export default function Dashboard() {
         }
       }
 
-      // Clear both localStorage and sessionStorage cache to force re-fetch of fresh data on manual refresh
+      // Rather than deleting the cache (which could result in blank screen if network is slow),
+      // fetch latest orders and update the cache seamlessly!
       if (user) {
-        localStorage.removeItem(`orders_${user.uid}`);
-        localStorage.removeItem(`orders_${user.uid}_time`);
-        sessionStorage.removeItem(`orders_${user.uid}`);
-        sessionStorage.removeItem(`orders_${user.uid}_time`);
+        try {
+          const fresh = await dbClient.getUserOrders(user.uid, 50, user.email || undefined);
+          if (Array.isArray(fresh) && fresh.length > 0) {
+            const uidKey = `orders_${user.uid}`;
+            const emailKey = user.email ? `orders_${user.email.toLowerCase()}` : null;
+            const jsonStr = JSON.stringify(fresh);
+            const nowStr = Date.now().toString();
+            [uidKey, emailKey].filter(Boolean).forEach(k => {
+              try {
+                localStorage.setItem(k!, jsonStr);
+                localStorage.setItem(`${k!}_time`, nowStr);
+                sessionStorage.setItem(k!, jsonStr);
+                sessionStorage.setItem(`${k!}_time`, nowStr);
+              } catch (e) {}
+            });
+          }
+        } catch (syncErr) {
+          console.warn("[DASHBOARD] Could not refresh orders list:", syncErr);
+        }
       }
       setRefreshTrigger(prev => prev + 1);
     } catch (error) {
@@ -207,19 +270,25 @@ export default function Dashboard() {
       });
       if (response.data.success) {
         setOrders(prev => prev.filter(o => o.id !== orderId));
-        // Highly optimal: Directly remove the deleted order from local cache to avoid reloading from DB
-        const cacheKey = `orders_${user.uid}`;
-        try {
-          const cachedData = localStorage.getItem(cacheKey);
-          if (cachedData) {
-            const parsed = JSON.parse(cachedData);
-            const filtered = parsed.filter((o: any) => o.id !== orderId);
-            localStorage.setItem(cacheKey, JSON.stringify(filtered));
-            sessionStorage.setItem(cacheKey, JSON.stringify(filtered));
+        // Directly remove the deleted order from local cache to avoid reloading from DB
+        const uidKey = `orders_${user.uid}`;
+        const emailKey = user.email ? `orders_${user.email.toLowerCase()}` : null;
+        [uidKey, emailKey].filter(Boolean).forEach(k => {
+          try {
+            const cachedData = localStorage.getItem(k!) || sessionStorage.getItem(k!);
+            if (cachedData) {
+              const parsed = JSON.parse(cachedData);
+              if (Array.isArray(parsed)) {
+                const filtered = parsed.filter((o: any) => o && o.id !== orderId);
+                const jsonStr = JSON.stringify(filtered);
+                localStorage.setItem(k!, jsonStr);
+                sessionStorage.setItem(k!, jsonStr);
+              }
+            }
+          } catch (e) {
+            console.warn("Failed to update cache after deleting order:", e);
           }
-        } catch (e) {
-          console.warn("Failed to update cache after deleting order:", e);
-        }
+        });
         setConfirmDeleteId(null);
       } else {
         console.error("Failed to delete order:", response.data.error || "Unknown error");

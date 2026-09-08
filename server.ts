@@ -360,6 +360,18 @@ export async function startServer() {
           });
           console.log(`[PERSISTENT-CACHE] Loaded ${serverCache.bank_sms_logs.size} bank SMS logs from disk.`);
         }
+
+        if (parsed.orders && Array.isArray(parsed.orders)) {
+          serverCache.orders.clear();
+          serverCache.latestOrders = [];
+          parsed.orders.forEach(([id, cacheObj]: [string, any]) => {
+            const oData = cacheObj?.data ? { id, ...cacheObj.data } : { id, ...(cacheObj || {}) };
+            serverCache.orders.set(id, { data: oData, time: cacheObj?.time || Date.now() });
+            serverCache.latestOrders.push(oData);
+          });
+          serverCache.latestOrders.sort((a, b) => getTimestampMs(b.createdAt || b.created_at) - getTimestampMs(a.createdAt || a.created_at));
+          console.log(`[PERSISTENT-CACHE] Loaded ${serverCache.orders.size} orders from disk (0 Firestore reads required).`);
+        }
       }
     } catch (err: any) {
       console.error("[PERSISTENT-CACHE-ERR] Failed to load persistent cache:", err.message);
@@ -395,10 +407,11 @@ export async function startServer() {
         courses: Array.from(serverCache.courses.entries()),
         users: Array.from(serverCache.users.entries()),
         deposits: Array.from(serverCache.deposits.entries()).slice(-100),
-        bank_sms_logs: Array.from(serverCache.bank_sms_logs.entries()).slice(-50)
+        bank_sms_logs: Array.from(serverCache.bank_sms_logs.entries()).slice(-50),
+        orders: Array.from(serverCache.orders.entries()).slice(-500)
       };
       fs.writeFileSync(cacheFilePath, JSON.stringify(dataToSave, null, 2), "utf-8");
-      console.log("[PERSISTENT-CACHE] Saved settings, providers, courses, users & deposits cache to disk.");
+      console.log("[PERSISTENT-CACHE] Saved settings, providers, courses, users, deposits & orders cache to disk.");
     } catch (err: any) {
       console.error("[PERSISTENT-CACHE-ERR] Failed to save persistent cache:", err.message);
     }
@@ -482,16 +495,23 @@ export async function startServer() {
     if (serverCache.latestOrders.length > 1000) {
       serverCache.latestOrders.pop();
     }
+
+    // Persist to disk cache
+    savePersistentCache();
   }
 
-  // Load last few orders from Firestore on startup to have initial data
-  // This runs only once when the server boots
+  // Load orders from Firestore on startup only if disk cache is empty
   async function seedMemoryOrders() {
     try {
-      console.log("[MEMORY] Seeding initial orders from Firestore...");
+      if (serverCache.orders.size > 0) {
+        console.log(`[MEMORY] ${serverCache.orders.size} orders already loaded from persistent disk cache - 0 Firestore reads needed.`);
+        return;
+      }
+
+      console.log("[MEMORY] Persistent cache empty. Seeding initial orders from Firestore once...");
       if (!useRestFallback) {
         try {
-          const snap = await fdb.collection("orders").orderBy("createdAt", "desc").limit(10).get();
+          const snap = await fdb.collection("orders").orderBy("createdAt", "desc").limit(100).get();
           snap.docs.forEach(doc => {
             const data = doc.data();
             // Convert Firestore timestamp to ISO string for consistency
@@ -503,7 +523,8 @@ export async function startServer() {
             }
             addOrderToMemory(doc.id, data);
           });
-          console.log(`[MEMORY] Seeded ${snap.size} orders via Admin SDK.`);
+          console.log(`[MEMORY] Seeded ${snap.size} orders via Admin SDK and saved to persistent disk.`);
+          savePersistentCache();
           return;
         } catch (adminErr: any) {
           console.warn("[MEMORY] Admin SDK seed failed, trying REST fallback:", adminErr.message);
@@ -518,7 +539,7 @@ export async function startServer() {
             field: { fieldPath: "createdAt" },
             direction: "DESCENDING"
           }],
-          limit: 10
+          limit: 100
         }
       }, systemAccessToken);
 
@@ -527,7 +548,8 @@ export async function startServer() {
           const data = doc.data();
           addOrderToMemory(doc.id, data);
         });
-        console.log(`[MEMORY] Seeded ${queryRes.length} orders via REST fallback.`);
+        console.log(`[MEMORY] Seeded ${queryRes.length} orders via REST fallback and saved to persistent disk.`);
+        savePersistentCache();
       } else {
         console.log("[MEMORY] No orders found to seed via REST fallback.");
       }
@@ -1802,10 +1824,11 @@ export async function startServer() {
 
   app.get("/api/user-orders/:userId", async (req, res) => {
     const { userId } = req.params;
+    const qEmail = String(req.query.email || req.query.userEmail || "").trim().toLowerCase();
     const limitCount = Math.min(parseInt(req.query.limit as string) || 20, 50);
     
     // Add super strict validation for invalid or placeholder user IDs
-    if (!userId || userId === "undefined" || userId === "null" || userId === "placeholder" || userId.trim() === "") {
+    if ((!userId || userId === "undefined" || userId === "null" || userId === "placeholder" || userId.trim() === "") && !qEmail) {
       return res.json([]);
     }
 
@@ -1818,7 +1841,11 @@ export async function startServer() {
       
       const userMemoryOrders = memoryOrders.filter((item: any) => {
         const orderUserId = item.userId || item.user_id;
-        if (orderUserId !== userId) return false;
+        const orderEmail = String(item.userEmail || item.user_email || "").trim().toLowerCase();
+        const matchesId = userId && userId !== "undefined" && userId !== "null" && orderUserId === userId;
+        const matchesEmail = qEmail && orderEmail && orderEmail === qEmail;
+        if (!matchesId && !matchesEmail) return false;
+        
         const pId = item.providerOrderId || item.provider_order_id;
         const isFailedAborted = item.status?.toLowerCase() === 'failed' && (!pId || pId === 'N/A');
         return !isFailedAborted;
@@ -1828,7 +1855,7 @@ export async function startServer() {
         // Unique by order id and return latest
         const map = new Map<string, any>();
         userMemoryOrders.forEach((o: any) => {
-          const key = o.id || o.createdAt || o.created_at;
+          const key = o.id || o.providerOrderId || o.createdAt || o.created_at;
           if (key) map.set(key, o);
         });
         const sorted = Array.from(map.values()).sort((a: any, b: any) => {
@@ -1844,11 +1871,21 @@ export async function startServer() {
       let docs: any[] = [];
       if (!useRestFallback) {
         try {
-          const snap = await fdb.collection("orders")
-            .where("userId", "==", userId)
-            .limit(limitCount)
-            .get();
-          docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          if (userId && userId !== "undefined" && userId !== "null") {
+            const snap = await fdb.collection("orders")
+              .where("userId", "==", userId)
+              .limit(limitCount)
+              .get();
+            docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          }
+          
+          if (docs.length === 0 && qEmail) {
+            const emailSnap = await fdb.collection("orders")
+              .where("userEmail", "==", qEmail)
+              .limit(limitCount)
+              .get();
+            docs = emailSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          }
         } catch (err: any) {
           console.warn("[API] Admin fetch for user orders failed, trying REST:", err.message);
           if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
@@ -1875,15 +1912,36 @@ export async function startServer() {
         if (queryRes) {
           docs = queryRes.map(doc => ({ id: doc.id, ...doc.data() }));
         }
+
+        if (docs.length === 0 && qEmail) {
+          const emailQueryRes = await runQueryREST({
+            structuredQuery: {
+              from: [{ collectionId: "orders" }],
+              where: {
+                fieldFilter: {
+                  field: { fieldPath: "userEmail" },
+                  op: "EQUAL",
+                  value: { stringValue: qEmail }
+                }
+              },
+              limit: limitCount
+            }
+          }, req.headers.authorization as string || systemAccessToken);
+          if (emailQueryRes) {
+            docs = emailQueryRes.map(doc => ({ id: doc.id, ...doc.data() }));
+          }
+        }
       }
 
-      // Filter strictly to ensure only orders belonging to the specified userId are returned.
+      // Filter strictly to ensure only orders belonging to the specified user are returned.
       // This prevents any leakage or "fake" orders belonging to other users.
       // Also filter out aborted "Failed" orders that do not have a valid provider ID (e.g. they failed before transmission).
       const filteredDocs = docs.filter(item => {
         const orderUserId = item.userId || item.user_id;
-        const isMatchedUser = orderUserId === userId && userId !== "undefined" && userId !== "null";
-        if (!isMatchedUser) return false;
+        const orderEmail = String(item.userEmail || item.user_email || "").trim().toLowerCase();
+        const matchesId = userId && userId !== "undefined" && userId !== "null" && orderUserId === userId;
+        const matchesEmail = qEmail && orderEmail && orderEmail === qEmail;
+        if (!matchesId && !matchesEmail) return false;
         
         // Skip failed aborted/unplaced orders (without a valid provider order ID)
         const pId = item.providerOrderId || item.provider_order_id;

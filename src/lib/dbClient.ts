@@ -211,10 +211,14 @@ export const dbClient = {
     }
   },
 
-  async getUserOrders(userId: string, l = 10): Promise<any[]> {
+  async getUserOrders(userId: string, l = 10, email?: string): Promise<any[]> {
     try {
-      const response = await axios.get(`/api/user-orders/${userId}?limit=${l}`);
-      return response.data;
+      const emailQuery = email ? `&email=${encodeURIComponent(email)}` : "";
+      const response = await axios.get(`/api/user-orders/${userId}?limit=${l}${emailQuery}`);
+      if (Array.isArray(response.data)) {
+        return response.data;
+      }
+      return [];
     } catch (e) {
       console.warn("[DB-CLIENT] Memory order fetch failed.");
       return [];
