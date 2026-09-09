@@ -688,37 +688,43 @@ export async function startServer() {
     return { exists: false, data: () => null };
   };
 
-  const setDocREST = async (collect: string, id: string, data: any, token?: string) => {
+  const setDocREST = async (collect: string, id: string, data: any, token?: string, retries = 2) => {
     const targetProject = getTargetProject();
-    try {
-      const headers = await getGoogleAuthHeaders(token);
-      const dataWithTime = { ...data, updatedAt: new Date().toISOString() };
-      const keys = Object.keys(dataWithTime);
-      const maskParams = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
-      const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/${collect}/${id}?key=${apiKey}&${maskParams}`;
-      
-      const fields = wrapRestFields(dataWithTime);
-      const res = await axios.patch(url, { fields }, { headers, timeout: 10000 });
-      return !!res.data;
-    } catch (err: any) {
-      const errorData = err.response?.data;
-      console.error(`[REST-SET-ERR] Failed REST set for ${collect}/${id} on project ${targetProject}:`, errorData || err.message);
-      
-      // Fallback if targetProject !== projectId
-      if (targetProject !== projectId) {
-        try {
-          const dataWithTime = { ...data, updatedAt: new Date().toISOString() };
-          const keys = Object.keys(dataWithTime);
-          const maskParams = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
-          const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${dbId}/documents/${collect}/${id}?key=${apiKey}&${maskParams}`;
-          const fields = wrapRestFields(dataWithTime);
-          const res = await axios.patch(url, { fields }, { timeout: 5000 });
-          if (res.data) console.log(`[REST-SET-FALLBACK] Succeeded for ${collect}/${id} on project ${projectId}`);
-          return !!res.data;
-        } catch (e) {}
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const headers = await getGoogleAuthHeaders(token);
+        const dataWithTime = { ...data, updatedAt: new Date().toISOString() };
+        const keys = Object.keys(dataWithTime);
+        const maskParams = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
+        const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/${collect}/${id}?key=${apiKey}&${maskParams}`;
+        
+        const fields = wrapRestFields(dataWithTime);
+        const res = await axios.patch(url, { fields }, { headers, timeout: 10000 });
+        return !!res.data;
+      } catch (err: any) {
+        if (attempt === retries) {
+          const errorData = err.response?.data;
+          console.error(`[REST-SET-ERR] Failed REST set for ${collect}/${id} on project ${targetProject} after ${retries} retries:`, errorData || err.message);
+          
+          // Fallback if targetProject !== projectId
+          if (targetProject !== projectId) {
+            try {
+              const dataWithTime = { ...data, updatedAt: new Date().toISOString() };
+              const keys = Object.keys(dataWithTime);
+              const maskParams = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
+              const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${dbId}/documents/${collect}/${id}?key=${apiKey}&${maskParams}`;
+              const fields = wrapRestFields(dataWithTime);
+              const res = await axios.patch(url, { fields }, { timeout: 5000 });
+              if (res.data) console.log(`[REST-SET-FALLBACK] Succeeded for ${collect}/${id} on project ${projectId}`);
+              return !!res.data;
+            } catch (e) {}
+          }
+        } else {
+          await new Promise(r => setTimeout(r, 500 * (attempt + 1))); // Exponential backoff
+        }
       }
-      return false;
     }
+    return false;
   };
 
   const updateDocREST = async (collect: string, id: string, data: any, token?: string) => {
@@ -1020,12 +1026,10 @@ export async function startServer() {
       }
     }
 
-    if (!forceFresh) { // Cache user balance within dynamic TTL to avoid redundant reads on rapid orders
+    if (!forceFresh) { // Cache user balance indefinitely to save reads, cache is strictly updated on all writes
       if (collect === "users" && id && serverCache.users && serverCache.users.has(id)) {
         const cached = serverCache.users.get(id);
-        if (now - cached.time < DYNAMIC_CACHE_TTL) {
-          return { exists: true, data: () => cached.data };
-        }
+        return { exists: true, data: () => cached.data };
       }
     }
 
@@ -2421,8 +2425,8 @@ export async function startServer() {
   app.post("/api/db/get", async (req, res) => {
     const { collection, id } = req.body;
     if (!collection || !id) return res.status(400).json({ error: "Missing collection or id" });
-    // Bypassing cache for settings, providers, and users to ensure real-time accuracy and prevent stale balances
-    const forceFresh = collection === "settings" || collection === "providers" || collection === "users";
+    // Bypassing cache for settings and providers to ensure real-time accuracy. Users cache is used to save reads/writes.
+    const forceFresh = collection === "settings" || collection === "providers";
     const snap = await getDocSafe(collection, id, req.headers.authorization as string, forceFresh);
     if (snap.exists) {
       res.json({ success: true, data: snap.data() });
