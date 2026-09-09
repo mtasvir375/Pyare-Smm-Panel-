@@ -862,22 +862,40 @@ export async function startServer() {
     let currentBalance = 0;
     let existingUserData: any = null;
 
-    if (serverCache.users.has(user_id)) {
-      const cached = serverCache.users.get(user_id);
-      if (cached && (cached.data || cached.balance !== undefined)) {
-        existingUserData = cached.data || cached;
-        currentBalance = Number(existingUserData.balance ?? existingUserData.walletBalance ?? existingUserData.wallet_balance ?? 0);
+    // ALWAYS fetch fresh from Firestore to prevent stale cache overwrites in multi-instance environments
+    try {
+      let userRef: any = null;
+      if (!useRestFallback && adminSdkSucceeded) {
+        userRef = await fdb.collection("users").doc(user_id).get();
+        if (userRef && userRef.exists) existingUserData = userRef.data();
       }
-    }
+      
+      if (!existingUserData) {
+        const restRef = await getDocREST("users", user_id, token);
+        if (restRef && restRef.exists) existingUserData = restRef.data();
+      }
 
-    if (!existingUserData) {
-      try {
-        const userRef = await getDocREST("users", user_id, token);
-        if (userRef && userRef.exists) {
-          existingUserData = userRef.data();
+      if (existingUserData) {
+        currentBalance = Number(existingUserData.balance ?? existingUserData.walletBalance ?? existingUserData.wallet_balance ?? 0);
+      } else {
+        // Fallback to cache ONLY if Firestore network fetch fails completely
+        if (serverCache.users.has(user_id)) {
+          const cached = serverCache.users.get(user_id);
+          if (cached && (cached.data || cached.balance !== undefined)) {
+            existingUserData = cached.data || cached;
+            currentBalance = Number(existingUserData.balance ?? existingUserData.walletBalance ?? existingUserData.wallet_balance ?? 0);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`[BALANCE-SAFE] Failed to fetch fresh balance, falling back to cache:`, e);
+      if (serverCache.users.has(user_id)) {
+        const cached = serverCache.users.get(user_id);
+        if (cached && (cached.data || cached.balance !== undefined)) {
+          existingUserData = cached.data || cached;
           currentBalance = Number(existingUserData.balance ?? existingUserData.walletBalance ?? existingUserData.wallet_balance ?? 0);
         }
-      } catch (e) {}
+      }
     }
 
     const newBalance = Math.max(0, Number((currentBalance + change).toFixed(2)));
@@ -2425,8 +2443,8 @@ export async function startServer() {
   app.post("/api/db/get", async (req, res) => {
     const { collection, id } = req.body;
     if (!collection || !id) return res.status(400).json({ error: "Missing collection or id" });
-    // Bypassing cache for settings and providers to ensure real-time accuracy. Users cache is used to save reads/writes.
-    const forceFresh = collection === "settings" || collection === "providers";
+    // Bypassing cache for settings, providers, and users to ensure real-time accuracy across multiple Cloud Run instances.
+    const forceFresh = collection === "settings" || collection === "providers" || collection === "users";
     const snap = await getDocSafe(collection, id, req.headers.authorization as string, forceFresh);
     if (snap.exists) {
       res.json({ success: true, data: snap.data() });
