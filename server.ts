@@ -334,15 +334,6 @@ export async function startServer() {
           }
         }
 
-        if (parsed.users && Array.isArray(parsed.users)) {
-          serverCache.users.clear();
-          parsed.users.forEach(([id, cacheObj]: [string, any]) => {
-            const uData = cacheObj?.data ? { id, ...cacheObj.data } : { id, ...(cacheObj || {}) };
-            serverCache.users.set(id, { data: uData, time: cacheObj?.time || Date.now() });
-          });
-          console.log(`[PERSISTENT-CACHE] Loaded ${serverCache.users.size} users from disk.`);
-        }
-
         if (parsed.deposits && Array.isArray(parsed.deposits)) {
           serverCache.deposits.clear();
           parsed.deposits.forEach(([id, cacheObj]: [string, any]) => {
@@ -404,14 +395,10 @@ export async function startServer() {
       const dataToSave = {
         settings: serverCache.settings,
         providers: Array.from(serverCache.providers.entries()),
-        courses: Array.from(serverCache.courses.entries()),
-        users: Array.from(serverCache.users.entries()),
-        deposits: Array.from(serverCache.deposits.entries()).slice(-100),
-        bank_sms_logs: Array.from(serverCache.bank_sms_logs.entries()).slice(-50),
-        orders: Array.from(serverCache.orders.entries()).slice(-500)
+        courses: Array.from(serverCache.courses.entries())
       };
       fs.writeFileSync(cacheFilePath, JSON.stringify(dataToSave, null, 2), "utf-8");
-      console.log("[PERSISTENT-CACHE] Saved settings, providers, courses, users, deposits & orders cache to disk.");
+      console.log("[PERSISTENT-CACHE] Saved settings, providers & courses cache to disk.");
     } catch (err: any) {
       console.error("[PERSISTENT-CACHE-ERR] Failed to save persistent cache:", err.message);
     }
@@ -1044,12 +1031,7 @@ export async function startServer() {
       }
     }
 
-    if (!forceFresh) { // Cache user balance indefinitely to save reads, cache is strictly updated on all writes
-      if (collect === "users" && id && serverCache.users && serverCache.users.has(id)) {
-        const cached = serverCache.users.get(id);
-        return { exists: true, data: () => cached.data };
-      }
-    }
+    // Users collection is never cached from memory to prevent stale wallet balances
 
     let result = { exists: false, data: () => null as any };
 
