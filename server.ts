@@ -4018,7 +4018,7 @@ export async function startServer() {
       // Fallback: Direct Firestore REST get (fresh, 1 read directly from Firebase, bypassing stale memory)
       if (!userFound) {
         try {
-          const restSnap = await getDocREST("users", userId);
+          const restSnap = await getDocREST("users", userId, token);
           if (restSnap && restSnap.exists) {
             userDocData = restSnap.data();
             userFound = true;
@@ -4034,7 +4034,7 @@ export async function startServer() {
         const altCollections = ["profiles", "user", "accounts"];
         for (const coll of altCollections) {
           try {
-            const altSnap = await getDocREST(coll, userId);
+            const altSnap = await getDocREST(coll, userId, token);
             if (altSnap && altSnap.exists) {
               userDocData = altSnap.data();
               userFound = true;
@@ -4092,7 +4092,7 @@ export async function startServer() {
 
         if (!directDeductSuccess) {
           try {
-            const ok = await setDocREST("users", userId, { balance: newBalance, updatedAt: new Date().toISOString() });
+            const ok = await setDocREST("users", userId, { balance: newBalance, updatedAt: new Date().toISOString() }, token);
             if (ok) directDeductSuccess = true;
           } catch (e: any) {
             console.warn(`[FIREBASE-DIRECT-DEDUCT] REST write failed: ${e.message}`);
