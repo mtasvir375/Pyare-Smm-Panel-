@@ -4077,40 +4077,9 @@ export async function startServer() {
           throw lowBalErr;
         }
 
-        // Deduct upfront directly in Firebase Firestore so no subsequent order from website or app can reuse the same funds!
-        const newBalance = Math.max(0, Number((liveBalance - orderAmount).toFixed(2)));
-        console.log(`[FIREBASE-DIRECT-DEDUCT] Deducting ₹${orderAmount} from User ${userId} in Firebase. Live balance: ₹${liveBalance} -> ₹${newBalance}`);
-
-        let directDeductSuccess = false;
-        if (!useRestFallback && adminSdkSucceeded) {
-          try {
-            await fdb.collection("users").doc(userId).set({
-              balance: newBalance,
-              updatedAt: admin.firestore.FieldValue.serverTimestamp()
-            }, { merge: true });
-            directDeductSuccess = true;
-          } catch (e: any) {
-            console.warn(`[FIREBASE-DIRECT-DEDUCT] Admin SDK write failed: ${e.message}`);
-          }
-        }
-
-        if (!directDeductSuccess) {
-          try {
-            const ok = await setDocREST("users", userId, { balance: newBalance, updatedAt: new Date().toISOString() }, token);
-            if (ok) directDeductSuccess = true;
-          } catch (e: any) {
-            console.warn(`[FIREBASE-DIRECT-DEDUCT] REST write failed: ${e.message}`);
-          }
-        }
-
-        // Immediately update server RAM & disk cache so all internal endpoints see updated balance instantly (0 extra reads)
-        const updatedUserData = {
-          ...(userDocData || { uid: userId }),
-          balance: newBalance,
-          updatedAt: new Date().toISOString()
-        };
-        serverCache.users.set(userId, { data: updatedUserData, time: Date.now() });
-        savePersistentCache();
+        console.log(`[FIREBASE-DIRECT-DEDUCT] Deducting ₹${orderAmount} from User ${userId} via adjustUserBalanceSafe. Live balance: ₹${liveBalance}`);
+        const deductRes: any = await adjustUserBalanceSafe(userId, -orderAmount, token);
+        const newBalance = deductRes?.newBalance !== undefined ? deductRes.newBalance : Math.max(0, Number((liveBalance - orderAmount).toFixed(2)));
 
         currentOrderData.balanceAlreadyDeducted = true;
         currentOrderData.deductedAmount = orderAmount;
