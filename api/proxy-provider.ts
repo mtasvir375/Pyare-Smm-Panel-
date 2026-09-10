@@ -269,6 +269,7 @@ export default async function handler(req: any, res: any) {
         updatedAt: new Date().toISOString()
       };
 
+      let newBalance = -1;
       try {
         const authHeader = req.headers.authorization;
         const headers: any = { "Content-Type": "application/json" };
@@ -276,6 +277,28 @@ export default async function handler(req: any, res: any) {
 
         const firestoreUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/orders/${orderId}?key=${FIREBASE_API_KEY}`;
         await axios.patch(firestoreUrl, { fields: wrapFirestoreFields(orderDoc) }, { headers, timeout: 5000 }).catch(() => {});
+        
+        // Deduct user balance in Firestore since this environment does not run server.ts
+        if (finalTotalPrice > 0 && finalUserId) {
+          const userUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/users/${finalUserId}?key=${FIREBASE_API_KEY}`;
+          try {
+            const userRes = await axios.get(userUrl, { headers, timeout: 5000 });
+            if (userRes.data && userRes.data.fields) {
+              const fields = userRes.data.fields;
+              const currentBalance = Number(fields.balance?.integerValue || fields.balance?.doubleValue || fields.walletBalance?.integerValue || fields.walletBalance?.doubleValue || 0);
+              newBalance = Math.max(0, currentBalance - finalTotalPrice);
+              
+              await axios.patch(userUrl + "&updateMask.fieldPaths=balance", {
+                fields: {
+                  balance: { doubleValue: newBalance }
+                }
+              }, { headers, timeout: 5000 });
+              console.log(`[VERCEL-API] Deducted ${finalTotalPrice} from user ${finalUserId}. New balance: ${newBalance}`);
+            }
+          } catch (deductErr: any) {
+            console.error("[VERCEL-API] Failed to deduct balance:", deductErr.message);
+          }
+        }
       } catch (dbErr) {
         console.warn("[API-PROXY-PROVIDER] Firestore order save non-critical warning:", dbErr);
       }
@@ -283,7 +306,8 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json({
         success: true,
         providerOrderId,
-        orderId
+        orderId,
+        ...(newBalance !== -1 && { newBalance })
       });
     } else {
       // Return 400 Bad Request with exact clean provider error without creating order or deducting balance
