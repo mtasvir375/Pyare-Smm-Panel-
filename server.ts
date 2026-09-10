@@ -1595,8 +1595,8 @@ export async function startServer() {
           return res.status(400).json({ error: "Insufficient balance" });
         }
         
-        const deductionSuccess = await adjustUserBalanceSafe(userId, -totalPrice);
-        if (!deductionSuccess) {
+        const deductRes: any = await adjustUserBalanceSafe(userId, -totalPrice);
+        if (!deductRes || !deductRes.success) {
           return res.status(400).json({ error: "Failed to deduct balance" });
         }
         
@@ -2292,8 +2292,8 @@ export async function startServer() {
         }
 
         // Adjust user balance safely (0 reads, 1 write)
-        const balanceAdjusted = await adjustUserBalanceSafe(userId, amount, req.headers.authorization as string);
-        if (!balanceAdjusted) {
+        const balanceAdjustedRes: any = await adjustUserBalanceSafe(userId, amount, req.headers.authorization as string);
+        if (!balanceAdjustedRes || !balanceAdjustedRes.success) {
           return res.status(500).json({ error: "Failed to update user wallet balance" });
         }
 
@@ -3178,8 +3178,8 @@ export async function startServer() {
 
       if (matchingSms) {
         console.log(`[DEPOSIT-INSTANT-SYNC] Found prior Bank SMS log ${matchingSms.id} for UTR ${cleanUtr}. Auto-approving immediately!`);
-        const adjusted = await adjustUserBalanceSafe(user_id, depositAmount, req.headers.authorization as string);
-        if (adjusted) {
+        const adjustedRes: any = await adjustUserBalanceSafe(user_id, depositAmount, req.headers.authorization as string);
+        if (adjustedRes && adjustedRes.success) {
           isAutoApproved = true;
           matchedSmsId = matchingSms.id;
           await updateDocSafe("bank_sms_logs", matchingSms.id, {
@@ -3198,8 +3198,8 @@ export async function startServer() {
         const settingsSnap = await getDocSafe("settings", "payment");
         const settings = settingsSnap.data() || {};
         if (settings.autoApproveDeposits) {
-          const adjusted = await adjustUserBalanceSafe(user_id, depositAmount, req.headers.authorization as string);
-          if (adjusted) {
+          const adjustedRes: any = await adjustUserBalanceSafe(user_id, depositAmount, req.headers.authorization as string);
+          if (adjustedRes && adjustedRes.success) {
             isAutoApproved = true;
           }
         }
@@ -3440,8 +3440,8 @@ export async function startServer() {
       if (isVerified) {
         console.log(`[QR-AUTO-SUCCESS] Verified ₹${amount} for user ${userId} (UTR: ${cleanUtr})`);
         
-        const success = await adjustUserBalanceSafe(userId, Number(amount), req.headers.authorization as string);
-        if (!success) {
+        const successRes: any = await adjustUserBalanceSafe(userId, Number(amount), req.headers.authorization as string);
+        if (!successRes || !successRes.success) {
           return res.status(500).json({ error: "Payment verified but failed to update wallet. Contact support." });
         }
 
@@ -3776,8 +3776,8 @@ export async function startServer() {
 
       console.log(`[SMS-WEBHOOK] Found matching pending deposit ${depositId} of amount ₹${originalAmount} for userId: ${targetUserId} using UTR: ${matchedUtr}`);
 
-      const adjusted = await adjustUserBalanceSafe(targetUserId, originalAmount);
-      if (adjusted) {
+      const adjustedRes: any = await adjustUserBalanceSafe(targetUserId, originalAmount);
+      if (adjustedRes && adjustedRes.success) {
         await updateDocSafe("deposits", depositId, {
           status: "approved",
           verifiedAt: new Date().toISOString(),
@@ -3848,8 +3848,8 @@ export async function startServer() {
         });
 
         if (matchingLog) {
-          const adjusted = await adjustUserBalanceSafe(depUserId, depAmount);
-          if (adjusted) {
+          const adjustedRes: any = await adjustUserBalanceSafe(depUserId, depAmount);
+          if (adjustedRes && adjustedRes.success) {
             await updateDocSafe("deposits", dep.id, {
               status: "approved",
               verifiedAt: new Date().toISOString(),
