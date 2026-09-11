@@ -38,7 +38,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { dbClient } from "@/lib/dbClient";
-import { where, limit, orderBy } from "firebase/firestore";
+import { db } from "@/lib/firebase";
+import { where, limit, orderBy, collection, onSnapshot, query } from "firebase/firestore";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -80,7 +81,7 @@ export default function Admin() {
   const handleRefreshDeposits = async () => {
     setIsRefreshingDeposits(true);
     try {
-      const depositsList = await dbClient.getDepositsAdmin(50, true);
+      const depositsList = await dbClient.getDepositsAdmin(100, true);
       setDeposits(depositsList);
       toast.success("Deposits list refreshed!");
     } catch (e: any) {
@@ -89,6 +90,47 @@ export default function Admin() {
       setIsRefreshingDeposits(false);
     }
   };
+
+  // Real-time listener for deposits so admin immediately sees new payment requests
+  useEffect(() => {
+    if (activeTab !== "deposits" && !isPaymentAdmin) return;
+    try {
+      const colRef = collection(db, "deposits");
+      const q = query(colRef, limit(100));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        if (!snapshot.empty) {
+          const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+          list.sort((a: any, b: any) => {
+            const aPending = (a.status || "").toLowerCase() === "pending" ? 1 : 0;
+            const bPending = (b.status || "").toLowerCase() === "pending" ? 1 : 0;
+            if (aPending !== bPending) return bPending - aPending;
+
+            const getTime = (item: any) => {
+              if (!item) return 0;
+              if (item.createdAt?.toDate) return item.createdAt.toDate().getTime();
+              if (item.createdAt) {
+                const t = new Date(item.createdAt).getTime();
+                if (!isNaN(t)) return t;
+              }
+              if (item.timestamp?.toDate) return item.timestamp.toDate().getTime();
+              if (item.timestamp) {
+                const t = new Date(item.timestamp).getTime();
+                if (!isNaN(t)) return t;
+              }
+              return 0;
+            };
+            return getTime(b) - getTime(a);
+          });
+          setDeposits(list);
+        }
+      }, (err) => {
+        console.warn("[ADMIN-REALTIME] Deposits listener note:", err.message);
+      });
+      return () => unsubscribe();
+    } catch (e) {
+      console.warn("[ADMIN-REALTIME] Listener setup error:", e);
+    }
+  }, [activeTab, isPaymentAdmin]);
 
   const handleSyncStats = async () => {
     if (!user?.uid || isSyncing) return;
@@ -305,7 +347,7 @@ export default function Admin() {
         const ordersList = await dbClient.getOrdersAdmin(50);
         setOrders(ordersList);
       } else if (tab === "deposits") {
-        const depositsList = await dbClient.getDepositsAdmin(25);
+        const depositsList = await dbClient.getDepositsAdmin(100, force);
         setDeposits(depositsList);
       } else if (tab === "users" && isAdmin) {
         await handleSearchUser(force);

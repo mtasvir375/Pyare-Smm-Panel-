@@ -2184,7 +2184,7 @@ export async function startServer() {
       }
 
       // 2. Fetch fresh from Firestore if not in rest fallback or if force requested or if map is small
-      if (!useRestFallback) {
+      if (!useRestFallback && adminSdkSucceeded) {
         try {
           // A: Always query pending deposits from Firestore so admin never misses unapproved requests
           const pendingSnap = await fdb.collection("deposits").where("status", "==", "pending").limit(50).get();
@@ -2208,21 +2208,49 @@ export async function startServer() {
         }
       }
 
-      // 3. If still empty, use REST fallback
-      if (depositMap.size === 0) {
+      // 3. Reliable REST query using runQueryREST (structuredQuery)
+      if (depositMap.size === 0 || forceRefresh) {
         try {
-          const targetProject = getTargetProject();
-          const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/deposits?key=${apiKey}&pageSize=${limitCount}`;
-          const resRest = await axios.get(url, { timeout: 10000 });
-          if (resRest.data && resRest.data.documents) {
-            resRest.data.documents.forEach((doc: any) => {
-              const id = doc.name.split("/").pop();
-              const data = { id, ...unwrapRestFields(doc.fields || {}) };
-              depositMap.set(id, data);
-              serverCache.deposits.set(id, { data, time: Date.now() });
+          // A: Always query pending deposits from Firestore so admin never misses unapproved requests
+          const pendingQueryRes = await runQueryREST({
+            structuredQuery: {
+              from: [{ collectionId: "deposits" }],
+              where: {
+                fieldFilter: {
+                  field: { fieldPath: "status" },
+                  op: "EQUAL",
+                  value: { stringValue: "pending" }
+                }
+              },
+              limit: 50
+            }
+          }, req.headers.authorization as string || systemAccessToken);
+
+          if (pendingQueryRes && Array.isArray(pendingQueryRes)) {
+            pendingQueryRes.forEach((item: any) => {
+              const data = item.data ? { id: item.id, ...item.data() } : item;
+              depositMap.set(item.id, data);
+              serverCache.deposits.set(item.id, { data, time: Date.now() });
             });
-            savePersistentCache();
           }
+
+          // B: Query recent deposits
+          const allQueryRes = await runQueryREST({
+            structuredQuery: {
+              from: [{ collectionId: "deposits" }],
+              limit: limitCount
+            }
+          }, req.headers.authorization as string || systemAccessToken);
+
+          if (allQueryRes && Array.isArray(allQueryRes)) {
+            allQueryRes.forEach((item: any) => {
+              const data = item.data ? { id: item.id, ...item.data() } : item;
+              depositMap.set(item.id, data);
+              serverCache.deposits.set(item.id, { data, time: Date.now() });
+            });
+          }
+
+          savePersistentCache();
         } catch (rErr: any) {
           console.warn("[ADMIN-ALL-DEPOSITS-REST-ERR]", rErr.message);
         }
