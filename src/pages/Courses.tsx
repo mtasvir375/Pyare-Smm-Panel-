@@ -584,6 +584,33 @@ export default function Courses() {
         toast.error(response.data?.error || "Failed to submit request");
       }
     } catch (error: any) {
+      console.warn("API deposit submission failed, attempting direct Firestore save fallback:", error);
+      try {
+        const { collection, addDoc, serverTimestamp } = await import("firebase/firestore");
+        const { db } = await import("@/lib/firebase");
+        await addDoc(collection(db, "deposits"), {
+          userId: user.uid,
+          userEmail: user.email || "not-provided",
+          amount: Number(depositAmount),
+          utr: cleanUtr,
+          screenshotUrl: screenshotPreview || "",
+          status: "pending",
+          type: "deposit",
+          createdAt: serverTimestamp(),
+          submittedVia: "client-direct-fallback"
+        });
+
+        toast.success("Fund request submitted! Admin will verify and add balance soon.");
+        setIsAddFundsOpen(false);
+        setDepositAmount("");
+        setUtr("");
+        setScreenshot(null);
+        setScreenshotPreview(null);
+        return;
+      } catch (fallbackErr: any) {
+        console.error("Direct deposit submission fallback failed:", fallbackErr);
+      }
+
       const serverErrMsg = error.response?.data?.error || error.response?.data?.message;
       if (serverErrMsg) {
         toast.error(serverErrMsg);

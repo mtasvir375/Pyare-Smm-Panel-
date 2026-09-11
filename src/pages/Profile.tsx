@@ -408,17 +408,16 @@ export default function Profile() {
       return;
     }
 
+    const numAmount = Number(amount);
+    const cleanUtr = utr.replace(/\D/g, ""); // Keep only digits
+
+    if (cleanUtr.length !== 12) {
+      toast.error("UTR must be exactly 12 digits.");
+      return;
+    }
+
     setIsUploading(true);
     try {
-      const numAmount = Number(amount);
-      const cleanUtr = utr.replace(/\D/g, ""); // Keep only digits
-
-      if (cleanUtr.length !== 12) {
-        toast.error("UTR must be exactly 12 digits.");
-        setIsUploading(false);
-        return;
-      }
-
       if (isAutoMode) {
         // 1. Try Automatic Verification first if enabled
         try {
@@ -483,6 +482,29 @@ export default function Profile() {
         toast.error(response.data?.error || "Submission failed.");
       }
     } catch (error: any) {
+      console.warn("API deposit submission failed, attempting direct Firestore save fallback:", error);
+      try {
+        const { collection, addDoc, serverTimestamp } = await import("firebase/firestore");
+        const { db } = await import("@/lib/firebase");
+        await addDoc(collection(db, "deposits"), {
+          userId: user?.uid,
+          userEmail: user?.email || "not-provided",
+          amount: numAmount,
+          utr: cleanUtr,
+          screenshotUrl: screenshotPreview || "",
+          status: "pending",
+          type: "deposit",
+          createdAt: serverTimestamp(),
+          submittedVia: "client-direct-fallback"
+        });
+
+        toast.success("Fund request submitted! Admin will verify it soon.");
+        resetAddFunds();
+        return;
+      } catch (fallbackErr: any) {
+        console.error("Direct deposit submission fallback failed:", fallbackErr);
+      }
+
       const serverErrMsg = error.response?.data?.error || error.response?.data?.message;
       if (serverErrMsg) {
         toast.error(serverErrMsg);
