@@ -258,15 +258,15 @@ export const dbClient = {
   async getDepositsAdmin(l = 50, force = false): Promise<any[]> {
     try {
       const res = await axios.get(`/api/admin/all-deposits?limit=${l}&force=${force}`);
-      if (Array.isArray(res.data) && res.data.length > 0) return res.data;
+      if (Array.isArray(res.data)) return res.data;
     } catch (e) {
-      console.warn("[DB-CLIENT] getDepositsAdmin API failed, trying direct Firestore...", e);
+      console.warn("[DB-CLIENT] getDepositsAdmin API failed, trying direct Firestore fallback...", e);
     }
 
     // Direct Firestore Web SDK Fallback (Guaranteed to work on all custom domains & Vercel)
     try {
       const colRef = collection(db, 'deposits');
-      const snap = await getDocs(query(colRef, limit(Math.max(l, 100))));
+      const snap = await getDocs(query(colRef, limit(Math.min(l, 30))));
       const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
       // Sort: Pending requests first, then newest timestamp first

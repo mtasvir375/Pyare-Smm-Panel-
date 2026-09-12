@@ -4,6 +4,11 @@ const FIREBASE_PROJECT_ID = "gen-lang-client-0629912823";
 const FIREBASE_DATABASE_ID = "ai-studio-f36429fa-50a3-4e58-b960-86b1e1d0141c";
 const FIREBASE_API_KEY = process.env.VITE_FIREBASE_API_KEY || "AIzaSyBW_IUbuocn83oBCfQfbZsGbswo-OcgxRY";
 
+// In-memory cache to save Firestore reads
+let cachedDeposits: any[] = [];
+let lastFetchTime = 0;
+const CACHE_TTL_MS = 30000; // 30 seconds
+
 function unwrapDoc(doc: any): any {
   if (!doc) return null;
   const id = doc.name ? doc.name.split("/").pop() : "";
@@ -37,12 +42,18 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const limitCount = Math.min(Number(req.query?.limit) || 100, 100);
+    const limitCount = Math.min(Number(req.query?.limit) || 50, 50);
+    const forceRefresh = req.query?.force === "true";
+
+    // 0-Read cache hit: return cached list if fresh and not forced
+    if (!forceRefresh && cachedDeposits.length > 0 && (Date.now() - lastFetchTime < CACHE_TTL_MS)) {
+      return res.status(200).json(cachedDeposits.slice(0, limitCount));
+    }
+
     const queryUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents:runQuery?key=${FIREBASE_API_KEY}`;
-    
     const depositMap = new Map<string, any>();
 
-    // 1. Query pending deposits first
+    // 1. Query pending deposits first so admin never misses an unreviewed request
     try {
       const pendingRes = await axios.post(queryUrl, {
         structuredQuery: {
@@ -54,9 +65,9 @@ export default async function handler(req: any, res: any) {
               value: { stringValue: "pending" }
             }
           },
-          limit: 50
+          limit: 30
         }
-      }, { timeout: 10000 });
+      }, { timeout: 8000 });
 
       if (pendingRes.data && Array.isArray(pendingRes.data)) {
         pendingRes.data.forEach((item: any) => {
@@ -72,14 +83,14 @@ export default async function handler(req: any, res: any) {
       console.warn("[VERCEL-ALL-DEPOSITS] Pending query warning:", pErr.message);
     }
 
-    // 2. Query general recent deposits
+    // 2. Query general recent deposits (limited to 30 to conserve quota)
     try {
       const allRes = await axios.post(queryUrl, {
         structuredQuery: {
           from: [{ collectionId: "deposits" }],
-          limit: limitCount
+          limit: 30
         }
-      }, { timeout: 10000 });
+      }, { timeout: 8000 });
 
       if (allRes.data && Array.isArray(allRes.data)) {
         allRes.data.forEach((item: any) => {
@@ -107,6 +118,10 @@ export default async function handler(req: any, res: any) {
       const bTime = new Date(b.createdAt || b.timestamp || 0).getTime();
       return bTime - aTime;
     });
+
+    // Save to memory cache
+    cachedDeposits = allList;
+    lastFetchTime = Date.now();
 
     return res.status(200).json(allList.slice(0, limitCount));
   } catch (err: any) {

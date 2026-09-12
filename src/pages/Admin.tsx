@@ -39,7 +39,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { dbClient } from "@/lib/dbClient";
 import { db } from "@/lib/firebase";
-import { where, limit, orderBy, collection, onSnapshot, query } from "firebase/firestore";
+import { where, limit, orderBy, collection, query } from "firebase/firestore";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -81,8 +81,9 @@ export default function Admin() {
   const handleRefreshDeposits = async () => {
     setIsRefreshingDeposits(true);
     try {
-      const depositsList = await dbClient.getDepositsAdmin(100, true);
+      const depositsList = await dbClient.getDepositsAdmin(50, true);
       setDeposits(depositsList);
+      setFetchedTabs(prev => new Set(prev).add("deposits"));
       toast.success("Deposits list refreshed!");
     } catch (e: any) {
       toast.error("Failed to refresh deposits");
@@ -91,46 +92,12 @@ export default function Admin() {
     }
   };
 
-  // Real-time listener for deposits so admin immediately sees new payment requests
+  // Safe tab auto-fetcher: fetches data on-demand only once per tab to protect read quota
   useEffect(() => {
-    if (activeTab !== "deposits" && !isPaymentAdmin) return;
-    try {
-      const colRef = collection(db, "deposits");
-      const q = query(colRef, limit(100));
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        if (!snapshot.empty) {
-          const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-          list.sort((a: any, b: any) => {
-            const aPending = (a.status || "").toLowerCase() === "pending" ? 1 : 0;
-            const bPending = (b.status || "").toLowerCase() === "pending" ? 1 : 0;
-            if (aPending !== bPending) return bPending - aPending;
-
-            const getTime = (item: any) => {
-              if (!item) return 0;
-              if (item.createdAt?.toDate) return item.createdAt.toDate().getTime();
-              if (item.createdAt) {
-                const t = new Date(item.createdAt).getTime();
-                if (!isNaN(t)) return t;
-              }
-              if (item.timestamp?.toDate) return item.timestamp.toDate().getTime();
-              if (item.timestamp) {
-                const t = new Date(item.timestamp).getTime();
-                if (!isNaN(t)) return t;
-              }
-              return 0;
-            };
-            return getTime(b) - getTime(a);
-          });
-          setDeposits(list);
-        }
-      }, (err) => {
-        console.warn("[ADMIN-REALTIME] Deposits listener note:", err.message);
-      });
-      return () => unsubscribe();
-    } catch (e) {
-      console.warn("[ADMIN-REALTIME] Listener setup error:", e);
+    if (activeTab && !fetchedTabs.has(activeTab)) {
+      fetchTabData(activeTab, false);
     }
-  }, [activeTab, isPaymentAdmin]);
+  }, [activeTab]);
 
   const handleSyncStats = async () => {
     if (!user?.uid || isSyncing) return;
@@ -347,7 +314,7 @@ export default function Admin() {
         const ordersList = await dbClient.getOrdersAdmin(50);
         setOrders(ordersList);
       } else if (tab === "deposits") {
-        const depositsList = await dbClient.getDepositsAdmin(100, force);
+        const depositsList = await dbClient.getDepositsAdmin(50, force);
         setDeposits(depositsList);
       } else if (tab === "users" && isAdmin) {
         await handleSearchUser(force);
@@ -1274,7 +1241,12 @@ export default function Admin() {
 
       <Tabs 
         value={activeTab} 
-        onValueChange={setActiveTab}
+        onValueChange={(tab) => {
+          setActiveTab(tab);
+          if (!fetchedTabs.has(tab)) {
+            fetchTabData(tab, false);
+          }
+        }}
         className="space-y-6"
       >
         <TabsList className="bg-white border p-1 rounded-2xl h-12 shadow-sm flex overflow-x-auto whitespace-nowrap hide-scrollbar">
@@ -1976,8 +1948,11 @@ export default function Admin() {
         {(isAdmin || isPaymentAdmin) && (
           <>
           <TabsContent value="deposits" className="space-y-4">
-            {!fetchedTabs.has("deposits") ? (
-              renderTabPlaceholder("deposits", "Deposits")
+            {isRefreshing && deposits.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 space-y-3 bg-white rounded-2xl border border-gray-100 shadow-sm">
+                <RefreshCw className="w-8 h-8 text-primary animate-spin" />
+                <p className="text-sm font-medium text-gray-600">Loading deposit requests...</p>
+              </div>
             ) : (
               <>
                 {/* Header Actions & Controls */}

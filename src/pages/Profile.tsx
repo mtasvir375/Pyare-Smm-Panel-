@@ -84,14 +84,14 @@ export default function Profile() {
   const [generatingApiKey, setGeneratingApiKey] = useState(false);
 
   useEffect(() => {
-    if (user) {
+    if (user?.uid) {
       dbClient.getDocs("api_keys", [where("userId", "==", user.uid)]).then(docs => {
         if (docs && docs.length > 0) {
           setApiKey(docs[0].id);
         }
       }).catch(console.warn);
     }
-  }, [user]);
+  }, [user?.uid]);
 
   const generateApiKey = async () => {
     if (!user) return;

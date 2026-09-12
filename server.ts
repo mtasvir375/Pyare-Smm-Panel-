@@ -2167,7 +2167,7 @@ export async function startServer() {
 
   app.get("/api/admin/all-deposits", async (req, res) => {
     try {
-      const limitCount = Math.min(Number(req.query.limit) || 100, 100);
+      const limitCount = Math.min(Number(req.query.limit) || 50, 50);
       const forceRefresh = req.query.force === "true";
 
       const depositMap = new Map<string, any>();
@@ -2183,11 +2183,11 @@ export async function startServer() {
         }
       }
 
-      // 2. Fetch fresh from Firestore if not in rest fallback or if force requested or if map is small
-      if (!useRestFallback && adminSdkSucceeded) {
+      // 2. Fetch fresh from Firestore if force requested or if cache is empty
+      if (!useRestFallback && adminSdkSucceeded && (depositMap.size === 0 || forceRefresh)) {
         try {
-          // A: Always query pending deposits from Firestore so admin never misses unapproved requests
-          const pendingSnap = await fdb.collection("deposits").where("status", "==", "pending").limit(50).get();
+          // A: Query pending deposits from Firestore so admin never misses unapproved requests
+          const pendingSnap = await fdb.collection("deposits").where("status", "==", "pending").limit(30).get();
           pendingSnap.forEach(doc => {
             const data = { id: doc.id, ...doc.data() };
             depositMap.set(doc.id, data);
@@ -2394,7 +2394,7 @@ export async function startServer() {
       // Also query Firestore approved deposits if accessible
       if (!useRestFallback && adminSdkSucceeded) {
         try {
-          const depSnaps = await fdb.collection("deposits").where("status", "==", "approved").get();
+          const depSnaps = await fdb.collection("deposits").where("status", "==", "approved").limit(50).get();
           depSnaps.forEach(doc => {
             const d = doc.data();
             const uId = d.userId || d.user_id;

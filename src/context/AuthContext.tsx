@@ -142,24 +142,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(false);
     });
 
-    let lastRefreshTime = 0;
-    const handleVisibilityOrFocus = () => {
-      if (document.visibilityState === 'visible' && auth.currentUser) {
-        const now = Date.now();
-        // Refresh only if at least 20 seconds have passed since last check to prevent extra reads
-        if (now - lastRefreshTime > 20000) {
-          lastRefreshTime = now;
-          refreshUserProfile();
-        }
-      }
-    };
-    window.addEventListener('focus', handleVisibilityOrFocus);
-    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
-
     return () => {
       unsubscribe();
-      window.removeEventListener('focus', handleVisibilityOrFocus);
-      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
       axios.interceptors.request.eject(interceptor);
     };
   }, []);
