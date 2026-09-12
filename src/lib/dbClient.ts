@@ -12,7 +12,6 @@ import {
   limit, 
   serverTimestamp,
   Timestamp,
-  onSnapshot,
   getCountFromServer,
   addDoc as firestoreAddDoc
 } from 'firebase/firestore';
@@ -479,13 +478,12 @@ export const dbClient = {
   },
 
   observeOrder(id: string, callback: (data: any) => void): () => void {
-    const docRef = doc(db, 'orders', id);
-    return onSnapshot(docRef, (snap) => {
-      if (snap.exists()) {
-        callback({ id: snap.id, ...snap.data() });
-      } else {
-        callback(null);
-      }
+    // Replaced onSnapshot with safe one-time getDoc to eliminate any potential snapshot listener leak
+    this.getDoc('orders', id).then((data) => {
+      callback(data);
+    }).catch(() => {
+      callback(null);
     });
+    return () => {};
   }
 };
