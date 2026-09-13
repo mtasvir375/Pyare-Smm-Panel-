@@ -299,6 +299,166 @@ export async function startServer() {
     ]
   ];
 
+  const DEFAULT_COURSES_SEED: any[] = [
+    {
+      id: "srv_ig_followers_nondrop",
+      title: "Instagram Followers [Non-Drop] [Lifetime Guarantee] [Super Fast]",
+      category: "Instagram",
+      pricePerThousand: 65,
+      price: 65,
+      minLimit: 100,
+      min_limit: 100,
+      maxLimit: 100000,
+      max_limit: 100000,
+      description: "High Quality Instagram Non-Drop Followers with lifetime refill guarantee. Instant start.",
+      status: "active",
+      providerServiceId: "101",
+      provider_service_id: "101",
+      isPackage: false,
+      is_package: false
+    },
+    {
+      id: "srv_ig_likes_hq",
+      title: "Instagram Real Likes [HQ] [Fast Start] [Non-Drop]",
+      category: "Instagram",
+      pricePerThousand: 18,
+      price: 18,
+      minLimit: 50,
+      min_limit: 50,
+      maxLimit: 50000,
+      max_limit: 50000,
+      description: "Instant delivery Instagram Likes from active looking profiles. 100% safe.",
+      status: "active",
+      providerServiceId: "102",
+      provider_service_id: "102",
+      isPackage: false,
+      is_package: false
+    },
+    {
+      id: "srv_ig_reels_views",
+      title: "Instagram Reels Views [Explore Viral Boost] [Instant 1M/Day]",
+      category: "Instagram",
+      pricePerThousand: 5,
+      price: 5,
+      minLimit: 500,
+      min_limit: 500,
+      maxLimit: 1000000,
+      max_limit: 1000000,
+      description: "Instant high-speed Instagram Reels views to push your reel into Instagram Explore algorithm.",
+      status: "active",
+      providerServiceId: "103",
+      provider_service_id: "103",
+      isPackage: false,
+      is_package: false
+    },
+    {
+      id: "srv_yt_views_retention",
+      title: "YouTube Video Views [High Retention] [Monetizable & Safe]",
+      category: "YouTube",
+      pricePerThousand: 120,
+      price: 120,
+      minLimit: 500,
+      min_limit: 500,
+      maxLimit: 500000,
+      max_limit: 500000,
+      description: "Non-drop High Retention YouTube Views from real external search traffic. 100% Adsense safe.",
+      status: "active",
+      providerServiceId: "201",
+      provider_service_id: "201",
+      isPackage: false,
+      is_package: false
+    },
+    {
+      id: "srv_yt_subscribers",
+      title: "YouTube Real Subscribers [Non-Drop] [30 Days Refill]",
+      category: "YouTube",
+      pricePerThousand: 490,
+      price: 490,
+      minLimit: 50,
+      min_limit: 50,
+      maxLimit: 10000,
+      max_limit: 10000,
+      description: "Authentic YouTube subscribers to help you cross monetization thresholds safely.",
+      status: "active",
+      providerServiceId: "202",
+      provider_service_id: "202",
+      isPackage: false,
+      is_package: false
+    },
+    {
+      id: "srv_fb_followers",
+      title: "Facebook Page Followers / Likes [Global Real Profiles]",
+      category: "Facebook",
+      pricePerThousand: 95,
+      price: 95,
+      minLimit: 100,
+      min_limit: 100,
+      maxLimit: 50000,
+      max_limit: 50000,
+      description: "Organic looking Facebook page followers and likes to boost page credibility.",
+      status: "active",
+      providerServiceId: "301",
+      provider_service_id: "301",
+      isPackage: false,
+      is_package: false
+    },
+    {
+      id: "srv_tg_members",
+      title: "Telegram Channel / Group Members [Non-Drop] [0% Drop]",
+      category: "Telegram",
+      pricePerThousand: 75,
+      price: 75,
+      minLimit: 100,
+      min_limit: 100,
+      maxLimit: 100000,
+      max_limit: 100000,
+      description: "High quality Telegram members with low/zero drop rate. Instant delivery.",
+      status: "active",
+      providerServiceId: "401",
+      provider_service_id: "401",
+      isPackage: false,
+      is_package: false
+    },
+    {
+      id: "srv_tt_followers",
+      title: "TikTok Followers [Global HQ] [Instant Delivery]",
+      category: "TikTok",
+      pricePerThousand: 85,
+      price: 85,
+      minLimit: 100,
+      min_limit: 100,
+      maxLimit: 20000,
+      max_limit: 20000,
+      description: "Premium TikTok followers to boost your profile presence.",
+      status: "active",
+      providerServiceId: "501",
+      provider_service_id: "501",
+      isPackage: false,
+      is_package: false
+    }
+  ];
+
+  let firestoreQuotaExceeded = false;
+  let firestoreQuotaExceededUntil = 0;
+
+  function checkQuotaCooldown(): boolean {
+    if (firestoreQuotaExceeded && Date.now() < firestoreQuotaExceededUntil) {
+      return true;
+    }
+    firestoreQuotaExceeded = false;
+    return false;
+  }
+
+  function handleFirestoreQuotaError(err: any) {
+    const msg = String(err?.message || err?.response?.data?.error?.message || "");
+    const code = err?.code || err?.response?.status;
+    if (code === 429 || msg.includes("Quota limit exceeded") || msg.includes("RESOURCE_EXHAUSTED")) {
+      console.warn("[QUOTA-CIRCUIT-BREAKER] Firestore Quota Exhausted (429)! Activating 15-minute read shield.");
+      firestoreQuotaExceeded = true;
+      firestoreQuotaExceededUntil = Date.now() + 15 * 60 * 1000;
+    }
+  }
+
   // Load persistent cache from disk
   const loadPersistentCache = () => {
     try {
@@ -369,6 +529,15 @@ export async function startServer() {
     }
 
     // Seed defaults if empty
+    if (serverCache.courses.size === 0) {
+      DEFAULT_COURSES_SEED.forEach(s => {
+        serverCache.courses.set(s.id, { data: s, time: Date.now() });
+      });
+      serverCachedCourses = DEFAULT_COURSES_SEED;
+      serverCachedCoursesTime = Date.now();
+      console.log(`[PERSISTENT-CACHE] Seeded ${serverCache.courses.size} default courses into memory.`);
+    }
+
     if (serverCache.providers.size === 0) {
       DEFAULT_PROVIDERS_SEED.forEach(([id, cacheObj]) => {
         serverCache.providers.set(id, cacheObj);
@@ -493,15 +662,15 @@ export async function startServer() {
   // Load orders from Firestore on startup only if disk cache is empty
   async function seedMemoryOrders() {
     try {
-      if (serverCache.orders.size > 0) {
-        console.log(`[MEMORY] ${serverCache.orders.size} orders already loaded from persistent disk cache - 0 Firestore reads needed.`);
+      if (serverCache.orders.size > 0 || checkQuotaCooldown()) {
+        console.log(`[MEMORY] ${serverCache.orders.size} orders loaded or quota cooling down - 0 Firestore reads needed.`);
         return;
       }
 
       console.log("[MEMORY] Persistent cache empty. Seeding initial orders from Firestore once...");
       if (!useRestFallback) {
         try {
-          const snap = await fdb.collection("orders").orderBy("createdAt", "desc").limit(100).get();
+          const snap = await fdb.collection("orders").orderBy("createdAt", "desc").limit(50).get();
           snap.docs.forEach(doc => {
             const data = doc.data();
             // Convert Firestore timestamp to ISO string for consistency
@@ -517,9 +686,12 @@ export async function startServer() {
           savePersistentCache();
           return;
         } catch (adminErr: any) {
+          handleFirestoreQuotaError(adminErr);
           console.warn("[MEMORY] Admin SDK seed failed, trying REST fallback:", adminErr.message);
         }
       }
+
+      if (checkQuotaCooldown()) return;
 
       // REST Fallback for seeding
       const queryRes = await runQueryREST({
@@ -529,7 +701,7 @@ export async function startServer() {
             field: { fieldPath: "createdAt" },
             direction: "DESCENDING"
           }],
-          limit: 100
+          limit: 50
         }
       }, systemAccessToken);
 
@@ -544,6 +716,7 @@ export async function startServer() {
         console.log("[MEMORY] No orders found to seed via REST fallback.");
       }
     } catch (e: any) {
+      handleFirestoreQuotaError(e);
       console.error("[MEMORY] Failed to seed orders:", e.message);
     }
   }
@@ -974,6 +1147,25 @@ export async function startServer() {
     const CACHE_TTL = 10 * 60 * 1000; 
     // Shorter cache for dynamic data like users and orders to ensure balance/status updates aren't stale
     const DYNAMIC_CACHE_TTL = 30 * 1000; // 30 seconds
+
+    // If quota circuit breaker is active, serve directly from cache to save quota
+    if (checkQuotaCooldown() || !forceFresh) {
+      if (collect === "settings" && id === "payment" && serverCache.settings) {
+        return { exists: true, data: () => serverCache.settings.data };
+      }
+      if (collect === "providers" && id && serverCache.providers.has(id)) {
+        return { exists: true, data: () => serverCache.providers.get(id).data };
+      }
+      if (collect === "courses" && id && serverCache.courses.has(id)) {
+        return { exists: true, data: () => serverCache.courses.get(id).data };
+      }
+      if (collect === "users" && id && serverCache.users.has(id)) {
+        const cached = serverCache.users.get(id);
+        if (checkQuotaCooldown() || (now - cached.time < DYNAMIC_CACHE_TTL)) {
+          return { exists: true, data: () => cached.data };
+        }
+      }
+    }
 
     // Bypassing Firestore read completely for SMM providers, Global settings, and services if called internally (no token) and already cached
     if (!token && !forceFresh) {
@@ -1699,7 +1891,7 @@ export async function startServer() {
     }
 
     // Check if courses are already in serverCache map from disk/memory
-    if (!isFresh && serverCache.courses.size > 0 && (!serverCachedCourses || serverCachedCourses.length === 0)) {
+    if (!isFresh && serverCache.courses.size > 0) {
       const fromMap = Array.from(serverCache.courses.entries()).map(([id, c]) => ({ id, ...(c?.data ? c.data : c) }));
       if (fromMap.length > 0) {
         serverCachedCourses = fromMap;
@@ -1709,14 +1901,22 @@ export async function startServer() {
       }
     }
 
+    // If quota circuit breaker is active, avoid hitting Firestore and return cached or default seed courses immediately
+    if (checkQuotaCooldown()) {
+      console.log("[SERVER-CACHE] Quota circuit breaker active: serving in-memory/default courses (0 reads)");
+      if (serverCachedCourses && serverCachedCourses.length > 0) return res.json(serverCachedCourses);
+      return res.json(DEFAULT_COURSES_SEED);
+    }
+
     try {
       console.log("[SERVER-DB] Fetching courses from Firestore to refresh cache...");
       let services: any[] = [];
       if (!useRestFallback) {
         try {
-          const snap = await fdb.collection("courses").get();
+          const snap = await fdb.collection("courses").limit(100).get();
           services = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         } catch (e: any) {
+          handleFirestoreQuotaError(e);
           if (e.message?.includes("permissions") || e.message?.includes("PERMISSION_DENIED") || e.code === 7) {
             console.warn("[COURSES] Permission denied on courses fetch. Activating REST fallback.");
             useRestFallback = true;
@@ -1726,13 +1926,26 @@ export async function startServer() {
         }
       }
 
-      if (useRestFallback) {
-        const queryRes = await runQueryREST({
-          structuredQuery: {
-            from: [{ collectionId: "courses" }]
-          }
-        });
-        services = queryRes.map(item => ({ id: item.id, ...item.data() }));
+      if (useRestFallback && !checkQuotaCooldown()) {
+        try {
+          const queryRes = await runQueryREST({
+            structuredQuery: {
+              from: [{ collectionId: "courses" }],
+              limit: 100
+            }
+          });
+          services = queryRes.map(item => ({ id: item.id, ...item.data() }));
+        } catch (restErr: any) {
+          handleFirestoreQuotaError(restErr);
+        }
+      }
+
+      if (services.length === 0) {
+        if (serverCachedCourses && serverCachedCourses.length > 0) return res.json(serverCachedCourses);
+        if (serverCache.courses.size > 0) {
+          return res.json(Array.from(serverCache.courses.values()).map(c => c.data || c));
+        }
+        return res.json(DEFAULT_COURSES_SEED);
       }
 
       // Only show services that are not explicitly 'archived' or 'hidden'
@@ -1766,12 +1979,16 @@ export async function startServer() {
       savePersistentCache();
       res.json(activeServices);
     } catch (err: any) {
+      handleFirestoreQuotaError(err);
       console.error("[SERVER-DB] Error fetching services from database:", err.message);
-      if (serverCachedCourses) {
-        console.log("[SERVER-CACHE] Fallback to stale services cache on DB error");
+      if (serverCachedCourses && serverCachedCourses.length > 0) {
+        console.log("[SERVER-CACHE] Fallback to cached courses on DB error");
         return res.json(serverCachedCourses);
       }
-      res.status(500).json({ error: "Failed to fetch services" });
+      if (serverCache.courses.size > 0) {
+        return res.json(Array.from(serverCache.courses.values()).map(c => c.data || c));
+      }
+      return res.json(DEFAULT_COURSES_SEED);
     }
   });
 
@@ -1781,6 +1998,10 @@ export async function startServer() {
     const now = Date.now();
     if (!isFresh && serverCachedSettings && (now - serverCachedSettingsTime < BACKEND_CACHE_DURATION)) {
       return res.json(serverCachedSettings);
+    }
+
+    if (checkQuotaCooldown() && serverCache.settings?.data) {
+      return res.json(serverCache.settings.data);
     }
 
     try {
@@ -1794,10 +2015,15 @@ export async function startServer() {
       }
       res.json(settingsData);
     } catch (err: any) {
+      handleFirestoreQuotaError(err);
       console.error("[SERVER-DB] Error fetching settings:", err.message);
       if (serverCachedSettings) return res.json(serverCachedSettings);
       if (serverCache.settings?.data) return res.json(serverCache.settings.data);
-      res.status(500).json({ error: "Failed to fetch settings" });
+      res.json({
+        upiId: "paytmqr281005050101111956557626@paytm",
+        merchantName: "Pyare SMM Panel",
+        selectedTheme: "charcoal"
+      });
     }
   });
 
@@ -2398,8 +2624,8 @@ export async function startServer() {
   app.post("/api/db/get", async (req, res) => {
     const { collection, id } = req.body;
     if (!collection || !id) return res.status(400).json({ error: "Missing collection or id" });
-    // Bypassing cache for settings, providers, and users to ensure real-time accuracy and prevent stale balances
-    const forceFresh = collection === "settings" || collection === "providers" || collection === "users";
+    // Use server cache by default to protect Firestore read quota unless explicit fresh request is sent
+    const forceFresh = req.body.fresh === true;
     const snap = await getDocSafe(collection, id, req.headers.authorization as string, forceFresh);
     if (snap.exists) {
       res.json({ success: true, data: snap.data() });

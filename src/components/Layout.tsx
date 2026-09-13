@@ -24,7 +24,7 @@ export default function Layout() {
       }
     };
     applyTheme();
-  }, [location.pathname]);
+  }, []);
 
   // While checking auth status, render a modern loading animation
   if (loading) {

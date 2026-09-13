@@ -146,8 +146,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const handleVisibilityOrFocus = () => {
       if (document.visibilityState === 'visible' && auth.currentUser) {
         const now = Date.now();
-        // Refresh only if at least 20 seconds have passed since last check to prevent extra reads
-        if (now - lastRefreshTime > 20000) {
+        // Refresh only if at least 3 minutes have passed since last check to prevent extra reads
+        if (now - lastRefreshTime > 180000) {
           lastRefreshTime = now;
           refreshUserProfile();
         }

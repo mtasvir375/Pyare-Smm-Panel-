@@ -40,29 +40,28 @@ export const dbClient = {
         if (settings) return settings;
       } catch (e) {}
     }
+    // 1. Try authoritative backend proxy first (0 reads if cached in server memory/disk)
+    try {
+      const res = await axios.post('/api/db/get', { collection: table, id });
+      if (res.data && res.data.success) {
+        return { id, ...res.data.data };
+      }
+      if (res.data && res.data.error === "Document not found") {
+        return null;
+      }
+    } catch (proxyErr: any) {
+      console.warn(`[DB-CLIENT] Proxy getDoc failed for ${table}/${id}:`, proxyErr.message);
+    }
+
+    // 2. Direct Web SDK as safe fallback
     try {
       const docRef = doc(db, table, id);
       const snap = await getDoc(docRef);
       if (snap.exists()) return { id: snap.id, ...snap.data() };
-      
-      // If we got here, direct read succeeded and document definitely does NOT exist in Firestore.
-      // There is no reason to fall back to the proxy because direct read successfully confirmed non-existence.
       return null;
     } catch (err: any) {
-      console.warn(`[DB-CLIENT] Direct getDoc failed for ${table}/${id}, trying proxy...`);
-      try {
-        const res = await axios.post('/api/db/get', { collection: table, id });
-        if (res.data && res.data.success) {
-          return { id, ...res.data.data };
-        }
-        if (res.data && res.data.error === "Document not found") {
-          return null;
-        }
-        throw new Error(res.data?.error || "Proxy getDoc returned unsuccessful status");
-      } catch (proxyErr: any) {
-        console.error(`[DB-CLIENT] Proxy getDoc also failed for ${table}/${id}:`, proxyErr.message);
-        throw new Error(`Failed to fetch document ${table}/${id} (Direct: ${err.message}, Proxy: ${proxyErr.message})`);
-      }
+      console.warn(`[DB-CLIENT] Direct getDoc failed for ${table}/${id}:`, err.message);
+      return null;
     }
   },
 

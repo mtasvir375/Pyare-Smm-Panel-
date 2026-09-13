@@ -1,6 +1,7 @@
 import axios from "axios";
 import { db } from "@/lib/firebase";
 import { collection, doc, getDocs, getDoc } from "firebase/firestore";
+import { DEFAULT_SERVICES, DEFAULT_SETTINGS } from "@/data/defaultServices";
 
 let cachedCourses: any = null;
 let lastCoursesFetch = 0;
@@ -76,7 +77,7 @@ export const getCachedCourses = async (forceRefresh = false) => {
   
   // 1. Primary path: Fetch from server Express API proxy (serves from Node memory with 0 Firestore reads)
   try {
-    const res = await axios.get("/api/courses");
+    const res = await axios.get(forceRefresh ? "/api/courses?fresh=1" : "/api/courses");
     if (Array.isArray(res.data) && res.data.length > 0) {
       const activeServices = res.data.map((data: any) => ({
         id: data.id,
@@ -107,77 +108,18 @@ export const getCachedCourses = async (forceRefresh = false) => {
       return cachedCourses;
     }
   } catch (apiErr) {
-    console.warn("[CACHE] Express API proxy /api/courses call failed, falling back to Web SDK:", apiErr);
+    console.warn("[CACHE] Express API proxy /api/courses call failed:", apiErr);
   }
 
-  // 2. Fallback path: Direct Web SDK Query
+  // Fallback to local default services (0 Firestore reads, avoids 429 quota exhaustion)
+  console.log("[CACHE] Serving default seed services to protect Firestore quota.");
+  cachedCourses = DEFAULT_SERVICES;
+  lastCoursesFetch = now;
   try {
-    console.log("[CACHE] Fallback: Fetching directly from Firestore Web SDK...");
-    const { query, limit } = await import("firebase/firestore");
-    const q = query(collection(db, "courses"), limit(500));
-    const querySnapshot = await getDocs(q);
-    const fetchedCourses = querySnapshot.docs.map(gdoc => {
-      const data = gdoc.data();
-      return {
-        id: gdoc.id,
-        ...data,
-        price: data.pricePerThousand !== undefined ? Number(data.pricePerThousand) : (data.price !== undefined ? Number(data.price) : 0),
-        pricePerThousand: data.pricePerThousand !== undefined ? Number(data.pricePerThousand) : (data.price !== undefined ? Number(data.price) : 0),
-        minLimit: data.minLimit !== undefined ? Number(data.minLimit) : (data.min_limit !== undefined ? Number(data.min_limit) : 1000),
-        min_limit: data.minLimit !== undefined ? Number(data.minLimit) : (data.min_limit !== undefined ? Number(data.min_limit) : 1000),
-        providerServiceId: data.providerServiceId !== undefined ? String(data.providerServiceId) : (data.provider_service_id !== undefined ? String(data.provider_service_id) : "0"),
-        provider_service_id: data.providerServiceId !== undefined ? String(data.providerServiceId) : (data.provider_service_id !== undefined ? String(data.provider_service_id) : "0"),
-        isPackage: data.isPackage !== undefined ? !!data.isPackage : !!data.is_package,
-        is_package: data.isPackage !== undefined ? !!data.isPackage : !!data.is_package,
-        packagePrice: data.packagePrice !== undefined ? Number(data.packagePrice) : (data.package_price !== undefined ? Number(data.package_price) : 0),
-        package_price: data.packagePrice !== undefined ? Number(data.packagePrice) : (data.package_price !== undefined ? Number(data.package_price) : 0),
-        packageQuantity: data.packageQuantity !== undefined ? Number(data.packageQuantity) : (data.package_quantity !== undefined ? Number(data.package_quantity) : 1000),
-        package_quantity: data.packageQuantity !== undefined ? Number(data.packageQuantity) : (data.package_quantity !== undefined ? Number(data.package_quantity) : 1000),
-        iconUrl: data.iconUrl || data.icon_url || null,
-        icon_url: data.iconUrl || data.icon_url || null,
-      };
-    });
-
-    const activeServices = fetchedCourses.filter((s: any) => {
-      const status = (s.status || "").toLowerCase();
-      return status !== "archived" && status !== "hidden";
-    });
-
-    if (activeServices.length > 0 || fetchedCourses.length > 0) {
-      const categoryOrder = ["Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Twitter", "Other"];
-      const getTimestamp = (item: any) => {
-        const val = item.updatedAt || item.updated_at || item.createdAt || item.created_at;
-        if (!val) return 0;
-        if (typeof val.toDate === "function") return val.toDate().getTime();
-        if (typeof val.seconds === "number") return val.seconds * 1000;
-        if (val._seconds !== undefined) return val._seconds * 1000;
-        const t = new Date(val).getTime();
-        return isNaN(t) ? 0 : t;
-      };
-
-      activeServices.sort((a: any, b: any) => {
-        const orderA = categoryOrder.indexOf(a.category) === -1 ? 99 : categoryOrder.indexOf(a.category);
-        const orderB = categoryOrder.indexOf(b.category) === -1 ? 99 : categoryOrder.indexOf(b.category);
-        if (orderA !== orderB) return orderA - orderB;
-        
-        const timeA = getTimestamp(a);
-        const timeB = getTimestamp(b);
-        return timeB - timeA;
-      });
-
-      cachedCourses = activeServices;
-      lastCoursesFetch = now;
-      try {
-        localStorage.setItem("cached_courses_time", now.toString());
-        localStorage.setItem("cached_courses", JSON.stringify(cachedCourses));
-      } catch(e) {}
-      return cachedCourses;
-    }
-  } catch (sdkErr) {
-    console.error("[CACHE] Direct Web SDK query failed:", sdkErr);
-  }
-
-  return cachedCourses || [];
+    localStorage.setItem("cached_courses_time", now.toString());
+    localStorage.setItem("cached_courses", JSON.stringify(cachedCourses));
+  } catch(e) {}
+  return cachedCourses;
 };
 
 let cachedSettings: any = null;
@@ -216,12 +158,13 @@ export const getCachedSettings = async (forceRefresh = false) => {
   try {
     const url = forceRefresh ? `/api/settings?fresh=1&t=${now}` : "/api/settings";
     const res = await axios.get(url);
-    if (res.data && typeof res.data === "object") {
+    if (res.data && typeof res.data === "object" && Object.keys(res.data).length > 0) {
       const settingsData = {
+        ...DEFAULT_SETTINGS,
         ...res.data,
-        upiId: res.data.upiId || "",
+        upiId: res.data.upiId || DEFAULT_SETTINGS.upiId,
         paymentQrUrl: res.data.paymentQrUrl || "",
-        merchantName: res.data.merchantName || "",
+        merchantName: res.data.merchantName || DEFAULT_SETTINGS.merchantName,
         razorpayEnabled: !!res.data.razorpayEnabled,
         razorpayKeyId: res.data.razorpayKeyId || "",
         razorpayKeySecret: res.data.razorpayKeySecret || "",
@@ -234,8 +177,8 @@ export const getCachedSettings = async (forceRefresh = false) => {
         paytmMid: res.data.paytmMid || "",
         paytmMerchantKey: res.data.paytmMerchantKey || "",
         paytmEnv: res.data.paytmEnv || "sandbox",
-        whatsappLink: res.data.whatsappLink || "",
-        whatsappChatNumber: res.data.whatsappChatNumber || "",
+        whatsappLink: res.data.whatsappLink || DEFAULT_SETTINGS.whatsappLink,
+        whatsappChatNumber: res.data.whatsappChatNumber || DEFAULT_SETTINGS.whatsappChatNumber,
         backendApiUrl: res.data.backendApiUrl || "",
         qrAutoEnabled: !!res.data.qrAutoEnabled,
         selectedTheme: res.data.selectedTheme || "charcoal",
@@ -252,57 +195,18 @@ export const getCachedSettings = async (forceRefresh = false) => {
       return cachedSettings;
     }
   } catch (apiErr) {
-    console.warn("[CACHE] Express API proxy /api/settings call failed, falling back to Web SDK:", apiErr);
+    console.warn("[CACHE] Express API proxy /api/settings call failed:", apiErr);
   }
 
-  // 2. Fallback path: Direct Web SDK Query
+  // Graceful zero-read fallback to default settings
+  console.log("[CACHE] Serving default settings to protect Firestore quota.");
+  cachedSettings = DEFAULT_SETTINGS;
+  lastSettingsFetch = now;
   try {
-    console.log("[CACHE] Fallback: Fetching settings directly from Firestore Web SDK...");
-    const docRef = doc(db, "settings", "payment");
-    const docSnap = await getDoc(docRef);
-    let settingsData = docSnap.exists() ? docSnap.data() : null;
-
-    if (!settingsData) {
-      throw new Error("Settings document does not exist");
-    }
-
-    const cleanedSettings = {
-      ...settingsData,
-      upiId: settingsData.upiId || "",
-      paymentQrUrl: settingsData.paymentQrUrl || "",
-      merchantName: settingsData.merchantName || "",
-      razorpayEnabled: !!settingsData.razorpayEnabled,
-      razorpayKeyId: settingsData.razorpayKeyId || "",
-      razorpayKeySecret: settingsData.razorpayKeySecret || "",
-      phonepeEnabled: !!settingsData.phonepeEnabled,
-      phonepeMerchantId: settingsData.phonepeMerchantId || "",
-      phonepeSaltKey: settingsData.phonepeSaltKey || "",
-      phonepeSaltIndex: settingsData.phonepeSaltIndex || "1",
-      phonepeEnv: settingsData.phonepeEnv || "sandbox",
-      paytmEnabled: !!settingsData.paytmEnabled,
-      paytmMid: settingsData.paytmMid || "",
-      paytmMerchantKey: settingsData.paytmMerchantKey || "",
-      paytmEnv: settingsData.paytmEnv || "sandbox",
-      whatsappLink: settingsData.whatsappLink || "",
-      whatsappChatNumber: settingsData.whatsappChatNumber || "",
-      backendApiUrl: settingsData.backendApiUrl || "",
-      qrAutoEnabled: !!settingsData.qrAutoEnabled,
-      selectedTheme: settingsData.selectedTheme || "charcoal",
-      selectedFestivalTheme: settingsData.selectedFestivalTheme || "none",
-    };
-
-    cachedSettings = cleanedSettings;
-    lastSettingsFetch = now;
-    try {
-      localStorage.setItem("cached_settings_time", now.toString());
-      localStorage.setItem("cached_settings", JSON.stringify(cachedSettings));
-    } catch(e) {}
-    return cachedSettings;
-  } catch (sdkErr) {
-    console.error("[CACHE] Direct Web SDK query for settings failed:", sdkErr);
-  }
-
-  return cachedSettings || null;
+    localStorage.setItem("cached_settings_time", now.toString());
+    localStorage.setItem("cached_settings", JSON.stringify(cachedSettings));
+  } catch(e) {}
+  return cachedSettings;
 };
 
 let cachedProviders: any = null;
