@@ -459,6 +459,12 @@ export async function startServer() {
     }
   }
 
+  // Aggressive backend-side cache to protect database read limits
+  let serverCachedCourses: any[] | null = null;
+  let serverCachedCoursesTime = 0;
+  let serverCachedSettings: any = null;
+  let serverCachedSettingsTime = 0;
+
   // Load persistent cache from disk
   const loadPersistentCache = () => {
     try {
@@ -659,65 +665,17 @@ export async function startServer() {
     savePersistentCache();
   }
 
-  // Load orders from Firestore on startup only if disk cache is empty
+  // Load orders from Firestore on startup only if disk cache has them, else rely on on-demand user loading
   async function seedMemoryOrders() {
     try {
-      if (serverCache.orders.size > 0 || checkQuotaCooldown()) {
-        console.log(`[MEMORY] ${serverCache.orders.size} orders loaded or quota cooling down - 0 Firestore reads needed.`);
+      if (serverCache.orders.size > 0) {
+        console.log(`[MEMORY] ${serverCache.orders.size} orders loaded from persistent disk cache - 0 Firestore reads needed.`);
         return;
       }
-
-      console.log("[MEMORY] Persistent cache empty. Seeding initial orders from Firestore once...");
-      if (!useRestFallback) {
-        try {
-          const snap = await fdb.collection("orders").orderBy("createdAt", "desc").limit(50).get();
-          snap.docs.forEach(doc => {
-            const data = doc.data();
-            // Convert Firestore timestamp to ISO string for consistency
-            if (data.createdAt && data.createdAt.toDate) {
-              data.createdAt = data.createdAt.toDate().toISOString();
-            }
-            if (data.updatedAt && data.updatedAt.toDate) {
-              data.updatedAt = data.updatedAt.toDate().toISOString();
-            }
-            addOrderToMemory(doc.id, data);
-          });
-          console.log(`[MEMORY] Seeded ${snap.size} orders via Admin SDK and saved to persistent disk.`);
-          savePersistentCache();
-          return;
-        } catch (adminErr: any) {
-          handleFirestoreQuotaError(adminErr);
-          console.warn("[MEMORY] Admin SDK seed failed, trying REST fallback:", adminErr.message);
-        }
-      }
-
-      if (checkQuotaCooldown()) return;
-
-      // REST Fallback for seeding
-      const queryRes = await runQueryREST({
-        structuredQuery: {
-          from: [{ collectionId: "orders" }],
-          orderBy: [{
-            field: { fieldPath: "createdAt" },
-            direction: "DESCENDING"
-          }],
-          limit: 50
-        }
-      }, systemAccessToken);
-
-      if (queryRes && queryRes.length > 0) {
-        queryRes.forEach(doc => {
-          const data = doc.data();
-          addOrderToMemory(doc.id, data);
-        });
-        console.log(`[MEMORY] Seeded ${queryRes.length} orders via REST fallback and saved to persistent disk.`);
-        savePersistentCache();
-      } else {
-        console.log("[MEMORY] No orders found to seed via REST fallback.");
-      }
+      console.log("[MEMORY] Zero-read startup mode: skipping global orders query from Firestore to protect 50k daily quota.");
+      return;
     } catch (e: any) {
-      handleFirestoreQuotaError(e);
-      console.error("[MEMORY] Failed to seed orders:", e.message);
+      console.warn("[MEMORY] Notice during seedMemoryOrders:", e?.message);
     }
   }
 
@@ -1087,6 +1045,23 @@ export async function startServer() {
       useRestFallback = true;
       return;
     }
+
+    // CACHE-FIRST: If settings and providers are already loaded from persistent disk cache,
+    // do NOT perform a test read or sync against Firestore on startup! (0 Firestore reads)
+    const isDefaultSetting = serverCache.settings?.data?.providerApiKey === "f55bb2dfdc035f9c3c9e737bb72922a51d64309f";
+    
+    if (serverCache.settings && serverCache.settings.data && !isDefaultSetting) {
+      console.log("[STARTUP] Cache-first: settings/payment already loaded from persistent disk. Skipping Firestore test read.");
+      adminSdkSucceeded = true;
+      useRestFallback = false;
+      if (serverCache.providers.size > 0) {
+        console.log(`[STARTUP] Cache-first: ${serverCache.providers.size} providers already loaded from disk. Skipping Firestore read.`);
+      } else {
+        syncProvidersToSettingsInternal().catch(console.error);
+      }
+      return;
+    }
+
     try {
       console.log("[STARTUP] Testing Firebase Admin SDK permissions...");
       await fdb.collection("settings").doc("payment").get();
@@ -1109,6 +1084,10 @@ export async function startServer() {
 
   const syncProvidersToSettingsInternal = async () => {
     try {
+      if (serverCache.providers.size > 0) {
+        console.log(`[SYNC-PROVIDERS-STARTUP] Cache-first: ${serverCache.providers.size} providers already in persistent cache. Skipping Firestore read.`);
+        return;
+      }
       console.log(`[SYNC-PROVIDERS-STARTUP] Syncing providers to settings/providers via Admin SDK...`);
       const results: any[] = [];
       const snap = await fdb.collection("providers").get();
@@ -1127,11 +1106,11 @@ export async function startServer() {
             apiUrl: p.apiUrl || p.api_url || "",
             apiKey: p.apiKey || p.api_key || ""
           };
+          serverCache.providers.set(p.id, { data: p, time: Date.now() });
         }
       });
-
-      // Provider settings are safely maintained in memory and persistent disk cache.
-      console.log(`[SYNC-PROVIDERS-STARTUP] Providers loaded in memory.`);
+      savePersistentCache();
+      console.log(`[SYNC-PROVIDERS-STARTUP] Providers loaded in memory and saved to persistent cache.`);
     } catch (err: any) {
       console.error(`[SYNC-PROVIDERS-STARTUP-ERROR] Failed to sync on startup:`, err.message);
     }
@@ -1143,27 +1122,36 @@ export async function startServer() {
   const getDocSafe = async (collect: string, id: string, token?: string, forceFresh?: boolean) => {
     const now = Date.now();
     
-    // 10 minutes in-memory caching to optimize and protect Firestore read quota
-    const CACHE_TTL = 10 * 60 * 1000; 
-    // Shorter cache for dynamic data like users and orders to ensure balance/status updates aren't stale
-    const DYNAMIC_CACHE_TTL = 30 * 1000; // 30 seconds
+    // 24 hours in-memory caching for semi-static config (settings, providers, courses) to strictly protect Firestore 50k quota
+    const CACHE_TTL = 24 * 60 * 60 * 1000; 
+    // 5 minutes cache for dynamic user balance to avoid redundant reads on rapid navigation
+    const DYNAMIC_CACHE_TTL = 5 * 60 * 1000;
+
+    // CORE CACHE-FIRST CHECK:
+    // Settings, providers, and courses are semi-static. If we already have them in cache,
+    // ALWAYS serve from memory (0 Firestore reads!).
+    if (collect === "settings" && id === "payment" && serverCache.settings) {
+      return { exists: true, data: () => serverCache.settings.data };
+    }
+    if (collect === "providers" && id && serverCache.providers.has(id)) {
+      return { exists: true, data: () => serverCache.providers.get(id).data };
+    }
+    if (collect === "courses" && id && serverCache.courses.has(id)) {
+      return { exists: true, data: () => serverCache.courses.get(id).data };
+    }
+
+    // Dynamic cache for users
+    if (collect === "users" && id && serverCache.users.has(id)) {
+      const cached = serverCache.users.get(id);
+      if (checkQuotaCooldown() || !forceFresh || (now - cached.time < DYNAMIC_CACHE_TTL)) {
+        return { exists: true, data: () => cached.data };
+      }
+    }
 
     // If quota circuit breaker is active, serve directly from cache to save quota
     if (checkQuotaCooldown() || !forceFresh) {
-      if (collect === "settings" && id === "payment" && serverCache.settings) {
-        return { exists: true, data: () => serverCache.settings.data };
-      }
-      if (collect === "providers" && id && serverCache.providers.has(id)) {
-        return { exists: true, data: () => serverCache.providers.get(id).data };
-      }
-      if (collect === "courses" && id && serverCache.courses.has(id)) {
-        return { exists: true, data: () => serverCache.courses.get(id).data };
-      }
-      if (collect === "users" && id && serverCache.users.has(id)) {
-        const cached = serverCache.users.get(id);
-        if (checkQuotaCooldown() || (now - cached.time < DYNAMIC_CACHE_TTL)) {
-          return { exists: true, data: () => cached.data };
-        }
+      if (collect === "orders" && id && serverCache.orders.has(id)) {
+        return { exists: true, data: () => serverCache.orders.get(id).data || serverCache.orders.get(id) };
       }
     }
 
@@ -1441,12 +1429,6 @@ export async function startServer() {
     }
   };
 
-  // Aggressive backend-side cache to protect database read limits
-  let serverCachedCourses: any[] | null = null;
-  let serverCachedCoursesTime = 0;
-  let serverCachedSettings: any = null;
-  let serverCachedSettingsTime = 0;
-
   const invalidateCachesForCollection = (col: string, id?: string) => {
     if (col === "courses" || col === "services") {
       serverCachedCourses = null;
@@ -1686,25 +1668,14 @@ export async function startServer() {
       }
       
       if (action === "services") {
-        const results: any[] = [];
-        try {
-          // If we have Admin SDK, use it for direct query
-          if (adminSdkSucceeded) {
-            const snap = await fdb.collection("courses").limit(500).get();
-            snap.forEach(doc => results.push({ id: doc.id, ...doc.data() }));
-          } else {
-            // Wait, we can't reliably query REST without token if it's not cached. But courses are publicly readable.
-            const targetProject = getTargetProject();
-            const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/courses?key=${apiKey}&pageSize=500`;
-            const resRest = await axios.get(url, { timeout: 10000 });
-            if (resRest.data && resRest.data.documents) {
-              resRest.data.documents.forEach((doc: any) => {
-                results.push({ id: doc.name.split("/").pop(), ...unwrapRestFields(doc.fields || {}) });
-              });
-            }
-          }
-        } catch (e) {
-          console.warn("[API-V2] Failed to fetch services", e);
+        let results: any[] = [];
+        // 1. Check in-memory courses first (0 Firestore reads!)
+        if (serverCache.courses.size > 0) {
+          results = Array.from(serverCache.courses.values()).map((c: any) => c.data || c);
+        } else if (serverCachedCourses && serverCachedCourses.length > 0) {
+          results = serverCachedCourses;
+        } else {
+          results = DEFAULT_COURSES_SEED;
         }
         
         const mapped = results.map(c => ({
@@ -1722,7 +1693,27 @@ export async function startServer() {
       if (action === "status") {
         const orderId = req.body.order || req.query.order;
         if (!orderId) return res.status(400).json({ error: "Order ID required" });
-        const snap = await getDocSafe("orders", String(orderId));
+        const strId = String(orderId);
+
+        // 1. Check in-memory orders first (0 Firestore reads!)
+        const cachedOrder = serverCache.orders.get(strId) || 
+          serverCache.latestOrders.find((o: any) => String(o.id) === strId || String(o.providerOrderId) === strId);
+        if (cachedOrder) {
+          const ord = cachedOrder.data || cachedOrder;
+          if (ord.userId === userId || ord.user_id === userId) {
+            let status = ord.status || "Pending";
+            if (status === "Failed") status = "Canceled";
+            return res.json({
+              status: status,
+              charge: ord.totalPrice || ord.charge || ord.price || 0,
+              start_count: ord.start_count || ord.startCount || 0,
+              remains: ord.remains || ord.quantity || 0,
+              currency: "INR"
+            });
+          }
+        }
+
+        const snap = await getDocSafe("orders", strId);
         if (!snap.exists || snap.data().userId !== userId) {
           return res.status(400).json({ error: "Order not found" });
         }
@@ -2704,6 +2695,12 @@ export async function startServer() {
           }
         });
         savePersistentCache();
+      } else if (collect === "orders" && results.length > 0) {
+        results.forEach(o => {
+          if (o.id) {
+            addOrderToMemory(o.id, o);
+          }
+        });
       }
     } catch (err: any) {
       console.error(`[REST-LIST-ERR] Failed to list ${collect}:`, err.response?.data || err.message);
