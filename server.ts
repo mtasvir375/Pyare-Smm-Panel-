@@ -198,7 +198,7 @@ export async function startServer() {
     users: new Map<string, any>(),
     orders: new Map<string, any>(),
     deposits: new Map<string, any>(),
-    bank_sms_logs: new Map<string, any>(),
+    received_gateway_payments: new Map<string, any>(), // Track real-time payments from Paytm/PhonePe/UPIGateway webhooks
     latestOrders: [] as any[] // Globally tracked latest orders in memory
   };
 
@@ -334,6 +334,15 @@ export async function startServer() {
           }
         }
 
+        if (parsed.users && Array.isArray(parsed.users)) {
+          serverCache.users.clear();
+          parsed.users.forEach(([id, cacheObj]: [string, any]) => {
+            const uData = cacheObj?.data ? { id, ...cacheObj.data } : { id, ...(cacheObj || {}) };
+            serverCache.users.set(id, { data: uData, time: cacheObj?.time || Date.now() });
+          });
+          console.log(`[PERSISTENT-CACHE] Loaded ${serverCache.users.size} users from disk.`);
+        }
+
         if (parsed.deposits && Array.isArray(parsed.deposits)) {
           serverCache.deposits.clear();
           parsed.deposits.forEach(([id, cacheObj]: [string, any]) => {
@@ -341,15 +350,6 @@ export async function startServer() {
             serverCache.deposits.set(id, { data: dData, time: cacheObj?.time || Date.now() });
           });
           console.log(`[PERSISTENT-CACHE] Loaded ${serverCache.deposits.size} deposits from disk.`);
-        }
-
-        if (parsed.bank_sms_logs && Array.isArray(parsed.bank_sms_logs)) {
-          serverCache.bank_sms_logs.clear();
-          parsed.bank_sms_logs.forEach(([id, cacheObj]: [string, any]) => {
-            const sData = cacheObj?.data ? { id, ...cacheObj.data } : { id, ...(cacheObj || {}) };
-            serverCache.bank_sms_logs.set(id, { data: sData, time: cacheObj?.time || Date.now() });
-          });
-          console.log(`[PERSISTENT-CACHE] Loaded ${serverCache.bank_sms_logs.size} bank SMS logs from disk.`);
         }
 
         if (parsed.orders && Array.isArray(parsed.orders)) {
@@ -395,10 +395,13 @@ export async function startServer() {
       const dataToSave = {
         settings: serverCache.settings,
         providers: Array.from(serverCache.providers.entries()),
-        courses: Array.from(serverCache.courses.entries())
+        courses: Array.from(serverCache.courses.entries()),
+        users: Array.from(serverCache.users.entries()),
+        deposits: Array.from(serverCache.deposits.entries()).slice(-100),
+        orders: Array.from(serverCache.orders.entries()).slice(-500)
       };
       fs.writeFileSync(cacheFilePath, JSON.stringify(dataToSave, null, 2), "utf-8");
-      console.log("[PERSISTENT-CACHE] Saved settings, providers & courses cache to disk.");
+      console.log("[PERSISTENT-CACHE] Saved settings, providers, courses, users, deposits & orders cache to disk.");
     } catch (err: any) {
       console.error("[PERSISTENT-CACHE-ERR] Failed to save persistent cache:", err.message);
     }
@@ -675,43 +678,37 @@ export async function startServer() {
     return { exists: false, data: () => null };
   };
 
-  const setDocREST = async (collect: string, id: string, data: any, token?: string, retries = 2) => {
+  const setDocREST = async (collect: string, id: string, data: any, token?: string) => {
     const targetProject = getTargetProject();
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      try {
-        const headers = await getGoogleAuthHeaders(token);
-        const dataWithTime = { ...data, updatedAt: new Date().toISOString() };
-        const keys = Object.keys(dataWithTime);
-        const maskParams = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
-        const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/${collect}/${id}?key=${apiKey}&${maskParams}`;
-        
-        const fields = wrapRestFields(dataWithTime);
-        const res = await axios.patch(url, { fields }, { headers, timeout: 10000 });
-        return !!res.data;
-      } catch (err: any) {
-        if (attempt === retries) {
-          const errorData = err.response?.data;
-          console.error(`[REST-SET-ERR] Failed REST set for ${collect}/${id} on project ${targetProject} after ${retries} retries:`, errorData || err.message);
-          
-          // Fallback if targetProject !== projectId
-          if (targetProject !== projectId) {
-            try {
-              const dataWithTime = { ...data, updatedAt: new Date().toISOString() };
-              const keys = Object.keys(dataWithTime);
-              const maskParams = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
-              const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${dbId}/documents/${collect}/${id}?key=${apiKey}&${maskParams}`;
-              const fields = wrapRestFields(dataWithTime);
-              const res = await axios.patch(url, { fields }, { timeout: 5000 });
-              if (res.data) console.log(`[REST-SET-FALLBACK] Succeeded for ${collect}/${id} on project ${projectId}`);
-              return !!res.data;
-            } catch (e) {}
-          }
-        } else {
-          await new Promise(r => setTimeout(r, 500 * (attempt + 1))); // Exponential backoff
-        }
+    try {
+      const headers = await getGoogleAuthHeaders(token);
+      const dataWithTime = { ...data, updatedAt: new Date().toISOString() };
+      const keys = Object.keys(dataWithTime);
+      const maskParams = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
+      const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/${collect}/${id}?key=${apiKey}&${maskParams}`;
+      
+      const fields = wrapRestFields(dataWithTime);
+      const res = await axios.patch(url, { fields }, { headers, timeout: 10000 });
+      return !!res.data;
+    } catch (err: any) {
+      const errorData = err.response?.data;
+      console.error(`[REST-SET-ERR] Failed REST set for ${collect}/${id} on project ${targetProject}:`, errorData || err.message);
+      
+      // Fallback if targetProject !== projectId
+      if (targetProject !== projectId) {
+        try {
+          const dataWithTime = { ...data, updatedAt: new Date().toISOString() };
+          const keys = Object.keys(dataWithTime);
+          const maskParams = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
+          const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${dbId}/documents/${collect}/${id}?key=${apiKey}&${maskParams}`;
+          const fields = wrapRestFields(dataWithTime);
+          const res = await axios.patch(url, { fields }, { timeout: 5000 });
+          if (res.data) console.log(`[REST-SET-FALLBACK] Succeeded for ${collect}/${id} on project ${projectId}`);
+          return !!res.data;
+        } catch (e) {}
       }
+      return false;
     }
-    return false;
   };
 
   const updateDocREST = async (collect: string, id: string, data: any, token?: string) => {
@@ -849,40 +846,22 @@ export async function startServer() {
     let currentBalance = 0;
     let existingUserData: any = null;
 
-    // ALWAYS fetch fresh from Firestore to prevent stale cache overwrites in multi-instance environments
-    try {
-      let userRef: any = null;
-      if (!useRestFallback && adminSdkSucceeded) {
-        userRef = await fdb.collection("users").doc(user_id).get();
-        if (userRef && userRef.exists) existingUserData = userRef.data();
-      }
-      
-      if (!existingUserData) {
-        const restRef = await getDocREST("users", user_id, token);
-        if (restRef && restRef.exists) existingUserData = restRef.data();
-      }
-
-      if (existingUserData) {
+    if (serverCache.users.has(user_id)) {
+      const cached = serverCache.users.get(user_id);
+      if (cached && (cached.data || cached.balance !== undefined)) {
+        existingUserData = cached.data || cached;
         currentBalance = Number(existingUserData.balance ?? existingUserData.walletBalance ?? existingUserData.wallet_balance ?? 0);
-      } else {
-        // Fallback to cache ONLY if Firestore network fetch fails completely
-        if (serverCache.users.has(user_id)) {
-          const cached = serverCache.users.get(user_id);
-          if (cached && (cached.data || cached.balance !== undefined)) {
-            existingUserData = cached.data || cached;
-            currentBalance = Number(existingUserData.balance ?? existingUserData.walletBalance ?? existingUserData.wallet_balance ?? 0);
-          }
-        }
       }
-    } catch (e) {
-      console.warn(`[BALANCE-SAFE] Failed to fetch fresh balance, falling back to cache:`, e);
-      if (serverCache.users.has(user_id)) {
-        const cached = serverCache.users.get(user_id);
-        if (cached && (cached.data || cached.balance !== undefined)) {
-          existingUserData = cached.data || cached;
+    }
+
+    if (!existingUserData) {
+      try {
+        const userRef = await getDocREST("users", user_id, token);
+        if (userRef && userRef.exists) {
+          existingUserData = userRef.data();
           currentBalance = Number(existingUserData.balance ?? existingUserData.walletBalance ?? existingUserData.wallet_balance ?? 0);
         }
-      }
+      } catch (e) {}
     }
 
     const newBalance = Math.max(0, Number((currentBalance + change).toFixed(2)));
@@ -1031,7 +1010,14 @@ export async function startServer() {
       }
     }
 
-    // Users collection is never cached from memory to prevent stale wallet balances
+    if (!forceFresh) { // Cache user balance within dynamic TTL to avoid redundant reads on rapid orders
+      if (collect === "users" && id && serverCache.users && serverCache.users.has(id)) {
+        const cached = serverCache.users.get(id);
+        if (now - cached.time < DYNAMIC_CACHE_TTL) {
+          return { exists: true, data: () => cached.data };
+        }
+      }
+    }
 
     let result = { exists: false, data: () => null as any };
 
@@ -1177,9 +1163,6 @@ export async function startServer() {
     if (!forceFresh) {
       if (collect === "deposits" && serverCache.deposits.size > 0) {
         serverCache.deposits.forEach((val, id) => docMap.set(id, { id, data: () => (val.data || val) }));
-        return { docs: Array.from(docMap.values()) };
-      } else if (collect === "bank_sms_logs" && serverCache.bank_sms_logs.size > 0) {
-        serverCache.bank_sms_logs.forEach((val, id) => docMap.set(id, { id, data: () => (val.data || val) }));
         return { docs: Array.from(docMap.values()) };
       }
     }
@@ -1330,10 +1313,6 @@ export async function startServer() {
       const existing = serverCache.deposits.get(id) || {};
       serverCache.deposits.set(id, { ...existing, ...data, updatedAt: new Date().toISOString() });
     }
-    if (col === "bank_sms_logs") {
-      const existing = serverCache.bank_sms_logs.get(id) || {};
-      serverCache.bank_sms_logs.set(id, { ...existing, ...data, updatedAt: new Date().toISOString() });
-    }
     const isCore = col === "providers" || col === "settings" || col === "courses" || col === "services";
     if (!useRestFallback || (adminSdkSucceeded && isCore)) {
       try {
@@ -1383,9 +1362,6 @@ export async function startServer() {
     if (col === "deposits") {
       serverCache.deposits.set(id, { ...data, updatedAt: new Date().toISOString() });
     }
-    if (col === "bank_sms_logs") {
-      serverCache.bank_sms_logs.set(id, { ...data, updatedAt: new Date().toISOString() });
-    }
     const isCore = col === "providers" || col === "settings" || col === "courses" || col === "services";
     if (!useRestFallback || (adminSdkSucceeded && isCore)) {
       try {
@@ -1414,7 +1390,7 @@ export async function startServer() {
 
   const addDocSafe = async (col: string, data: any, token?: string) => {
     invalidateCachesForCollection(col);
-    const prefix = col === "orders" ? "ord_" : col === "deposits" ? "dep_" : col === "bank_sms_logs" ? "sms_" : col === "transactions" ? "txn_" : "doc_";
+    const prefix = col === "orders" ? "ord_" : col === "deposits" ? "dep_" : col === "transactions" ? "txn_" : "doc_";
     const generatedId = prefix + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
     const now = new Date().toISOString();
     const docData = { id: generatedId, ...data, createdAt: data.createdAt || now, updatedAt: now };
@@ -1424,9 +1400,6 @@ export async function startServer() {
     }
     if (col === "deposits") {
       serverCache.deposits.set(generatedId, { data: docData, time: Date.now() });
-    }
-    if (col === "bank_sms_logs") {
-      serverCache.bank_sms_logs.set(generatedId, { data: docData, time: Date.now() });
     }
 
     if (!useRestFallback) {
@@ -1443,7 +1416,7 @@ export async function startServer() {
     }
 
     const success = await setDocREST(col, generatedId, docData, token);
-    if (success || col === "orders" || col === "deposits" || col === "bank_sms_logs") {
+    if (success || col === "orders" || col === "deposits") {
       return generatedId;
     }
     return null;
@@ -1595,8 +1568,8 @@ export async function startServer() {
           return res.status(400).json({ error: "Insufficient balance" });
         }
         
-        const deductRes: any = await adjustUserBalanceSafe(userId, -totalPrice);
-        if (!deductRes || !deductRes.success) {
+        const deductionSuccess = await adjustUserBalanceSafe(userId, -totalPrice);
+        if (!deductionSuccess) {
           return res.status(400).json({ error: "Failed to deduct balance" });
         }
         
@@ -2167,7 +2140,7 @@ export async function startServer() {
 
   app.get("/api/admin/all-deposits", async (req, res) => {
     try {
-      const limitCount = Math.min(Number(req.query.limit) || 50, 50);
+      const limitCount = Math.min(Number(req.query.limit) || 100, 100);
       const forceRefresh = req.query.force === "true";
 
       const depositMap = new Map<string, any>();
@@ -2183,11 +2156,11 @@ export async function startServer() {
         }
       }
 
-      // 2. Fetch fresh from Firestore if force requested or if cache is empty
-      if (!useRestFallback && adminSdkSucceeded && (depositMap.size === 0 || forceRefresh)) {
+      // 2. Fetch fresh from Firestore if not in rest fallback or if force requested or if map is small
+      if (!useRestFallback) {
         try {
-          // A: Query pending deposits from Firestore so admin never misses unapproved requests
-          const pendingSnap = await fdb.collection("deposits").where("status", "==", "pending").limit(30).get();
+          // A: Always query pending deposits from Firestore so admin never misses unapproved requests
+          const pendingSnap = await fdb.collection("deposits").where("status", "==", "pending").limit(50).get();
           pendingSnap.forEach(doc => {
             const data = { id: doc.id, ...doc.data() };
             depositMap.set(doc.id, data);
@@ -2208,49 +2181,21 @@ export async function startServer() {
         }
       }
 
-      // 3. Reliable REST query using runQueryREST (structuredQuery)
-      if (depositMap.size === 0 || forceRefresh) {
+      // 3. If still empty, use REST fallback
+      if (depositMap.size === 0) {
         try {
-          // A: Always query pending deposits from Firestore so admin never misses unapproved requests
-          const pendingQueryRes = await runQueryREST({
-            structuredQuery: {
-              from: [{ collectionId: "deposits" }],
-              where: {
-                fieldFilter: {
-                  field: { fieldPath: "status" },
-                  op: "EQUAL",
-                  value: { stringValue: "pending" }
-                }
-              },
-              limit: 50
-            }
-          }, req.headers.authorization as string || systemAccessToken);
-
-          if (pendingQueryRes && Array.isArray(pendingQueryRes)) {
-            pendingQueryRes.forEach((item: any) => {
-              const data = item.data ? { id: item.id, ...item.data() } : item;
-              depositMap.set(item.id, data);
-              serverCache.deposits.set(item.id, { data, time: Date.now() });
+          const targetProject = getTargetProject();
+          const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/deposits?key=${apiKey}&pageSize=${limitCount}`;
+          const resRest = await axios.get(url, { timeout: 10000 });
+          if (resRest.data && resRest.data.documents) {
+            resRest.data.documents.forEach((doc: any) => {
+              const id = doc.name.split("/").pop();
+              const data = { id, ...unwrapRestFields(doc.fields || {}) };
+              depositMap.set(id, data);
+              serverCache.deposits.set(id, { data, time: Date.now() });
             });
+            savePersistentCache();
           }
-
-          // B: Query recent deposits
-          const allQueryRes = await runQueryREST({
-            structuredQuery: {
-              from: [{ collectionId: "deposits" }],
-              limit: limitCount
-            }
-          }, req.headers.authorization as string || systemAccessToken);
-
-          if (allQueryRes && Array.isArray(allQueryRes)) {
-            allQueryRes.forEach((item: any) => {
-              const data = item.data ? { id: item.id, ...item.data() } : item;
-              depositMap.set(item.id, data);
-              serverCache.deposits.set(item.id, { data, time: Date.now() });
-            });
-          }
-
-          savePersistentCache();
         } catch (rErr: any) {
           console.warn("[ADMIN-ALL-DEPOSITS-REST-ERR]", rErr.message);
         }
@@ -2320,8 +2265,8 @@ export async function startServer() {
         }
 
         // Adjust user balance safely (0 reads, 1 write)
-        const balanceAdjustedRes: any = await adjustUserBalanceSafe(userId, amount, req.headers.authorization as string);
-        if (!balanceAdjustedRes || !balanceAdjustedRes.success) {
+        const balanceAdjusted = await adjustUserBalanceSafe(userId, amount, req.headers.authorization as string);
+        if (!balanceAdjusted) {
           return res.status(500).json({ error: "Failed to update user wallet balance" });
         }
 
@@ -2394,7 +2339,7 @@ export async function startServer() {
       // Also query Firestore approved deposits if accessible
       if (!useRestFallback && adminSdkSucceeded) {
         try {
-          const depSnaps = await fdb.collection("deposits").where("status", "==", "approved").limit(50).get();
+          const depSnaps = await fdb.collection("deposits").where("status", "==", "approved").get();
           depSnaps.forEach(doc => {
             const d = doc.data();
             const uId = d.userId || d.user_id;
@@ -2453,7 +2398,7 @@ export async function startServer() {
   app.post("/api/db/get", async (req, res) => {
     const { collection, id } = req.body;
     if (!collection || !id) return res.status(400).json({ error: "Missing collection or id" });
-    // Bypassing cache for settings, providers, and users to ensure real-time accuracy across multiple Cloud Run instances.
+    // Bypassing cache for settings, providers, and users to ensure real-time accuracy and prevent stale balances
     const forceFresh = collection === "settings" || collection === "providers" || collection === "users";
     const snap = await getDocSafe(collection, id, req.headers.authorization as string, forceFresh);
     if (snap.exists) {
@@ -3095,192 +3040,311 @@ export async function startServer() {
 
   const userLastDepositTime = new Map<string, number>();
 
-  // Manual Deposit with Smart Anti-Fraud & Instant SMS Reconciliation
+  // Helper: Verify payment and instantly credit user wallet (No pending requests, 0 Firestore writes on failed attempts)
+  async function verifyAndCreditPayment(params: {
+    userId: string;
+    userEmail?: string;
+    amount: number;
+    utr: string;
+    clientTxnId?: string;
+    authHeader?: string;
+  }) {
+    const { userId, userEmail, amount, utr, clientTxnId, authHeader } = params;
+    const cleanUtr = String(utr || "").replace(/\D/g, "").trim();
+
+    if (!userId || !amount || isNaN(amount) || amount <= 0) {
+      return { success: false, status: 400, error: "Invalid user ID or deposit amount." };
+    }
+
+    if (cleanUtr.length < 10 || cleanUtr.length > 18) {
+      return { success: false, status: 400, error: "Invalid UTR number. Please enter a valid 12-digit transaction ID." };
+    }
+
+    // 1. Check in-memory deposits cache first (0 Firestore reads)
+    let isAlreadyVerified = false;
+    if (serverCache.deposits.size > 0) {
+      const cachedDeps = Array.from(serverCache.deposits.values()).map((d: any) => d.data || d);
+      isAlreadyVerified = cachedDeps.some((d: any) => 
+        String(d.utr || "").replace(/\D/g, "").trim() === cleanUtr && 
+        (d.status === "approved" || d.status === "completed")
+      );
+    }
+
+    // Secondary check against database if not found in cache
+    if (!isAlreadyVerified && !useRestFallback) {
+      try {
+        const snap = await fdb.collection("deposits").where("utr", "==", cleanUtr).limit(1).get();
+        if (!snap.empty) {
+          const docData: any = snap.docs[0].data();
+          if (docData.status === "approved" || docData.status === "completed") {
+            isAlreadyVerified = true;
+          }
+        }
+      } catch (fErr) {}
+    }
+
+    if (isAlreadyVerified) {
+      return { success: false, status: 400, error: "This UTR number has already been verified and credited to balance. Duplicate submissions are not allowed." };
+    }
+
+    // 2. Check Gateway Webhook Memory Cache (Real-time confirmed payments from Paytm/PhonePe/UPIGateway)
+    let isVerified = false;
+    let verifiedProvider = "gateway_auto";
+    const matchedWebhookPayment = serverCache.received_gateway_payments.get(cleanUtr);
+
+    if (matchedWebhookPayment) {
+      const receivedAmt = Number(matchedWebhookPayment.amount || 0);
+      if (receivedAmt >= amount || Math.abs(receivedAmt - amount) <= 1) {
+        isVerified = true;
+        verifiedProvider = matchedWebhookPayment.provider || "webhook_auto";
+        console.log(`[AUTO-VERIFY] Matched incoming ${verifiedProvider} webhook payment for UTR ${cleanUtr}: ₹${receivedAmt}`);
+      } else {
+        return { 
+          success: false, 
+          status: 400, 
+          error: `Amount mismatch: Received payment for this UTR was ₹${receivedAmt}, but requested deposit is ₹${amount}.` 
+        };
+      }
+    }
+
+    // 3. If not in webhook memory, verify against configured Gateway API (Paytm Business, PhonePe, UPIGateway, SMMQR, VPAAPI, etc.)
+    const settingsSnap = await getDocSafe("settings", "payment");
+    const settings = settingsSnap.data() || {};
+
+    if (!isVerified) {
+      const provider = settings.qrAutoProvider || "paytm_business";
+      const apiKey = settings.qrAutoApiKey || settings.customGateway1Key;
+      const secret = settings.qrAutoToken || settings.customGateway1Secret;
+      const customUrl = settings.qrAutoUrl || settings.customGateway1Url;
+
+      if (provider === "paytm_business" || settings.paytmEnabled) {
+        const mid = settings.paytmMid || apiKey;
+        if (mid) {
+          try {
+            const isProd = settings.paytmEnv === "production";
+            const statusUrl = isProd
+              ? `https://securegw.paytm.in/v3/order/status`
+              : `https://securegw-stage.paytm.in/v3/order/status`;
+            
+            const statusRes = await axios.post(statusUrl, {
+              body: {
+                mid: mid,
+                orderId: clientTxnId || `ORDER_${cleanUtr}`
+              }
+            }, { timeout: 12000 });
+
+            if (statusRes.data?.body?.resultInfo?.resultStatus === "TXN_SUCCESS") {
+              const paytmAmt = Number(statusRes.data?.body?.txnAmount || 0);
+              if (!paytmAmt || paytmAmt >= amount || Math.abs(paytmAmt - amount) <= 1) {
+                isVerified = true;
+                verifiedProvider = "paytm_business";
+              }
+            }
+          } catch (pErr: any) {
+            console.warn("[PAYTM-STATUS-API]", pErr.message);
+          }
+        }
+      }
+
+      if (!isVerified && (provider === "phonepe_business" || settings.phonepeEnabled)) {
+        const merchantId = settings.phonepeMerchantId || apiKey;
+        if (merchantId) {
+          try {
+            const isProd = settings.phonepeEnv === "production";
+            const phonepeUrl = isProd
+              ? `https://api.phonepe.com/apis/hermes/pg/v1/status/${merchantId}/${clientTxnId || cleanUtr}`
+              : `https://api-preprod.phonepe.com/apis/pg-sandbox/pg/v1/status/${merchantId}/${clientTxnId || cleanUtr}`;
+            
+            const ppRes = await axios.get(phonepeUrl, {
+              headers: {
+                "X-MERCHANT-ID": merchantId,
+                "Content-Type": "application/json"
+              },
+              timeout: 12000
+            });
+            if (ppRes.data?.code === "PAYMENT_SUCCESS") {
+              isVerified = true;
+              verifiedProvider = "phonepe_business";
+            }
+          } catch (ppErr: any) {
+            console.warn("[PHONEPE-STATUS-API]", ppErr.message);
+          }
+        }
+      }
+
+      if (!isVerified && provider === "upigateway") {
+        const verifyUrl = customUrl || "https://api.upigateway.com/api/v1/verify_payment";
+        try {
+          const apiRes = await axios.post(verifyUrl, {
+            key: apiKey,
+            utr: cleanUtr,
+            client_txn_id: clientTxnId
+          }, { timeout: 15000 });
+          if (apiRes.data?.status === true || apiRes.data?.msg?.toLowerCase().includes("success")) {
+            isVerified = true;
+            verifiedProvider = "upigateway";
+          }
+        } catch (uErr: any) {
+          console.warn("[UPIGATEWAY-VERIFY]", uErr.message);
+        }
+      }
+
+      if (!isVerified && provider === "smmqr") {
+        const verifyUrl = customUrl || "https://smmqr.com/api/v1/verify-payment";
+        try {
+          const apiRes = await axios.get(verifyUrl, {
+            params: {
+              api_key: apiKey,
+              token: secret,
+              utr: cleanUtr,
+              amount: amount
+            },
+            timeout: 15000
+          });
+          if (apiRes.data?.status === "success" || apiRes.data?.success === true) {
+            isVerified = true;
+            verifiedProvider = "smmqr";
+          }
+        } catch (sErr: any) {
+          console.warn("[SMMQR-VERIFY]", sErr.message);
+        }
+      }
+
+      if (!isVerified && provider === "vpaapi") {
+        const verifyUrl = customUrl || "https://vpaapi.com/api/verify";
+        try {
+          const apiRes = await axios.post(verifyUrl, {
+            api_key: apiKey,
+            utr: cleanUtr,
+            amount: amount
+          }, { timeout: 15000 });
+          if (apiRes.data?.status === "success" || apiRes.data?.success === true) {
+            isVerified = true;
+            verifiedProvider = "vpaapi";
+          }
+        } catch (vErr: any) {
+          console.warn("[VPAAPI-VERIFY]", vErr.message);
+        }
+      }
+
+      if (!isVerified && customUrl && provider === "custom") {
+        try {
+          const apiRes = await axios.post(customUrl, {
+            key: apiKey,
+            token: secret,
+            utr: cleanUtr,
+            amount: amount
+          }, { timeout: 15000 });
+          if (apiRes.data?.status === "success" || apiRes.data?.success === true) {
+            isVerified = true;
+            verifiedProvider = "custom";
+          }
+        } catch (cErr: any) {
+          console.warn("[CUSTOM-VERIFY]", cErr.message);
+        }
+      }
+
+      // Check global auto-approve setting if enabled by Admin
+      if (!isVerified && settings.autoApproveDeposits === true) {
+        isVerified = true;
+        verifiedProvider = "admin_auto_approve";
+      }
+    }
+
+    // 4. If NOT verified: ZERO Firestore writes!
+    if (!isVerified) {
+      return { 
+        success: false, 
+        status: 400, 
+        error: `Payment verification failed: No confirmed transaction found for UTR ${cleanUtr}. Please make sure you transferred ₹${amount} and entered the exact 12-digit UTR.` 
+      };
+    }
+
+    // 5. Payment is confirmed: Credit user's wallet
+    const adjusted = await adjustUserBalanceSafe(userId, amount, authHeader);
+    if (!adjusted) {
+      return { success: false, status: 500, error: "Payment verified, but failed to credit wallet. Please contact support." };
+    }
+
+    // Fetch new balance
+    const userDoc = await getDocSafe("users", userId);
+    const newBalance = userDoc.data()?.balance || 0;
+
+    // Save ONE approved deposit record
+    const depositId = `dep_auto_${cleanUtr}_${Date.now()}`;
+    const depositData = {
+      id: depositId,
+      userId,
+      userEmail: userEmail || "not-provided",
+      amount: Number(amount),
+      utr: cleanUtr,
+      status: "approved",
+      type: "auto_gateway_verify",
+      provider: verifiedProvider,
+      verifiedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString()
+    };
+
+    await addDocSafe("deposits", depositData);
+    serverCache.deposits.set(depositId, { data: depositData, time: Date.now() });
+    savePersistentCache();
+
+    // Log transaction
+    await addDocSafe("transactions", {
+      userId,
+      amount: Number(amount),
+      type: "deposit",
+      method: verifiedProvider,
+      status: "success",
+      utr: cleanUtr,
+      timestamp: new Date().toISOString(),
+      description: `Auto Verified Deposit (UTR: ${cleanUtr})`
+    });
+
+    // Remove from webhook cache once used
+    serverCache.received_gateway_payments.delete(cleanUtr);
+
+    console.log(`[AUTO-DEPOSIT-SUCCESS] Verified and credited ₹${amount} for user ${userId} (UTR: ${cleanUtr})`);
+
+    return {
+      success: true,
+      status: 200,
+      amount: Number(amount),
+      newBalance,
+      message: `Payment verified successfully! ₹${amount} added to your wallet.`
+    };
+  }
+
+  // Confirm Payment & Auto Verify endpoint
   app.post("/api/deposits/submit-manual", async (req, res) => {
-    const { amount, utr, screenshotUrl, userId, userEmail } = req.body;
+    const { amount, utr, userId, userEmail } = req.body;
     const user_id = userId;
-    const user_email = userEmail;
     const depositAmount = Number(amount);
-    console.log(`[DEPOSIT-SUBMIT] Attempting submission: UTR=${utr}, User=${user_id}, Amount=₹${depositAmount}`);
     
     if (!user_id || !depositAmount || isNaN(depositAmount) || depositAmount <= 0) {
       return res.status(400).json({ error: "Invalid deposit amount or user ID." });
     }
 
-    // Rate-limiting check (prevent duplicate rapid-clicks)
+    // Rate-limiting check
     const now = Date.now();
     const lastSub = userLastDepositTime.get(user_id) || 0;
-    if (now - lastSub < 4000) {
-      return res.status(429).json({ error: "Please wait a moment before submitting another request." });
+    if (now - lastSub < 3000) {
+      return res.status(429).json({ error: "Please wait a moment before trying again." });
     }
     userLastDepositTime.set(user_id, now);
 
-    const cleanUtr = String(utr || "").replace(/\D/g, "").trim();
-    if (cleanUtr.length < 10 || cleanUtr.length > 18) {
-      return res.status(400).json({ error: "Invalid UTR format. Must be a 10-18 digit UPI reference number (normally 12 digits)." });
-    }
-    
-    try {
-      // 1. Check in-memory deposits cache first (0 Firestore reads)
-      let duplicateDeposit = null;
-      if (serverCache.deposits.size > 0) {
-        const cachedDeps = Array.from(serverCache.deposits.values()).map(d => d.data || d);
-        duplicateDeposit = cachedDeps.find((d: any) => String(d.utr || "").replace(/\D/g, "").trim() === cleanUtr);
-      }
+    const result = await verifyAndCreditPayment({
+      userId: user_id,
+      userEmail,
+      amount: depositAmount,
+      utr,
+      authHeader: req.headers.authorization as string
+    });
 
-      // If not found in cache, query Firestore with exact UTR filter (only 1 read instead of scanning collection)
-      if (!duplicateDeposit && !useRestFallback) {
-        try {
-          const snap = await fdb.collection("deposits").where("utr", "==", cleanUtr).limit(1).get();
-          if (!snap.empty) {
-            const d = snap.docs[0];
-            duplicateDeposit = { id: d.id, ...d.data() };
-            serverCache.deposits.set(d.id, { data: duplicateDeposit, time: Date.now() });
-          }
-        } catch (fErr) {}
-      }
-
-      if (duplicateDeposit) {
-        if (duplicateDeposit.status === "approved" || duplicateDeposit.status === "completed") {
-          return res.status(400).json({ error: "This UTR number has already been verified and credited. Duplicate submissions are not allowed." });
-        }
-        if (duplicateDeposit.status === "pending") {
-          return res.status(400).json({ error: "A deposit with this UTR is already submitted and pending verification. Please wait a moment." });
-        }
-      }
-
-      // 2. Check if matching verified Bank SMS was already received in bank_sms_logs (Two-way auto approval)
-      let isAutoApproved = false;
-      let matchedSmsId = "";
-
-      let matchingSms: any = null;
-      // Step A: Check in-memory SMS logs first (0 Reads)
-      if (serverCache.bank_sms_logs.size > 0) {
-        const cachedSms = Array.from(serverCache.bank_sms_logs.values()).map(s => s.data || s);
-        matchingSms = cachedSms.find((log: any) => {
-          if (log.isUsed) return false;
-          const utrs: string[] = Array.isArray(log.candidateUtrs) ? log.candidateUtrs : [String(log.utr || "")];
-          const utrMatches = utrs.some((u: string) => String(u).replace(/\D/g, "").trim() === cleanUtr);
-          const amountMatches = !log.parsedAmount || Number(log.parsedAmount) >= depositAmount || Math.abs(Number(log.parsedAmount) - depositAmount) <= 1;
-          return utrMatches && amountMatches;
-        });
-      }
-
-      // Step B: Target Firestore query with exact index filter or recent logs fallback (1 single document read)
-      if (!matchingSms && !useRestFallback) {
-        try {
-          const snap = await fdb.collection("bank_sms_logs")
-            .where("candidateUtrs", "array-contains", cleanUtr)
-            .limit(1)
-            .get();
-          if (!snap.empty) {
-            const doc = snap.docs[0];
-            const logData: any = { id: doc.id, ...doc.data() };
-            if (!logData.isUsed) {
-              const amountMatches = !logData.parsedAmount || Number(logData.parsedAmount) >= depositAmount || Math.abs(Number(logData.parsedAmount) - depositAmount) <= 1;
-              if (amountMatches) {
-                matchingSms = logData;
-              }
-            }
-          }
-        } catch (smsErr) {}
-
-        // Fallback: check recent 10 SMS logs to see if rawText has the UTR
-        if (!matchingSms) {
-          try {
-            const recentSnap = await fdb.collection("bank_sms_logs")
-              .where("isUsed", "==", false)
-              .limit(10)
-              .get();
-            for (const doc of recentSnap.docs) {
-              const logData: any = { id: doc.id, ...doc.data() };
-              const txt = String(logData.rawText || "");
-              if (txt.includes(cleanUtr) || (Array.isArray(logData.candidateUtrs) && logData.candidateUtrs.includes(cleanUtr))) {
-                matchingSms = logData;
-                break;
-              }
-            }
-          } catch (rErr) {}
-        }
-      }
-
-      if (matchingSms) {
-        console.log(`[DEPOSIT-INSTANT-SYNC] Found prior Bank SMS log ${matchingSms.id} for UTR ${cleanUtr}. Auto-approving immediately!`);
-        const adjustedRes: any = await adjustUserBalanceSafe(user_id, depositAmount, req.headers.authorization as string);
-        if (adjustedRes && adjustedRes.success) {
-          isAutoApproved = true;
-          matchedSmsId = matchingSms.id;
-          await updateDocSafe("bank_sms_logs", matchingSms.id, {
-            isUsed: true,
-            usedByUserId: user_id,
-            usedForDepositAmount: depositAmount,
-            usedAt: new Date().toISOString()
-          });
-          if (serverCache.bank_sms_logs.has(matchingSms.id)) {
-            const c = serverCache.bank_sms_logs.get(matchingSms.id) || {};
-            serverCache.bank_sms_logs.set(matchingSms.id, { ...c, isUsed: true });
-          }
-        }
-      } else {
-        // Check global auto-approve setting if enabled by Admin
-        const settingsSnap = await getDocSafe("settings", "payment");
-        const settings = settingsSnap.data() || {};
-        if (settings.autoApproveDeposits) {
-          const adjustedRes: any = await adjustUserBalanceSafe(user_id, depositAmount, req.headers.authorization as string);
-          if (adjustedRes && adjustedRes.success) {
-            isAutoApproved = true;
-          }
-        }
-      }
-
-      // 3. Save Deposit Record (1 write)
-      let resolvedEmail = user_email;
-      if (!resolvedEmail || resolvedEmail === "not-provided") {
-        const cachedUser = serverCache.users.get(user_id)?.data || serverCache.users.get(user_id);
-        if (cachedUser?.email) {
-          resolvedEmail = cachedUser.email;
-        }
-      }
-
-      const newDepositDoc = {
-        userId: user_id, 
-        userEmail: resolvedEmail || "not-provided", 
-        amount: depositAmount, 
-        utr: cleanUtr, 
-        screenshotUrl: screenshotUrl || "", 
-        status: isAutoApproved ? "approved" : "pending", 
-        type: "deposit",
-        verifiedAt: isAutoApproved ? new Date().toISOString() : null,
-        verifiedMethod: isAutoApproved ? (matchedSmsId ? "bank-sms-instant" : "admin-auto-approve") : null,
-        smsLogId: matchedSmsId || null,
-        createdAt: new Date().toISOString()
-      };
-
-      const createdDocId = await addDocSafe("deposits", newDepositDoc);
-
-      if (createdDocId) {
-        const id = typeof createdDocId === "string" ? createdDocId : (createdDocId as any)?.id;
-        const fullDoc = { id, ...newDepositDoc };
-        serverCache.deposits.set(id, { data: fullDoc, time: Date.now() });
-        savePersistentCache();
-        console.log(`[DEPOSIT-SAVED] Saved deposit ${id} (UTR: ${cleanUtr}, User: ${resolvedEmail}, Status: ${newDepositDoc.status}) to cache & persistent disk.`);
-        return res.json({ 
-          success: true, 
-          isAutoApproved,
-          id,
-          deposit: fullDoc,
-          message: isAutoApproved ? "Payment verified & ₹" + depositAmount + " added to your wallet instantly!" : "Deposit request submitted successfully. It will be reviewed and approved by admin."
-        });
-      } else {
-        throw new Error("Failed to write deposit to database.");
-      }
-    } catch (e: any) {
-      console.error(`[DEPOSIT] Error submitting deposit: ${e.message}`);
-      res.status(500).json({ error: e.message || "Failed to submit request." });
-    }
+    return res.status(result.status).json(result);
   });
 
-  // 1. Create QR Auto Order (Pre-register transaction with provider)
+  // Pre-register QR Auto Order if provider requires it
   app.post("/api/deposits/create-qr-auto-order", async (req, res) => {
     const { userId, amount, userEmail } = req.body;
     if (!userId || !amount) return res.status(400).json({ error: "Missing fields" });
@@ -3289,15 +3353,11 @@ export async function startServer() {
       const settingsSnap = await getDocSafe("settings", "payment");
       const settings = settingsSnap.data() || {};
       
-      if (!settings.qrAutoEnabled) {
-        return res.status(400).json({ error: "Auto QR is disabled." });
-      }
-
-      const { qrAutoProvider, qrAutoApiKey, qrAutoUrl } = settings;
+      const { qrAutoProvider, qrAutoApiKey } = settings;
       
       if (qrAutoProvider === "upigateway") {
         const createUrl = "https://api.upigateway.com/api/v1/create_order";
-        const client_txn_id = `DEP_${Date.now()}_${userId}`.slice(0, 30); // UPIGateway limit
+        const client_txn_id = `DEP_${Date.now()}_${userId}`.slice(0, 30);
         
         try {
           const apiRes = await axios.post(createUrl, {
@@ -3311,7 +3371,7 @@ export async function startServer() {
             redirect_url: `${req.headers.origin}/profile`
           }, { timeout: 15000 });
 
-          if (apiRes.data.status === true || apiRes.data.msg?.toLowerCase().includes("success")) {
+          if (apiRes.data?.status === true || apiRes.data?.msg?.toLowerCase().includes("success")) {
             return res.json({ 
               success: true, 
               order_id: apiRes.data.data.order_id,
@@ -3319,590 +3379,190 @@ export async function startServer() {
               payment_url: apiRes.data.data.payment_url 
             });
           } else {
-            console.error("[UPIGATEWAY-CREATE-ERR]", apiRes.data);
-            return res.status(400).json({ error: apiRes.data.msg || "Failed to create order on UPIGateway." });
+            return res.status(400).json({ error: apiRes.data?.msg || "Failed to create order on UPIGateway." });
           }
         } catch (apiErr: any) {
-          console.error("[UPIGATEWAY-API-ERR]", apiErr.message);
-          return res.status(500).json({ error: "Could not connect to UPIGateway. Please use manual payment." });
+          return res.status(500).json({ error: "Could not connect to gateway." });
         }
       }
 
-      // Default fallback for other providers that don't need pre-order
-      res.json({ success: true, message: "No pre-order needed for this provider." });
-
+      res.json({ success: true, message: "Ready for direct UPI payment." });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });
 
-  // Verify QR Auto Payment (SMMQR/VPAAPI)
+  // Verify QR Auto Payment (Paytm / PhonePe / UPIGateway / UPI)
   app.post("/api/deposits/verify-qr-auto", async (req, res) => {
-    const { userId, amount, utr, client_txn_id } = req.body;
+    const { userId, amount, utr, client_txn_id, userEmail } = req.body;
     if (!userId || !amount || !utr) return res.status(400).json({ error: "Missing fields" });
 
-    try {
-      const cleanUtr = String(utr).replace(/\D/g, "");
-      if (cleanUtr.length !== 12) return res.status(400).json({ error: "Invalid UTR format." });
-
-      // 1. Check if UTR already used
-      let alreadyVerified = false;
-      if (!useRestFallback) {
-        try {
-          const existing = await fdb.collection("deposits")
-            .where("utr", "==", cleanUtr)
-            .where("status", "==", "approved")
-            .limit(1)
-            .get();
-          alreadyVerified = !existing.empty;
-        } catch (err: any) {
-          if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
-            useRestFallback = true;
-          } else {
-            throw err;
-          }
-        }
-      }
-      
-      if (useRestFallback) {
-        const queryRes = await findDepositByUtrREST(cleanUtr, "approved");
-        alreadyVerified = queryRes.length > 0;
-      }
-      
-      if (alreadyVerified) {
-        return res.status(400).json({ error: "This UTR has already been used and verified." });
-      }
-
-      // 2. Get Settings
-      const settingsSnap = await getDocSafe("settings", "payment");
-      const settings = settingsSnap.data() || {};
-
-      if (!settings.qrAutoEnabled) {
-        return res.status(400).json({ error: "Automatic QR verification is disabled by admin." });
-      }
-
-      const { qrAutoProvider, qrAutoApiKey, qrAutoToken, qrAutoUrl } = settings;
-      let isVerified = false;
-      let providerResponse = null;
-
-      // 3. Call Provider API
-      if (qrAutoProvider === "smmqr") {
-        const verifyUrl = qrAutoUrl || "https://smmqr.com/api/v1/verify-payment";
-        try {
-          const apiRes = await axios.get(verifyUrl, {
-            params: {
-              api_key: qrAutoApiKey,
-              token: qrAutoToken,
-              utr: cleanUtr,
-              amount: amount
-            },
-            timeout: 15000
-          });
-          providerResponse = apiRes.data;
-          if (apiRes.data.status === "success" || apiRes.data.success === true || apiRes.data.msg?.toLowerCase().includes("success")) {
-            isVerified = true;
-          }
-        } catch (apiErr: any) {
-          console.error("[QR-AUTO-SMMQR-ERR]", apiErr.message);
-          return res.status(500).json({ error: "Gateway connection failed. Please try manual verification." });
-        }
-      } else if (qrAutoProvider === "vpaapi") {
-        const verifyUrl = qrAutoUrl || "https://vpaapi.com/api/verify";
-        try {
-          const apiRes = await axios.post(verifyUrl, {
-            api_key: qrAutoApiKey,
-            utr: cleanUtr,
-            amount: amount
-          }, { timeout: 15000 });
-          providerResponse = apiRes.data;
-          if (apiRes.data.status === "success" || apiRes.data.success === true) {
-            isVerified = true;
-          }
-        } catch (apiErr: any) {
-          console.error("[QR-AUTO-VPA-ERR]", apiErr.message);
-          return res.status(500).json({ error: "Gateway connection failed." });
-        }
-      } else if (qrAutoProvider === "upigateway") {
-        const verifyUrl = qrAutoUrl || "https://api.upigateway.com/api/v1/verify_payment";
-        try {
-          const apiRes = await axios.post(verifyUrl, {
-            key: qrAutoApiKey,
-            utr: cleanUtr,
-            client_txn_id: client_txn_id // Use provided client_txn_id if we created one
-          }, { timeout: 15000 });
-          providerResponse = apiRes.data;
-          // UPIGateway usually returns { status: true, data: { amount: 100, ... } }
-          if (apiRes.data.status === true || apiRes.data.msg?.toLowerCase().includes("success")) {
-            isVerified = true;
-            // Verify amount if provided in response
-            if (apiRes.data.data && apiRes.data.data.amount) {
-              if (Number(apiRes.data.data.amount) < Number(amount)) {
-                isVerified = false;
-                return res.status(400).json({ error: `Amount mismatch. Found ₹${apiRes.data.data.amount} for this UTR.` });
-              }
-            }
-          }
-        } catch (apiErr: any) {
-          console.error("[QR-AUTO-UPIGATEWAY-ERR]", apiErr.message);
-          return res.status(500).json({ error: "UPIGateway verification failed. Please check UTR or use manual proof." });
-        }
-      } else {
-        if (qrAutoUrl) {
-          try {
-            const apiRes = await axios.post(qrAutoUrl, {
-              key: qrAutoApiKey,
-              token: qrAutoToken,
-              utr: cleanUtr,
-              amount: amount
-            }, { timeout: 15000 });
-            providerResponse = apiRes.data;
-            if (apiRes.data.status === "success" || apiRes.data.success === true) {
-              isVerified = true;
-            }
-          } catch (apiErr) {
-            return res.status(500).json({ error: "Custom gateway failed." });
-          }
-        }
-      }
-
-      if (isVerified) {
-        console.log(`[QR-AUTO-SUCCESS] Verified ₹${amount} for user ${userId} (UTR: ${cleanUtr})`);
-        
-        const successRes: any = await adjustUserBalanceSafe(userId, Number(amount), req.headers.authorization as string);
-        if (!successRes || !successRes.success) {
-          return res.status(500).json({ error: "Payment verified but failed to update wallet. Contact support." });
-        }
-
-        // Get new balance
-        const userSnap = await getDocSafe("users", userId);
-        const newBalance = userSnap.data()?.balance || 0;
-
-        const depositId = `dep_auto_${Date.now()}`;
-        await addDocSafe("deposits", {
-          id: depositId,
-          userId,
-          amount: Number(amount),
-          utr: cleanUtr,
-          status: "approved",
-          type: "auto_qr_verify",
-          provider: qrAutoProvider || "unknown",
-          timestamp: new Date().toISOString(),
-          createdAt: new Date().toISOString(),
-          client_txn_id: client_txn_id || ""
-        });
-
-        // Log transaction
-        await addDocSafe("transactions", {
-          userId,
-          amount: Number(amount),
-          type: "deposit",
-          method: "qr-auto",
-          status: "success",
-          utr: cleanUtr,
-          timestamp: new Date().toISOString(),
-          description: `QR Auto Deposit (UTR: ${cleanUtr})`
-        });
-        
-        return res.json({ success: true, amount: Number(amount), newBalance });
-      } else {
-        return res.status(400).json({ 
-          error: "Payment not found or not yet processed. Please wait 1-2 minutes and try again.",
-          details: providerResponse 
-        });
-      }
-    } catch (error: any) {
-      console.error("[QR-VERIFY-ERR]", error);
-      res.status(500).json({ error: error.message });
+    // Rate-limiting check
+    const now = Date.now();
+    const lastSub = userLastDepositTime.get(userId) || 0;
+    if (now - lastSub < 3000) {
+      return res.status(429).json({ error: "Please wait a moment before trying again." });
     }
+    userLastDepositTime.set(userId, now);
+
+    const result = await verifyAndCreditPayment({
+      userId,
+      userEmail,
+      amount: Number(amount),
+      utr,
+      clientTxnId: client_txn_id,
+      authHeader: req.headers.authorization as string
+    });
+
+    return res.status(result.status).json(result);
   });
   
+  // Paytm Business Webhook Handler
+  app.post("/api/webhooks/paytm", async (req, res) => {
+    try {
+      const data = req.body || {};
+      console.log("[WEBHOOK-PAYTM] Received notification:", JSON.stringify(data));
+
+      const status = data.STATUS || data.status;
+      const amount = parseFloat(data.TXNAMOUNT || data.txnAmount || data.amount || 0);
+      const utr = String(data.BANKTXNID || data.bankTxnId || data.TXNID || data.txnId || data.utr || "").replace(/\D/g, "");
+      const orderId = String(data.ORDERID || data.orderId || "");
+
+      if (status === "TXN_SUCCESS" && utr) {
+        // Store in memory cache for immediate matching when user enters UTR
+        serverCache.received_gateway_payments.set(utr, {
+          amount,
+          provider: "paytm_business",
+          time: Date.now(),
+          orderId
+        });
+        console.log(`[WEBHOOK-PAYTM] Cached payment for UTR ${utr}: ₹${amount}`);
+
+        // If orderId has user encoded (e.g. DEP_userId_timestamp or TXN_userId_timestamp), credit directly!
+        let userId = "";
+        if (orderId.startsWith("DEP_") || orderId.startsWith("TXN_")) {
+          const parts = orderId.split("_");
+          if (parts.length >= 3) userId = parts[1];
+        }
+
+        if (userId && amount > 0) {
+          await verifyAndCreditPayment({
+            userId,
+            amount,
+            utr,
+            clientTxnId: orderId
+          });
+        }
+      }
+
+      res.status(200).send("OK");
+    } catch (err: any) {
+      console.error("[WEBHOOK-PAYTM-ERR]", err.message);
+      res.status(200).send("OK");
+    }
+  });
+
+  // PhonePe Business Webhook Handler
+  app.post("/api/webhooks/phonepe", async (req, res) => {
+    try {
+      console.log("[WEBHOOK-PHONEPE] Received notification");
+      let data = req.body || {};
+
+      // PhonePe sends a base64 encoded 'response' string in standard merchant callback
+      if (data.response && typeof data.response === "string") {
+        try {
+          const decoded = Buffer.from(data.response, "base64").toString("utf-8");
+          data = JSON.parse(decoded);
+        } catch (decErr) {}
+      }
+
+      const code = data.code || data.status;
+      const paymentData = data.data || {};
+      const utr = String(
+        paymentData.paymentInstrument?.utr || 
+        paymentData.paymentInstrument?.bankTransactionId || 
+        paymentData.utr || 
+        data.utr || 
+        ""
+      ).replace(/\D/g, "");
+
+      // PhonePe amounts are in paise (divide by 100) or plain rupees
+      let amount = Number(paymentData.amount || data.amount || 0);
+      if (amount > 1000) amount = amount / 100;
+
+      const txnId = String(paymentData.merchantTransactionId || data.merchantTransactionId || "");
+
+      if ((code === "PAYMENT_SUCCESS" || code === "SUCCESS") && utr) {
+        serverCache.received_gateway_payments.set(utr, {
+          amount,
+          provider: "phonepe_business",
+          time: Date.now(),
+          orderId: txnId
+        });
+        console.log(`[WEBHOOK-PHONEPE] Cached payment for UTR ${utr}: ₹${amount}`);
+
+        let userId = "";
+        if (txnId.startsWith("DEP_") || txnId.startsWith("TXN_")) {
+          const parts = txnId.split("_");
+          if (parts.length >= 3) userId = parts[1];
+        }
+
+        if (userId && amount > 0) {
+          await verifyAndCreditPayment({
+            userId,
+            amount,
+            utr,
+            clientTxnId: txnId
+          });
+        }
+      }
+
+      res.status(200).send("OK");
+    } catch (err: any) {
+      console.error("[WEBHOOK-PHONEPE-ERR]", err.message);
+      res.status(200).send("OK");
+    }
+  });
+
   // UPIGateway.com Webhook Handler
   app.post("/api/webhooks/upigateway", async (req, res) => {
-    // Note: UPIGateway usually sends data as form-urlencoded or JSON
-    const data = req.body;
+    const data = req.body || {};
     console.log("[WEBHOOK-UPIGATEWAY]", JSON.stringify(data));
 
     try {
-      // Common parameters: status, utr, amount, client_txn_id
       const status = data.status;
-      const utr = data.utr;
-      const amount = data.amount;
-      const clientTxnId = data.client_txn_id || ""; // e.g. TXN_USERID_TIMESTAMP
+      const utr = String(data.utr || "").replace(/\D/g, "");
+      const amount = Number(data.amount || 0);
+      const clientTxnId = data.client_txn_id || "";
 
-      if (status === "success" || status === "COMPLETED") {
-        // Extract userId from clientTxnId if it follows our pattern: TXN_USERID_TIMESTAMP
+      if ((status === "success" || status === "COMPLETED") && utr) {
+        serverCache.received_gateway_payments.set(utr, {
+          amount,
+          provider: "upigateway",
+          time: Date.now(),
+          orderId: clientTxnId
+        });
+
         let userId = "";
-        if (clientTxnId.startsWith("TXN_")) {
+        if (clientTxnId.startsWith("DEP_") || clientTxnId.startsWith("TXN_")) {
           const parts = clientTxnId.split("_");
-          if (parts.length >= 2) userId = parts[1];
+          if (parts.length >= 3) userId = parts[1];
         }
 
-        if (!userId && utr) {
-          // If no userId in txnId, try to find a pending deposit with this UTR
-          const pending = await fdb.collection("deposits")
-            .where("utr", "==", utr)
-            .where("status", "==", "pending")
-            .limit(1)
-            .get();
-          
-          if (!pending.empty) {
-            userId = pending.docs[0].data().userId;
-          }
-        }
-
-        if (userId && utr && amount) {
-          const cleanUtr = String(utr).replace(/\D/g, "");
-          
-          // Check if already processed
-          const existing = await fdb.collection("deposits")
-            .where("utr", "==", cleanUtr)
-            .where("status", "==", "approved")
-            .limit(1)
-            .get();
-
-          if (existing.empty) {
-            // Update User Balance
-            const userDoc = await fdb.collection("users").doc(userId).get();
-            if (userDoc.exists) {
-              const currentBalance = Number(userDoc.data()?.balance) || 0;
-              const depositAmount = Number(amount);
-              
-              await fdb.collection("users").doc(userId).update({
-                balance: currentBalance + depositAmount
-              });
-
-              // Create/Update Deposit Record
-              const depositId = `dep_webhook_${utr}`;
-              await fdb.collection("deposits").doc(depositId).set({
-                id: depositId,
-                userId,
-                amount: depositAmount,
-                utr: cleanUtr,
-                status: "approved",
-                type: "webhook_upigateway",
-                rawData: JSON.stringify(data),
-                createdAt: new Date().toISOString()
-              });
-              
-              console.log(`[WEBHOOK-SUCCESS] Added ₹${depositAmount} to user ${userId}`);
-            }
-          }
+        if (userId && amount > 0) {
+          await verifyAndCreditPayment({
+            userId,
+            amount,
+            utr,
+            clientTxnId
+          });
         }
       }
       
-      // Always return 200 to acknowledge webhook
       res.status(200).send("OK");
     } catch (err: any) {
-      console.error("[WEBHOOK-ERROR]", err.message);
-      res.status(200).send("ERROR_LOGGED"); // Still 200 to stop retries if it's a fatal logic error
-    }
-  });
-
-  // Automatic SMS/UPI Webhook for Android SMS Forwarder Integration
-  app.post("/api/webhooks/sms-gateway", async (req, res) => {
-    try {
-      const querySecret = req.query.secret || req.query.key || req.query.token;
-      const bodySecret = req.body?.secret || req.body?.key || req.body?.token;
-      const headerSecret = req.headers["x-secret-key"] || req.headers["x-api-key"] || req.headers["authorization"];
-      const expectedSecret = process.env.SMS_WEBHOOK_SECRET || "secure_sms_gateway_pwd_2026";
-
-      // If user provided a secret, verify it. If not configured or default, accept matched secret.
-      const hasSecret = querySecret || bodySecret || headerSecret;
-      if (hasSecret && querySecret !== expectedSecret && bodySecret !== expectedSecret && headerSecret !== expectedSecret && !String(headerSecret).includes(expectedSecret)) {
-        console.warn("[SMS-WEBHOOK] Unauthorized access attempt detected. Secret mismatch.");
-        return res.status(401).json({ success: false, error: "Unauthorized: Invalid secret key." });
-      }
-
-      // Read text message body from various possible SMS forwarder field names & plain body
-      let text = "";
-      if (typeof req.body === "string") {
-        text = req.body;
-      } else if (req.body && typeof req.body === "object") {
-        text = String(
-          req.body.text || 
-          req.body.message || 
-          req.body.body || 
-          req.body.msg || 
-          req.body.content || 
-          req.body.sms ||
-          req.body.smsContent ||
-          req.body.sms_body ||
-          req.body.notificationText ||
-          req.body.notification ||
-          req.body.data?.text ||
-          req.body.data?.message ||
-          req.body.notification?.body ||
-          ""
-        ).trim();
-
-        // If still empty, concatenate string values from req.body
-        if (!text) {
-          const stringVals = Object.values(req.body).filter(v => typeof v === "string" && v.length > 3);
-          text = stringVals.join(" ").trim();
-        }
-      }
-
-      const from = String(req.body?.from || req.body?.sender || req.body?.phone || req.body?.address || req.body?.sim || req.query?.from || "UNKNOWN").trim();
-
-      console.log(`[SMS-WEBHOOK] Received forwarded SMS from: ${from}. Content: "${text}"`);
-
-      if (!text) {
-        return res.status(400).json({ success: false, error: "Empty message text." });
-      }
-
-      // 1. Parse UTR: Extract all potential UTR / RRN / Reference Numbers (10 to 18 digits)
-      const cleanText = text.replace(/,/g, "");
-      const explicitUtrMatches: string[] = [];
-      const utrRegex = /(?:UPI|UTR|RRN|Ref(?:erence)?(?:\s*No)?|Txn(?:\s*ID|\s*No)?|IMPS|ORDER|CR|DR|transfer)[\s/:\-_#]*([0-9]{10,18})/gi;
-      let match;
-      while ((match = utrRegex.exec(cleanText)) !== null) {
-        if (match[1]) explicitUtrMatches.push(match[1].replace(/\D/g, ""));
-      }
-
-      // Also match slash-separated UPI tokens like UPI/CR/424312345678/... or UPI/424312345678
-      const slashUtrRegex = /\/(?:CR|DR|UPI|P2A|P2M|TRANSFER)?\/([0-9]{10,18})/gi;
-      let slashMatch;
-      while ((slashMatch = slashUtrRegex.exec(cleanText)) !== null) {
-        if (slashMatch[1]) explicitUtrMatches.push(slashMatch[1].replace(/\D/g, ""));
-      }
-
-      const digitSequences: string[] = (cleanText.match(/\d{10,18}/g) || []).map(s => s.trim());
-      const candidateUtrs = Array.from(new Set([
-        ...explicitUtrMatches,
-        ...digitSequences
-      ]));
-
-      console.log(`[SMS-WEBHOOK] Extracted candidate UTRs: ${JSON.stringify(candidateUtrs)}`);
-
-      // 2. Parse Amount (Indian Rupees format)
-      let textWithoutBalance = cleanText.replace(/(?:Avail(?:able)?\s*Bal(?:ance)?|Bal(?:ance)?|Total\s*Bal)[\s:]*(?:Rs\.?|INR|₹)?\s*[\d.]+/gi, "");
-      const amountMatch = textWithoutBalance.match(/credited\s*(?:with|by)?\s*(?:Rs\.?|INR|₹)?\s*(\d+(?:\.\d{1,2})?)/i) ||
-                          textWithoutBalance.match(/rec(?:eived|eive)?\s*(?:with|by)?\s*(?:Rs\.?|INR|₹)?\s*(\d+(?:\.\d{1,2})?)/i) ||
-                          textWithoutBalance.match(/(?:Rs\.?|INR|₹)\s*(\d+(?:\.\d{1,2})?)\s*(?:credited|received|deposited)/i) ||
-                          textWithoutBalance.match(/(?:Rs\.?|INR|₹)\s*(\d+(?:\.\d{1,2})?)/i) ||
-                          textWithoutBalance.match(/(\d+(?:\.\d{1,2})?)\s*(?:credited|deposited|received)/i);
-      
-      const parsedAmount = amountMatch ? parseFloat(amountMatch[1]) : null;
-      console.log(`[SMS-WEBHOOK] Extracted credited amount: ₹${parsedAmount}`);
-
-      // Check if message is related to bank credits/payments
-      const lowerClean = cleanText.toLowerCase();
-      const isPaymentRelated = lowerClean.includes("credit") || 
-                               lowerClean.includes("rec") || 
-                               lowerClean.includes("deposit") || 
-                               lowerClean.includes("upi") || 
-                               lowerClean.includes("imps") || 
-                               lowerClean.includes("inr") || 
-                               lowerClean.includes("rs") || 
-                               lowerClean.includes("₹");
-
-      if (!isPaymentRelated || candidateUtrs.length === 0) {
-        console.log("[SMS-WEBHOOK] Ignoring non-payment / non-UTR SMS to save Firestore quota.");
-        return res.json({ 
-          success: true, 
-          message: "SMS ignored: Not a recognized bank deposit or no valid UTR found.",
-          candidateUtrs,
-          parsedAmount 
-        });
-      }
-
-      // Memory deduplication check (0 Writes)
-      const existingCachedSms = Array.from(serverCache.bank_sms_logs.values()).map(s => s.data || s);
-      const isDuplicateSms = existingCachedSms.some((log: any) => {
-        if (!log) return false;
-        if (log.rawText === text) return true;
-        const utrs: string[] = Array.isArray(log.candidateUtrs) ? log.candidateUtrs : [String(log.utr || "")];
-        return utrs.length > 0 && candidateUtrs.some(u => utrs.includes(u));
-      });
-
-      if (isDuplicateSms) {
-        console.log("[SMS-WEBHOOK] Duplicate SMS already processed in memory cache. Skipping write.");
-        return res.json({ success: true, message: "Duplicate SMS already processed." });
-      }
-
-      // Store in fast memory cache AND persist to Firestore
-      let smsLogId = "sms_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
-      const smsLogPayload = {
-        id: smsLogId,
-        rawText: text,
-        candidateUtrs,
-        parsedAmount,
-        from,
-        isUsed: false,
-        receivedAt: new Date().toISOString()
-      };
-      serverCache.bank_sms_logs.set(smsLogId, { data: smsLogPayload, time: Date.now() });
-      await setDocSafe("bank_sms_logs", smsLogId, smsLogPayload);
-
-      // 4. Find matching pending deposit (Check Memory -> Single-field UTR Firestore queries -> REST queries)
-      let matchedDeposit: any = null;
-      
-      // Step A: Memory Cache Check (0 Reads)
-      if (serverCache.deposits.size > 0) {
-        const cachedDeps = Array.from(serverCache.deposits.values()).map(d => d.data || d);
-        matchedDeposit = cachedDeps.find((d: any) => {
-          if (d.status !== "pending") return false;
-          const depUtr = String(d.utr || "").replace(/\D/g, "").trim();
-          return candidateUtrs.some(u => u === depUtr || (depUtr && cleanText.includes(depUtr)));
-        });
-      }
-
-      // Step B: Direct Single-field Firestore Query for each candidate UTR (No composite index required!)
-      if (!matchedDeposit && !useRestFallback) {
-        for (const u of candidateUtrs) {
-          try {
-            const snap = await fdb.collection("deposits")
-              .where("utr", "==", u)
-              .limit(1)
-              .get();
-            if (!snap.empty) {
-              const d = snap.docs[0];
-              const depData: any = { id: d.id, ...d.data() };
-              if (depData.status === "pending") {
-                matchedDeposit = depData;
-                serverCache.deposits.set(d.id, { data: matchedDeposit, time: Date.now() });
-                break;
-              }
-            }
-          } catch (qErr: any) {
-            console.warn(`[SMS-WEBHOOK] Firestore query for UTR ${u} failed:`, qErr.message);
-          }
-        }
-      }
-
-      // Step C: REST Fallback Query if still not found
-      if (!matchedDeposit) {
-        for (const u of candidateUtrs) {
-          try {
-            const restResults = await findDepositByUtrREST(u, "pending");
-            if (restResults && restResults.length > 0) {
-              const d = restResults[0];
-              matchedDeposit = { id: d.id, ...d.data() };
-              serverCache.deposits.set(d.id, { data: matchedDeposit, time: Date.now() });
-              break;
-            }
-          } catch (rErr) {}
-        }
-      }
-
-      if (!matchedDeposit) {
-        console.log(`[SMS-WEBHOOK] Bank SMS with UTRs ${JSON.stringify(candidateUtrs)} saved in logs. Waiting for user submission.`);
-        return res.json({ 
-          success: true, 
-          message: "SMS received & stored in logs. Deposit will auto-approve as soon as user enters UTR.", 
-          candidateUtrs,
-          parsedAmount,
-          smsLogId
-        });
-      }
-
-      // 5. If matching pending deposit is found, approve it immediately! (0 reads, 1 atomic increment)
-      const originalAmount = Number(matchedDeposit.amount || 0);
-      const targetUserId = matchedDeposit.userId || matchedDeposit.user_id;
-      const depositId = matchedDeposit.id;
-      const matchedUtr = matchedDeposit.utr;
-
-      console.log(`[SMS-WEBHOOK] Found matching pending deposit ${depositId} of amount ₹${originalAmount} for userId: ${targetUserId} using UTR: ${matchedUtr}`);
-
-      const adjustedRes: any = await adjustUserBalanceSafe(targetUserId, originalAmount);
-      if (adjustedRes && adjustedRes.success) {
-        await updateDocSafe("deposits", depositId, {
-          status: "approved",
-          verifiedAt: new Date().toISOString(),
-          processed_by: "automatic-sms-gateway",
-          actual_sms_amount: parsedAmount || originalAmount,
-          smsLogId: smsLogId || null
-        });
-
-        if (serverCache.deposits.has(depositId)) {
-          const cached = serverCache.deposits.get(depositId) || {};
-          serverCache.deposits.set(depositId, { ...cached, status: "approved" });
-        }
-
-        if (smsLogId) {
-          await updateDocSafe("bank_sms_logs", smsLogId, {
-            isUsed: true,
-            usedByUserId: targetUserId,
-            usedForDepositId: depositId,
-            usedForDepositAmount: originalAmount,
-            usedAt: new Date().toISOString()
-          });
-          if (serverCache.bank_sms_logs.has(smsLogId)) {
-            const cached = serverCache.bank_sms_logs.get(smsLogId) || {};
-            serverCache.bank_sms_logs.set(smsLogId, { ...cached, isUsed: true });
-          }
-        }
-
-        console.log(`[SMS-WEBHOOK] ✅ Payment of ₹${originalAmount} automatically approved for User ${targetUserId} via UTR: ${matchedUtr}`);
-        return res.json({ 
-          success: true, 
-          message: "Payment successfully parsed and automatically approved.", 
-          utr: matchedUtr, 
-          originalAmount, 
-          userId: targetUserId 
-        });
-      } else {
-        throw new Error("Transacting balance update failed.");
-      }
-
-    } catch (err: any) {
-      console.error("[SMS-WEBHOOK] Transaction / system error:", err.message);
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // Admin Auto-Reconcile Deposits endpoint
-  app.post("/api/admin/reconcile-deposits", async (req, res) => {
-    try {
-      const depositsSnap = await listDocsSafe("deposits", undefined, true);
-      const allDeposits = depositsSnap.docs ? depositsSnap.docs.map((d: any) => ({ id: d.id, ...(d.data ? d.data() : {}) })) : [];
-      const pendingDeposits = allDeposits.filter((d: any) => d.status === "pending");
-
-      const smsLogsSnap = await listDocsSafe("bank_sms_logs", undefined, true);
-      const smsLogs = smsLogsSnap.docs ? smsLogsSnap.docs.map((d: any) => ({ id: d.id, ...(d.data ? d.data() : {}) })) : [];
-      const unusedLogs = smsLogs.filter((log: any) => !log.isUsed);
-
-      const reconciled: any[] = [];
-
-      for (const dep of pendingDeposits) {
-        const depUtr = String(dep.utr || "").trim().toLowerCase();
-        const depAmount = Number(dep.amount || 0);
-        const depUserId = dep.userId || dep.user_id;
-
-        const matchingLog = unusedLogs.find((log: any) => {
-          if (log.isUsed) return false;
-          const utrs: string[] = Array.isArray(log.candidateUtrs) ? log.candidateUtrs : [String(log.utr || "")];
-          return utrs.some(u => String(u).trim().toLowerCase() === depUtr);
-        });
-
-        if (matchingLog) {
-          const adjustedRes: any = await adjustUserBalanceSafe(depUserId, depAmount);
-          if (adjustedRes && adjustedRes.success) {
-            await updateDocSafe("deposits", dep.id, {
-              status: "approved",
-              verifiedAt: new Date().toISOString(),
-              processed_by: "admin-auto-reconcile",
-              actual_sms_amount: matchingLog.parsedAmount || depAmount,
-              smsLogId: matchingLog.id
-            });
-
-            await updateDocSafe("bank_sms_logs", matchingLog.id, {
-              isUsed: true,
-              usedByUserId: depUserId,
-              usedForDepositId: dep.id,
-              usedForDepositAmount: depAmount,
-              usedAt: new Date().toISOString()
-            });
-
-            matchingLog.isUsed = true;
-            reconciled.push({ depositId: dep.id, utr: dep.utr, amount: depAmount, userId: depUserId });
-          }
-        }
-      }
-
-      res.json({ success: true, reconciledCount: reconciled.length, reconciled });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      console.error("[WEBHOOK-UPIGATEWAY-ERR]", err.message);
+      res.status(200).send("OK");
     }
   });
 
@@ -4050,7 +3710,7 @@ export async function startServer() {
       // Fallback: Direct Firestore REST get (fresh, 1 read directly from Firebase, bypassing stale memory)
       if (!userFound) {
         try {
-          const restSnap = await getDocREST("users", userId, token);
+          const restSnap = await getDocREST("users", userId);
           if (restSnap && restSnap.exists) {
             userDocData = restSnap.data();
             userFound = true;
@@ -4066,7 +3726,7 @@ export async function startServer() {
         const altCollections = ["profiles", "user", "accounts"];
         for (const coll of altCollections) {
           try {
-            const altSnap = await getDocREST(coll, userId, token);
+            const altSnap = await getDocREST(coll, userId);
             if (altSnap && altSnap.exists) {
               userDocData = altSnap.data();
               userFound = true;
@@ -4105,9 +3765,40 @@ export async function startServer() {
           throw lowBalErr;
         }
 
-        console.log(`[FIREBASE-DIRECT-DEDUCT] Deducting ₹${orderAmount} from User ${userId} via adjustUserBalanceSafe. Live balance: ₹${liveBalance}`);
-        const deductRes: any = await adjustUserBalanceSafe(userId, -orderAmount, token);
-        const newBalance = deductRes?.newBalance !== undefined ? deductRes.newBalance : Math.max(0, Number((liveBalance - orderAmount).toFixed(2)));
+        // Deduct upfront directly in Firebase Firestore so no subsequent order from website or app can reuse the same funds!
+        const newBalance = Math.max(0, Number((liveBalance - orderAmount).toFixed(2)));
+        console.log(`[FIREBASE-DIRECT-DEDUCT] Deducting ₹${orderAmount} from User ${userId} in Firebase. Live balance: ₹${liveBalance} -> ₹${newBalance}`);
+
+        let directDeductSuccess = false;
+        if (!useRestFallback && adminSdkSucceeded) {
+          try {
+            await fdb.collection("users").doc(userId).set({
+              balance: newBalance,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+            directDeductSuccess = true;
+          } catch (e: any) {
+            console.warn(`[FIREBASE-DIRECT-DEDUCT] Admin SDK write failed: ${e.message}`);
+          }
+        }
+
+        if (!directDeductSuccess) {
+          try {
+            const ok = await setDocREST("users", userId, { balance: newBalance, updatedAt: new Date().toISOString() });
+            if (ok) directDeductSuccess = true;
+          } catch (e: any) {
+            console.warn(`[FIREBASE-DIRECT-DEDUCT] REST write failed: ${e.message}`);
+          }
+        }
+
+        // Immediately update server RAM & disk cache so all internal endpoints see updated balance instantly (0 extra reads)
+        const updatedUserData = {
+          ...(userDocData || { uid: userId }),
+          balance: newBalance,
+          updatedAt: new Date().toISOString()
+        };
+        serverCache.users.set(userId, { data: updatedUserData, time: Date.now() });
+        savePersistentCache();
 
         currentOrderData.balanceAlreadyDeducted = true;
         currentOrderData.deductedAmount = orderAmount;

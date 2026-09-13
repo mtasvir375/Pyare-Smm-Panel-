@@ -47,8 +47,6 @@ export default function Courses() {
   const [isAddFundsOpen, setIsAddFundsOpen] = useState(false);
   const [depositAmount, setDepositAmount] = useState("");
   const [utr, setUtr] = useState("");
-  const [screenshot, setScreenshot] = useState<File | null>(null);
-  const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isOrderSuccessOpen, setIsOrderSuccessOpen] = useState(false);
   const [lastOrder, setLastOrder] = useState<any>(null);
@@ -465,35 +463,6 @@ export default function Courses() {
     setSubmitting(false);
   };
 
-  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      try {
-        const options = {
-          maxSizeMB: 0.1,
-          maxWidthOrHeight: 800,
-          useWebWorker: true,
-          fileType: "image/jpeg"
-        };
-        const compressedFile = await imageCompression(file, options);
-        setScreenshot(compressedFile);
-        const reader = new FileReader();
-        reader.onloadend = () => setScreenshotPreview(reader.result as string);
-        reader.readAsDataURL(compressedFile);
-      } catch (error) {
-        // Fallback: direct read if compression fails
-        try {
-          const reader = new FileReader();
-          reader.onloadend = () => setScreenshotPreview(reader.result as string);
-          reader.readAsDataURL(file);
-          setScreenshot(file);
-        } catch (e) {
-          toast.error("Failed to load image file");
-        }
-      }
-    }
-  };
-
   const handleAddFunds = async () => {
     if (!depositAmount || !user) {
       toast.error("Please enter an amount");
@@ -506,118 +475,33 @@ export default function Courses() {
       return;
     }
 
-    const isQrAuto = !!paymentSettings?.qrAutoEnabled;
-
-    if (isQrAuto) {
-      setIsUploading(true);
-      try {
-        const response = await axios.post("/api/deposits/verify-qr-auto", {
-          amount: Number(depositAmount),
-          utr: cleanUtr,
-          userId: user.uid,
-          userEmail: user.email,
-          client_txn_id: qrAutoData?.client_txn_id
-        });
-
-        if (response.data.success) {
-          toast.success("🎉 Payment verified! ₹" + response.data.amount + " added to wallet.");
-          setIsAddFundsOpen(false);
-          setDepositAmount("");
-          setUtr("");
-          setScreenshot(null);
-          setScreenshotPreview(null);
-          // Refresh user profile to show new balance
-          if (updateUserProfileLocal) {
-            updateUserProfileLocal({ balance: (profile?.balance || 0) + Number(response.data.amount) });
-          }
-          return;
-        }
-      } catch (error: any) {
-        console.warn("Auto verify failed, checking for manual review fallback:", error);
-        const errTxt = error.response?.data?.error || "";
-        if (errTxt.includes("already been used")) {
-          toast.error(errTxt);
-          setIsUploading(false);
-          return;
-        }
-        if (!screenshotPreview) {
-          toast.error("Auto-verification failed: " + (errTxt || "Payment not found.") + " Please upload a screenshot for manual review.");
-          setIsUploading(false);
-          return;
-        }
-        toast.info("Auto-verification failed. Submitting for manual review...");
-      }
-    }
-
-    if (!screenshotPreview && !isQrAuto) {
-      toast.error("Please upload a payment screenshot");
-      return;
-    }
-
     setIsUploading(true);
-    
     try {
-      // Use the secure API for manual deposit submission
-      const response = await axios.post("/api/deposits/submit-manual", {
+      const response = await axios.post("/api/deposits/verify-qr-auto", {
         amount: Number(depositAmount),
         utr: cleanUtr,
-        screenshotUrl: screenshotPreview,
         userId: user.uid,
-        userEmail: user.email
+        userEmail: user.email,
+        client_txn_id: qrAutoData?.client_txn_id
       });
 
       if (response.data.success) {
-        if (response.data.isAutoApproved) {
-          toast.success("🎉 Payment verified automatically! ₹" + Number(depositAmount) + " has been added to your wallet.");
-          if (updateUserProfileLocal) {
-            updateUserProfileLocal({ balance: (profile?.balance || 0) + Number(depositAmount) });
-          }
-        } else {
-          toast.success("Fund request submitted! Admin will verify and add balance soon.");
-        }
+        const credited = response.data.amount || Number(depositAmount);
+        toast.success(`🎉 Payment verified! ₹${credited} added to wallet.`);
         setIsAddFundsOpen(false);
         setDepositAmount("");
         setUtr("");
-        setScreenshot(null);
-        setScreenshotPreview(null);
+        setQrAutoData(null);
+        if (updateUserProfileLocal) {
+          updateUserProfileLocal({ balance: response.data.newBalance || ((profile?.balance || 0) + Number(credited)) });
+        }
       } else {
-        toast.error(response.data?.error || "Failed to submit request");
+        toast.error(response.data.error || "Payment verification failed. Please check your UTR.");
       }
     } catch (error: any) {
-      console.warn("API deposit submission failed, attempting direct Firestore save fallback:", error);
-      try {
-        const { collection, addDoc, serverTimestamp } = await import("firebase/firestore");
-        const { db } = await import("@/lib/firebase");
-        await addDoc(collection(db, "deposits"), {
-          userId: user.uid,
-          userEmail: user.email || "not-provided",
-          amount: Number(depositAmount),
-          utr: cleanUtr,
-          screenshotUrl: screenshotPreview || "",
-          status: "pending",
-          type: "deposit",
-          createdAt: serverTimestamp(),
-          submittedVia: "client-direct-fallback"
-        });
-
-        toast.success("Fund request submitted! Admin will verify and add balance soon.");
-        setIsAddFundsOpen(false);
-        setDepositAmount("");
-        setUtr("");
-        setScreenshot(null);
-        setScreenshotPreview(null);
-        return;
-      } catch (fallbackErr: any) {
-        console.error("Direct deposit submission fallback failed:", fallbackErr);
-      }
-
-      const serverErrMsg = error.response?.data?.error || error.response?.data?.message;
-      if (serverErrMsg) {
-        toast.error(serverErrMsg);
-      } else {
-        console.error("Payment submission failed:", error);
-        toast.error(error.message || "Failed to submit payment request. Please check your internet connection.");
-      }
+      console.warn("Payment verification error:", error);
+      const serverErrMsg = error.response?.data?.error || error.response?.data?.message || "Payment verification failed: No confirmed payment found for this UTR. Please ensure you completed the transaction and entered the correct 12-digit UTR.";
+      toast.error(serverErrMsg);
     } finally {
       setIsUploading(false);
     }
@@ -1108,8 +992,6 @@ export default function Courses() {
         if (!open) {
           setDepositAmount("");
           setUtr("");
-          setScreenshot(null);
-          setScreenshotPreview(null);
           setQrAutoData(null);
         }
       }}>
@@ -1117,7 +999,7 @@ export default function Courses() {
           <DialogHeader className="pb-2">
             <DialogTitle className="text-lg sm:text-xl font-bold">Add Funds to Wallet</DialogTitle>
             <DialogDescription className="text-xs font-medium text-gray-500">
-              Enter amount, scan QR, provide 12-digit UTR <b>AND</b> upload screenshot.
+              Enter amount, scan QR, and enter the 12-digit UTR to verify payment instantly.
             </DialogDescription>
           </DialogHeader>
 
@@ -1302,66 +1184,24 @@ export default function Courses() {
 
                       <div className="space-y-2">
                         <div className="space-y-1">
-                          <label className="text-xs font-bold text-gray-700">2. Transaction ID / UTR (Mandatory)</label>
+                          <label className="text-xs font-bold text-gray-700">2. 12-Digit Transaction UTR</label>
                           <Input 
                             placeholder="Enter 12-digit UTR number" 
                             value={utr}
-                            onChange={(e) => setUtr(e.target.value.replace(/\D/g, ''))}
-                            className="rounded-xl h-9 text-sm"
+                            onChange={(e) => setUtr(e.target.value.replace(/\D/g, '').slice(0, 12))}
+                            className="rounded-xl h-10 text-base font-mono font-bold tracking-widest text-center"
                             inputMode="numeric"
                           />
                         </div>
 
-                        {paymentSettings?.qrAutoEnabled ? (
-                          <div className="flex flex-col items-center gap-2 p-3 bg-green-50 rounded-2xl border-2 border-green-100 mb-2 relative">
-                            {isQrAutoLoading && (
-                              <div className="absolute inset-0 bg-white/60 rounded-2xl flex items-center justify-center z-20">
-                                <RefreshCw className="w-5 h-5 animate-spin text-primary" />
-                              </div>
-                            )}
-                            <div className="flex items-center gap-2 text-green-700">
-                              <Zap className="w-4 h-4 fill-green-500 text-green-500 animate-pulse" />
-                              <span className="text-xs font-bold uppercase">QR Auto-Verify Active</span>
-                            </div>
-                            <p className="text-[9px] text-green-600 font-medium text-center">Pay & enter UTR for instant credit!</p>
+                        <div className="flex flex-col items-center gap-1.5 p-3 bg-emerald-50 rounded-2xl border-2 border-emerald-100 my-2">
+                          <div className="flex items-center gap-2 text-emerald-700">
+                            <Zap className="w-4 h-4 fill-emerald-500 text-emerald-500" />
+                            <span className="text-xs font-bold uppercase">Automatic Payment Confirmation</span>
                           </div>
-                        ) : (
-                          <div className="relative">
-                            <div className="absolute inset-0 flex items-center">
-                              <span className="w-full border-t" />
-                            </div>
-                            <div className="relative flex justify-center text-[10px] uppercase">
-                              <span className="bg-white px-2 text-gray-500 font-bold">AND MANDATORY SCREENSHOT</span>
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="space-y-1">
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={handleImageChange}
-                            className="hidden"
-                            id="screenshot-upload-courses"
-                          />
-                          <label
-                            htmlFor="screenshot-upload-courses"
-                            className="flex flex-col items-center justify-center gap-1 p-3 border-2 border-dashed border-primary/20 bg-primary/5 rounded-2xl cursor-pointer hover:bg-primary/10 transition-colors"
-                          >
-                            {screenshotPreview ? (
-                              <div className="relative w-full">
-                                <img src={screenshotPreview} alt="Preview" className="w-full h-24 object-contain rounded-lg shadow-sm" />
-                                <div className="absolute top-0 right-0 bg-green-500 text-white p-1 rounded-full shadow-md">
-                                  <Check className="w-2 h-2" />
-                                </div>
-                              </div>
-                            ) : (
-                              <>
-                                <Upload className="w-5 h-5 text-primary/60" />
-                                <span className="text-[10px] text-primary/60 font-medium">Upload Payment Screenshot</span>
-                              </>
-                            )}
-                          </label>
+                          <p className="text-[10px] text-emerald-600 font-medium text-center">
+                            Transferred via Paytm, PhonePe, GPay, or UPI? Enter your 12-digit UTR and click confirm for instant wallet balance!
+                          </p>
                         </div>
                       </div>
                     </div>
@@ -1380,17 +1220,17 @@ export default function Courses() {
           {paymentMethod === "manual" && (
             <DialogFooter>
               <Button 
-                className={`w-full h-12 rounded-xl text-lg font-bold shadow-lg ${paymentSettings?.qrAutoEnabled ? 'bg-green-600 hover:bg-green-700' : 'bg-primary'}`} 
+                className="w-full h-12 rounded-xl text-base font-bold shadow-lg bg-emerald-600 hover:bg-emerald-700 text-white" 
                 onClick={handleAddFunds}
-                disabled={isUploading || !depositAmount || Number(depositAmount) <= 0 || (paymentMethod === "manual" && (!utr || utr.length < 12)) || (paymentMethod === "manual" && !paymentSettings?.qrAutoEnabled && !screenshotPreview)}
+                disabled={isUploading || !depositAmount || Number(depositAmount) <= 0 || !utr || utr.replace(/\D/g, '').length !== 12}
               >
                 {isUploading ? (
                   <>
                     <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                    Verifying...
+                    Verifying Payment...
                   </>
                 ) : (
-                  paymentSettings?.qrAutoEnabled ? "Verify & Add Balance" : "Confirm Payment"
+                  "Confirm Payment & Add Balance"
                 )}
               </Button>
             </DialogFooter>

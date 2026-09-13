@@ -38,8 +38,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { dbClient } from "@/lib/dbClient";
-import { db } from "@/lib/firebase";
-import { where, limit, orderBy, collection, query } from "firebase/firestore";
+import { where, limit, orderBy } from "firebase/firestore";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -83,7 +82,6 @@ export default function Admin() {
     try {
       const depositsList = await dbClient.getDepositsAdmin(50, true);
       setDeposits(depositsList);
-      setFetchedTabs(prev => new Set(prev).add("deposits"));
       toast.success("Deposits list refreshed!");
     } catch (e: any) {
       toast.error("Failed to refresh deposits");
@@ -91,13 +89,6 @@ export default function Admin() {
       setIsRefreshingDeposits(false);
     }
   };
-
-  // Safe tab auto-fetcher: fetches data on-demand only once per tab to protect read quota
-  useEffect(() => {
-    if (activeTab && !fetchedTabs.has(activeTab)) {
-      fetchTabData(activeTab, false);
-    }
-  }, [activeTab]);
 
   const handleSyncStats = async () => {
     if (!user?.uid || isSyncing) return;
@@ -314,7 +305,7 @@ export default function Admin() {
         const ordersList = await dbClient.getOrdersAdmin(50);
         setOrders(ordersList);
       } else if (tab === "deposits") {
-        const depositsList = await dbClient.getDepositsAdmin(50, force);
+        const depositsList = await dbClient.getDepositsAdmin(25);
         setDeposits(depositsList);
       } else if (tab === "users" && isAdmin) {
         await handleSearchUser(force);
@@ -1241,12 +1232,7 @@ export default function Admin() {
 
       <Tabs 
         value={activeTab} 
-        onValueChange={(tab) => {
-          setActiveTab(tab);
-          if (!fetchedTabs.has(tab)) {
-            fetchTabData(tab, false);
-          }
-        }}
+        onValueChange={setActiveTab}
         className="space-y-6"
       >
         <TabsList className="bg-white border p-1 rounded-2xl h-12 shadow-sm flex overflow-x-auto whitespace-nowrap hide-scrollbar">
@@ -1948,11 +1934,8 @@ export default function Admin() {
         {(isAdmin || isPaymentAdmin) && (
           <>
           <TabsContent value="deposits" className="space-y-4">
-            {isRefreshing && deposits.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 space-y-3 bg-white rounded-2xl border border-gray-100 shadow-sm">
-                <RefreshCw className="w-8 h-8 text-primary animate-spin" />
-                <p className="text-sm font-medium text-gray-600">Loading deposit requests...</p>
-              </div>
+            {!fetchedTabs.has("deposits") ? (
+              renderTabPlaceholder("deposits", "Deposits")
             ) : (
               <>
                 {/* Header Actions & Controls */}
@@ -2892,9 +2875,11 @@ export default function Admin() {
                             onChange={(e) => setQrAutoProvider(e.target.value)}
                             className="w-full rounded-xl h-12 border border-gray-200 bg-white px-3 text-sm focus:outline-none focus:ring-1 focus:ring-primary font-bold"
                           >
+                            <option value="paytm_business">Paytm Business (Auto Webhook & Status)</option>
+                            <option value="phonepe_business">PhonePe Business (Auto Webhook & Status)</option>
+                            <option value="upigateway">UPIGATEWAY.COM (Verify API)</option>
                             <option value="smmqr">SMMQR.COM (UPI Auto)</option>
                             <option value="vpaapi">VPAAPI.COM (Verify API)</option>
-                            <option value="upigateway">UPIGATEWAY.COM (Verify API)</option>
                             <option value="custom">Other Custom API</option>
                           </select>
                         </div>
@@ -2929,14 +2914,55 @@ export default function Admin() {
                       </div>
                       {qrAutoEnabled && (
                         <div className="mt-4 p-4 bg-white rounded-2xl border border-primary/20 space-y-3">
-                          <p className="text-[10px] text-primary font-bold leading-relaxed">
-                            How it works: When a user pays and enters their 12-digit UTR, our system will call {qrAutoProvider.toUpperCase()} API to verify the payment. 
-                            If verified, the amount will be added to their wallet automatically.
+                          <p className="text-[11px] text-primary font-bold leading-relaxed">
+                            ⚡ Instant Auto-Verification Active: When a user pays and enters their 12-digit UTR, the system verifies with {qrAutoProvider.toUpperCase()} / Paytm / PhonePe instantly and credits their wallet balance with zero manual admin delay.
                           </p>
                           
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 border-t border-gray-100">
+                            <div className="bg-gray-50 p-2.5 rounded-xl border border-gray-100">
+                              <p className="text-[10px] font-bold text-gray-700 uppercase mb-1">Paytm Business Webhook URL</p>
+                              <div className="flex items-center gap-1.5">
+                                <code className="text-[9px] font-mono text-primary break-all flex-1">
+                                  {window.location.origin}/api/webhooks/paytm
+                                </code>
+                                <Button 
+                                  variant="outline" 
+                                  size="sm" 
+                                  className="h-6 px-2 text-[9px] font-bold shrink-0"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(`${window.location.origin}/api/webhooks/paytm`);
+                                    toast.success("Paytm Webhook URL copied!");
+                                  }}
+                                >
+                                  Copy
+                                </Button>
+                              </div>
+                            </div>
+
+                            <div className="bg-gray-50 p-2.5 rounded-xl border border-gray-100">
+                              <p className="text-[10px] font-bold text-gray-700 uppercase mb-1">PhonePe Business Webhook URL</p>
+                              <div className="flex items-center gap-1.5">
+                                <code className="text-[9px] font-mono text-primary break-all flex-1">
+                                  {window.location.origin}/api/webhooks/phonepe
+                                </code>
+                                <Button 
+                                  variant="outline" 
+                                  size="sm" 
+                                  className="h-6 px-2 text-[9px] font-bold shrink-0"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(`${window.location.origin}/api/webhooks/phonepe`);
+                                    toast.success("PhonePe Webhook URL copied!");
+                                  }}
+                                >
+                                  Copy
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+
                           {qrAutoProvider === "upigateway" && (
                             <div className="pt-2 border-t border-gray-100">
-                              <p className="text-[10px] font-bold text-gray-500 uppercase mb-2">Webhook Configuration (Required for UPIGateway)</p>
+                              <p className="text-[10px] font-bold text-gray-500 uppercase mb-1">UPIGateway Webhook URL</p>
                               <div className="flex items-center gap-2 bg-gray-50 p-2 rounded-xl border border-gray-100">
                                 <code className="text-[9px] font-mono text-primary break-all">
                                   {window.location.origin}/api/webhooks/upigateway
@@ -2953,53 +2979,10 @@ export default function Admin() {
                                   Copy
                                 </Button>
                               </div>
-                              <p className="text-[9px] text-gray-400 mt-1 italic">Copy this URL and paste it into your UPIGateway.com dashboard Webhook setting.</p>
                             </div>
                           )}
                         </div>
                       )}
-                    </div>
-
-                    {/* Android SMS Forwarder Webhook Configuration Box */}
-                    <div className="border-t pt-6 mt-6 bg-emerald-500/5 p-6 rounded-3xl border-2 border-emerald-500/20">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-2">
-                          <span className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
-                          <h3 className="font-bold text-base text-emerald-800">Android SMS Forwarder (100% Free Auto UTR)</h3>
-                        </div>
-                      </div>
-                      <p className="text-xs text-gray-600 mb-4 leading-relaxed">
-                        Apne Android phone me <strong>SMS Forwarder</strong> app install karein aur Bank SMS ko is Webhook URL par forward karein. Koi bhi user payment karke UTR dale ya SMS pehle aaye, deposit 1-second me automatically verify hokar wallet me credit ho jayega.
-                      </p>
-
-                      <div className="space-y-3 bg-white p-4 rounded-2xl border border-emerald-500/20">
-                        <div>
-                          <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block mb-1">Webhook URL (Post Request)</label>
-                          <div className="flex items-center gap-2 bg-gray-50 p-2.5 rounded-xl border border-gray-200">
-                            <code className="text-[11px] font-mono text-emerald-700 font-bold break-all">
-                              {window.location.origin}/api/webhooks/sms-gateway?secret=secure_sms_gateway_pwd_2026
-                            </code>
-                            <Button 
-                              variant="outline" 
-                              size="sm" 
-                              className="h-8 px-3 text-xs font-bold shrink-0 text-emerald-700 hover:bg-emerald-50 border-emerald-300"
-                              onClick={() => {
-                                navigator.clipboard.writeText(`${window.location.origin}/api/webhooks/sms-gateway?secret=secure_sms_gateway_pwd_2026`);
-                                toast.success("SMS Forwarder Webhook URL Copied!");
-                              }}
-                            >
-                              Copy URL
-                            </Button>
-                          </div>
-                        </div>
-
-                        <div className="pt-2 text-[11px] text-gray-600 space-y-1">
-                          <p className="font-bold text-emerald-800">SMS Forwarder App Settings:</p>
-                          <p>1. <strong>Method:</strong> POST</p>
-                          <p>2. <strong>Format / Body Type:</strong> JSON</p>
-                          <p>3. <strong>JSON Body Template:</strong> <code className="bg-gray-100 px-1 py-0.5 rounded font-mono text-emerald-700 font-bold">{`{"text": "%msg", "from": "%from"}`}</code></p>
-                        </div>
-                      </div>
                     </div>
 
                   <div className="grid gap-4 md:grid-cols-2">

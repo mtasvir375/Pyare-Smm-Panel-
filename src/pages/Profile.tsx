@@ -84,14 +84,14 @@ export default function Profile() {
   const [generatingApiKey, setGeneratingApiKey] = useState(false);
 
   useEffect(() => {
-    if (user?.uid) {
+    if (user) {
       dbClient.getDocs("api_keys", [where("userId", "==", user.uid)]).then(docs => {
         if (docs && docs.length > 0) {
           setApiKey(docs[0].id);
         }
       }).catch(console.warn);
     }
-  }, [user?.uid]);
+  }, [user]);
 
   const generateApiKey = async () => {
     if (!user) return;
@@ -111,8 +111,6 @@ export default function Profile() {
     }
   };
   const [utr, setUtr] = useState("");
-  const [screenshot, setScreenshot] = useState<File | null>(null);
-  const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isRazorpayLoading, setIsRazorpayLoading] = useState(false);
   const [isPhonePeLoading, setIsPhonePeLoading] = useState(false);
@@ -323,33 +321,11 @@ export default function Profile() {
     }
   };
 
-  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      try {
-        const options = {
-          maxSizeMB: 0.05,
-          maxWidthOrHeight: 600,
-          useWebWorker: true
-        };
-        const compressedFile = await imageCompression(file, options);
-        setScreenshot(compressedFile);
-        const reader = new FileReader();
-        reader.onloadend = () => setScreenshotPreview(reader.result as string);
-        reader.readAsDataURL(compressedFile);
-      } catch (error) {
-        toast.error("Failed to compress image");
-      }
-    }
-  };
-
   const resetAddFunds = () => {
     setIsAddFundsOpen(false);
     setPaymentStep("amount");
     setAmount("");
     setUtr("");
-    setScreenshot(null);
-    setScreenshotPreview(null);
     setQrAutoData(null);
   };
 
@@ -377,9 +353,6 @@ export default function Profile() {
         setPaymentStep("payment");
       } catch (err: any) {
         console.error("Auto pre-order failed:", err);
-        const errMsg = err.response?.data?.error || err.message || "Connection failed";
-        toast.error(`Payment Initialization Error: ${errMsg}`);
-        // If it fails, we still let them proceed to payment step with fallback to manual
         setPaymentStep("payment");
       } finally {
         setIsQrAutoLoading(false);
@@ -395,123 +368,38 @@ export default function Profile() {
       return;
     }
 
-    if (!utr || utr.replace(/\D/g, "").length < 12) {
-      toast.error("Please provide a valid 12-digit UTR number");
-      return;
-    }
-
-    // Screenshot is optional for Auto verification but mandatory for manual fallback
-    const isAutoMode = !!paymentSettings?.qrAutoEnabled;
-    
-    if (!isAutoMode && !screenshotPreview) {
-      toast.error("Please upload a payment screenshot");
-      return;
-    }
-
-    const numAmount = Number(amount);
-    const cleanUtr = utr.replace(/\D/g, ""); // Keep only digits
-
+    const cleanUtr = utr.replace(/\D/g, "");
     if (cleanUtr.length !== 12) {
-      toast.error("UTR must be exactly 12 digits.");
+      toast.error("Please provide a valid 12-digit UTR number");
       return;
     }
 
     setIsUploading(true);
     try {
-      if (isAutoMode) {
-        // 1. Try Automatic Verification first if enabled
-        try {
-          const response = await axios.post("/api/deposits/verify-qr-auto", {
-            amount: numAmount,
-            utr: cleanUtr,
-            userId: user?.uid,
-            userEmail: user?.email,
-            client_txn_id: qrAutoData?.client_txn_id
-          });
+      const numAmount = Number(amount);
 
-          if (response.data.success) {
-            toast.success("🎉 Payment verified automatically! ₹" + numAmount + " added to wallet.");
-            resetAddFunds();
-            // Refresh profile balance locally if possible
-            if (updateUserProfileLocal) {
-              updateUserProfileLocal({ balance: response.data.newBalance || ((profile?.balance || 0) + numAmount) });
-            }
-            return;
-          }
-        } catch (autoError: any) {
-          console.warn("[AUTO-VERIFY-FAILED] Falling back to manual submission", autoError);
-          const errorMsg = autoError.response?.data?.error || "";
-          
-          if (errorMsg.includes("already been used")) {
-            toast.error(errorMsg);
-            setIsUploading(false);
-            return;
-          }
-
-          // If auto verify failed because it's not found, we can proceed to manual submission
-          // to let admin handle it, but only if they uploaded a screenshot.
-          if (!screenshotPreview) {
-            toast.error("Auto-verification failed: " + (errorMsg || "Payment not found.") + " Please upload a screenshot for manual review.");
-            setIsUploading(false);
-            return;
-          }
-          toast.info("Auto-verification failed. Submitting for manual review...");
-        }
-      }
-
-      // 2. Standard Manual Submission (or fallback from failed auto)
-      const response = await axios.post("/api/deposits/submit-manual", {
+      const response = await axios.post("/api/deposits/verify-qr-auto", {
         amount: numAmount,
         utr: cleanUtr,
-        screenshotUrl: screenshotPreview,
-        userId: user?.uid,
-        userEmail: user?.email
+        userId: user.uid,
+        userEmail: user.email,
+        client_txn_id: qrAutoData?.client_txn_id
       });
 
       if (response.data.success) {
-        if (response.data.isAutoApproved) {
-          toast.success("🎉 Payment verified automatically! ₹" + numAmount + " added to your wallet.");
-          if (updateUserProfileLocal) {
-            updateUserProfileLocal({ balance: (profile?.balance || 0) + numAmount });
-          }
-        } else {
-          toast.success("Fund request submitted! Admin will verify it soon.");
-        }
+        const credited = response.data.amount || numAmount;
+        toast.success(`🎉 Payment verified automatically! ₹${credited} added to wallet.`);
         resetAddFunds();
+        if (updateUserProfileLocal) {
+          updateUserProfileLocal({ balance: response.data.newBalance || ((profile?.balance || 0) + Number(credited)) });
+        }
       } else {
-        toast.error(response.data?.error || "Submission failed.");
+        toast.error(response.data.error || "Payment verification failed. Please check your UTR.");
       }
     } catch (error: any) {
-      console.warn("API deposit submission failed, attempting direct Firestore save fallback:", error);
-      try {
-        const { collection, addDoc, serverTimestamp } = await import("firebase/firestore");
-        const { db } = await import("@/lib/firebase");
-        await addDoc(collection(db, "deposits"), {
-          userId: user?.uid,
-          userEmail: user?.email || "not-provided",
-          amount: numAmount,
-          utr: cleanUtr,
-          screenshotUrl: screenshotPreview || "",
-          status: "pending",
-          type: "deposit",
-          createdAt: serverTimestamp(),
-          submittedVia: "client-direct-fallback"
-        });
-
-        toast.success("Fund request submitted! Admin will verify it soon.");
-        resetAddFunds();
-        return;
-      } catch (fallbackErr: any) {
-        console.error("Direct deposit submission fallback failed:", fallbackErr);
-      }
-
-      const serverErrMsg = error.response?.data?.error || error.response?.data?.message;
-      if (serverErrMsg) {
-        toast.error(serverErrMsg);
-      } else {
-        console.error("Payment submission failed:", error);
-        toast.error(error.message || "Failed to submit payment request. Please check your internet connection.");
-      }
+      console.warn("[PAYMENT-VERIFY-FAILED]", error);
+      const serverErrMsg = error.response?.data?.error || error.response?.data?.message || "Payment verification failed. Please ensure you completed the payment and entered the exact 12-digit UTR.";
+      toast.error(serverErrMsg);
     } finally {
       setIsUploading(false);
     }
@@ -806,7 +694,7 @@ export default function Profile() {
 
                           <div className="space-y-3">
                             <div className="space-y-1.5">
-                              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider ml-1">Step 1: Enter 12-Digit UTR</label>
+                              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider ml-1">Enter 12-Digit UTR Number</label>
                               <Input 
                                 placeholder="e.g. 418293021922" 
                                 value={utr}
@@ -816,65 +704,30 @@ export default function Profile() {
                               />
                             </div>
 
-                            {!paymentSettings?.qrAutoEnabled ? (
-                              <div className="space-y-1.5">
-                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider ml-1">Step 2: Upload Screenshot</label>
-                                <input
-                                  type="file"
-                                  accept="image/*"
-                                  onChange={handleImageChange}
-                                  className="hidden"
-                                  id="screenshot-upload"
-                                />
-                                <label
-                                  htmlFor="screenshot-upload"
-                                  className="flex items-center justify-between p-3 border-2 border-dashed border-gray-100 bg-gray-50/50 rounded-xl cursor-pointer hover:bg-gray-100 transition-colors"
-                                >
-                                  {screenshotPreview ? (
-                                    <div className="flex items-center gap-3 w-full">
-                                      <img src={screenshotPreview} alt="Preview" className="w-10 h-10 object-cover rounded-lg border border-white shadow-sm" />
-                                      <span className="text-xs font-bold text-green-600 flex items-center">
-                                        <Check className="w-3 h-3 mr-1" /> Image Uploaded
-                                      </span>
-                                    </div>
-                                  ) : (
-                                    <>
-                                      <div className="flex items-center gap-2">
-                                        <Upload className="w-4 h-4 text-gray-400" />
-                                        <span className="text-xs font-bold text-gray-500">Select payment proof</span>
-                                      </div>
-                                      <span className="text-[10px] bg-white px-2 py-1 rounded-md border border-gray-100 font-bold text-gray-400">SELECT</span>
-                                    </>
-                                  )}
-                                </label>
-                              </div>
-                            ) : (
-                              <div className="p-3 bg-blue-50 rounded-xl border border-blue-100">
-                                <p className="text-[9px] text-blue-600 font-bold text-center leading-tight">
-                                  <AlertCircle className="w-3 h-3 inline mr-1" />
-                                  Screenshot is optional for Auto-Verification. Just enter UTR!
-                                </p>
-                              </div>
-                            )}
+                            <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-100">
+                              <p className="text-[10px] text-emerald-700 font-semibold text-center leading-tight">
+                                ✨ Automatic Confirmation Active: Enter your 12-digit UTR from PhonePe, Paytm, GPay, or any UPI app. Funds are credited instantly!
+                              </p>
+                            </div>
 
-                            <div className="pt-2">
+                            <div className="pt-2 space-y-2">
                               <Button 
-                                className={`w-full h-12 rounded-xl text-base font-bold shadow-lg ${paymentSettings?.qrAutoEnabled ? 'bg-green-600 hover:bg-green-700' : ''}`} 
+                                className="w-full h-12 rounded-xl text-base font-bold shadow-lg bg-emerald-600 hover:bg-emerald-700 text-white" 
                                 onClick={handleAddFunds}
-                                disabled={isUploading || !utr || utr.length < 12 || (!paymentSettings?.qrAutoEnabled && !screenshotPreview)}
+                                disabled={isUploading || !utr || utr.replace(/\D/g, '').length !== 12}
                               >
                                 {isUploading ? (
                                   <>
                                     <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                                    Verifying...
+                                    Verifying Payment...
                                   </>
                                 ) : (
-                                  paymentSettings?.qrAutoEnabled ? "Verify & Add Funds" : "Confirm & Add Balance"
+                                  "Confirm Payment & Add Balance"
                                 )}
                               </Button>
                               <button 
                                 onClick={() => setPaymentStep("amount")}
-                                className="w-full mt-2 text-[10px] font-bold text-gray-400 uppercase hover:text-primary transition-colors"
+                                className="w-full text-[10px] font-bold text-gray-400 uppercase hover:text-primary transition-colors py-1"
                               >
                                 ← Go back and change amount
                               </button>

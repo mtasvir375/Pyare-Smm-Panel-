@@ -12,6 +12,7 @@ import {
   limit, 
   serverTimestamp,
   Timestamp,
+  onSnapshot,
   getCountFromServer,
   addDoc as firestoreAddDoc
 } from 'firebase/firestore';
@@ -236,22 +237,13 @@ export const dbClient = {
   async getPendingDeposits(force = false): Promise<any[]> {
     try {
       const res = await axios.get(`/api/admin/all-deposits?limit=50&force=${force}`);
-      if (Array.isArray(res.data) && res.data.length > 0) {
+      if (Array.isArray(res.data)) {
         return res.data.filter((d: any) => (d.status || '').toLowerCase() === 'pending');
       }
     } catch (e) {
       console.warn("[DB-CLIENT] getPendingDeposits API failed:", e);
     }
-    // Direct Firestore fallback
-    try {
-      const colRef = collection(db, 'deposits');
-      const snap = await getDocs(query(colRef, limit(100)));
-      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      return list.filter((d: any) => (d.status || '').toLowerCase() === 'pending');
-    } catch (err: any) {
-      console.warn("[DB-CLIENT] Direct Firestore getPendingDeposits failed:", err.message);
-      return [];
-    }
+    return [];
   },
 
   async getDepositsAdmin(l = 50, force = false): Promise<any[]> {
@@ -259,42 +251,7 @@ export const dbClient = {
       const res = await axios.get(`/api/admin/all-deposits?limit=${l}&force=${force}`);
       if (Array.isArray(res.data)) return res.data;
     } catch (e) {
-      console.warn("[DB-CLIENT] getDepositsAdmin API failed, trying direct Firestore fallback...", e);
-    }
-
-    // Direct Firestore Web SDK Fallback (Guaranteed to work on all custom domains & Vercel)
-    try {
-      const colRef = collection(db, 'deposits');
-      const snap = await getDocs(query(colRef, limit(Math.min(l, 30))));
-      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-      // Sort: Pending requests first, then newest timestamp first
-      list.sort((a: any, b: any) => {
-        const aPending = (a.status || '').toLowerCase() === 'pending' ? 1 : 0;
-        const bPending = (b.status || '').toLowerCase() === 'pending' ? 1 : 0;
-        if (aPending !== bPending) return bPending - aPending;
-
-        const getTime = (item: any) => {
-          if (!item) return 0;
-          if (item.createdAt?.toDate) return item.createdAt.toDate().getTime();
-          if (item.createdAt) {
-            const t = new Date(item.createdAt).getTime();
-            if (!isNaN(t)) return t;
-          }
-          if (item.timestamp?.toDate) return item.timestamp.toDate().getTime();
-          if (item.timestamp) {
-            const t = new Date(item.timestamp).getTime();
-            if (!isNaN(t)) return t;
-          }
-          return 0;
-        };
-        return getTime(b) - getTime(a);
-      });
-
-      console.log(`[DB-CLIENT] Fetched ${list.length} deposits directly from Firestore (Pending: ${list.filter((d: any) => (d.status || '').toLowerCase() === 'pending').length})`);
-      return list;
-    } catch (fsErr: any) {
-      console.error("[DB-CLIENT] Direct Firestore getDepositsAdmin failed:", fsErr);
+      console.warn("[DB-CLIENT] getDepositsAdmin API failed:", e);
     }
     return [];
   },
@@ -313,17 +270,12 @@ export const dbClient = {
       throw new Error(res.data?.error || "Process deposit failed");
     } catch (err: any) {
       console.warn(`[DB-CLIENT] Backend process-deposit failed: ${err.message}, attempting client-side update...`);
-      let dep = deposit;
-      if (!dep) {
-        dep = await this.getDoc("deposits", depositId);
-      }
-      if (action === 'approved') {
-        const uId = dep?.userId || dep?.user_id;
-        const depositAmount = Number(dep?.amount || 0);
-        if (!uId) throw new Error("Deposit has no user ID associated with it");
+      if (action === 'approved' && deposit) {
+        const uId = deposit.userId || deposit.user_id;
+        const depositAmount = Number(deposit.amount || 0);
         const userProfile = await this.getUserProfile(uId);
-        const currentBalance = Number(userProfile?.balance || 0);
-        const newBalance = Number((currentBalance + depositAmount).toFixed(2));
+        if (!userProfile) throw new Error("User not found");
+        const newBalance = Number(userProfile.balance || 0) + depositAmount;
         await this.updateUserProfile(uId, { balance: newBalance });
         await this.updateDoc("deposits", depositId, {
           status: 'approved',
@@ -331,14 +283,14 @@ export const dbClient = {
           updatedAt: new Date().toISOString(),
           processedBy: adminEmail || 'admin'
         });
-        return { success: true, status: 'approved', depositId, amount: depositAmount, newBalance };
+        return { success: true, status: 'approved' };
       } else {
         await this.updateDoc("deposits", depositId, {
           status: 'cancelled',
           updatedAt: new Date().toISOString(),
           processedBy: adminEmail || 'admin'
         });
-        return { success: true, status: 'cancelled', depositId };
+        return { success: true, status: 'cancelled' };
       }
     }
   },
@@ -478,12 +430,13 @@ export const dbClient = {
   },
 
   observeOrder(id: string, callback: (data: any) => void): () => void {
-    // Replaced onSnapshot with safe one-time getDoc to eliminate any potential snapshot listener leak
-    this.getDoc('orders', id).then((data) => {
-      callback(data);
-    }).catch(() => {
-      callback(null);
+    const docRef = doc(db, 'orders', id);
+    return onSnapshot(docRef, (snap) => {
+      if (snap.exists()) {
+        callback({ id: snap.id, ...snap.data() });
+      } else {
+        callback(null);
+      }
     });
-    return () => {};
   }
 };
