@@ -1,5 +1,49 @@
 {
-  "settings": null,
+  "settings": {
+    "data": {
+      "paytmMerchantKey": "",
+      "customGateway2Enabled": false,
+      "paytmEnabled": false,
+      "selectedTheme": "amber",
+      "phonepeMerchantId": "",
+      "paymentQrUrl": "",
+      "phonepeEnv": "sandbox",
+      "customGateway1Name": "",
+      "qrAutoEnabled": false,
+      "qrAutoUrl": "",
+      "whatsappChatNumber": "9942658657",
+      "customGateway2Key": "",
+      "phonepeEnabled": false,
+      "customGateway1Key": "",
+      "whatsappLink": "https://wa.me/919999999999",
+      "customGateway2Url": "",
+      "updatedAt": "2026-09-14T12:51:13.361Z",
+      "phonepeSaltIndex": "1",
+      "selectedFestivalTheme": "none",
+      "providerApiUrl": "",
+      "qrAutoProvider": "smmqr",
+      "phonepeSaltKey": "",
+      "qrAutoApiKey": "",
+      "razorpayEnabled": false,
+      "customGateway1Enabled": false,
+      "qrAutoToken": "",
+      "customGateway1Secret": "",
+      "customGateway2Name": "",
+      "customGateway1Url": "",
+      "customGateway2Secret": "",
+      "upiId": "Poahahsgzgs@2762@paytm",
+      "razorpayKeyId": "",
+      "paytmMid": "",
+      "razorpayKeySecret": "",
+      "backendApiUrl": "",
+      "providerApiKey": "",
+      "autoApproveDeposits": false,
+      "merchantName": "Pyare SMM Panel",
+      "paytmEnv": "sandbox",
+      "guideVideoUrl": ""
+    },
+    "time": 1789391945104
+  },
   "providers": [
     [
       "z9lfdj7ByNCeGNO6WbGZ",
@@ -11,7 +55,7 @@
           "apiKey": "f55bb2dfdc035f9c3c9e737bb72922a51d64309f",
           "createdAt": "2026-08-02T09:17:43.468Z"
         },
-        "time": 1789389812180
+        "time": 1789391951641
       }
     ],
     [
@@ -24,7 +68,7 @@
           "name": "Wholesale Smm Store",
           "createdAt": "2026-09-05T12:48:32.453Z"
         },
-        "time": 1789389812180
+        "time": 1789391951641
       }
     ],
     [
@@ -37,7 +81,7 @@
           "apiUrl": "https://themainsmmprovider.com/api/v2",
           "createdAt": "2026-09-10T20:14:43.351Z"
         },
-        "time": 1789389812180
+        "time": 1789391951641
       }
     ],
     [
@@ -50,7 +94,7 @@
           "apiUrl": "https://mainsmmpanel.in/api/v2",
           "createdAt": "2026-09-05T23:36:15.263Z"
         },
-        "time": 1789389812180
+        "time": 1789391951641
       }
     ]
   ],
@@ -78,7 +122,7 @@
           "pricePerThousand": 320,
           "updatedAt": "2026-09-12T07:59:23.275Z"
         },
-        "time": 1789389818400
+        "time": 1789390276304
       }
     ],
     [
@@ -105,7 +149,7 @@
           "pricePerThousand": 1,
           "updatedAt": "2026-09-10T18:13:49.487Z"
         },
-        "time": 1789389818400
+        "time": 1789390276304
       }
     ],
     [
@@ -132,7 +176,7 @@
           "pricePerThousand": 12,
           "updatedAt": "2026-09-10T18:13:36.024Z"
         },
-        "time": 1789389818400
+        "time": 1789390276304
       }
     ],
     [
@@ -159,7 +203,7 @@
           "pricePerThousand": 10,
           "updatedAt": "2026-09-07T09:30:05.354Z"
         },
-        "time": 1789389818400
+        "time": 1789390276304
       }
     ],
     [
@@ -186,7 +230,7 @@
           "providerId": "z9lfdj7ByNCeGNO6WbGZ",
           "updatedAt": "2026-09-06T08:18:31.357Z"
         },
-        "time": 1789389818400
+        "time": 1789390276304
       }
     ],
     [
@@ -213,7 +257,7 @@
           "packageQuantity": null,
           "updatedAt": "2026-08-31T10:53:41.899Z"
         },
-        "time": 1789389818400
+        "time": 1789390276304
       }
     ],
     [
@@ -240,7 +284,7 @@
           "isCombo": false,
           "updatedAt": "2026-08-31T10:52:13.501Z"
         },
-        "time": 1789389818400
+        "time": 1789390276304
       }
     ],
     [
@@ -267,7 +311,7 @@
           "packageQuantity": null,
           "updatedAt": "2026-08-31T10:50:22.385Z"
         },
-        "time": 1789389818400
+        "time": 1789390276304
       }
     ],
     [
@@ -294,7 +338,7 @@
           "preventDuplicateLink": false,
           "createdAt": "2026-09-08T19:29:49.343Z"
         },
-        "time": 1789389818400
+        "time": 1789390276304
       }
     ],
     [
@@ -321,7 +365,7 @@
           "serviceType": "followers",
           "createdAt": "2026-09-08T19:29:16.917Z"
         },
-        "time": 1789389818400
+        "time": 1789390276304
       }
     ],
     [
@@ -348,7 +392,7 @@
           "minLimit": 500,
           "updatedAt": "2026-09-04T17:45:57.323Z"
         },
-        "time": 1789389818400
+        "time": 1789390276304
       }
     ],
     [
@@ -375,7 +419,7 @@
           "minLimit": 100,
           "updatedAt": "2026-08-31T11:03:48.476Z"
         },
-        "time": 1789389818400
+        "time": 1789390276304
       }
     ],
     [
@@ -402,7 +446,7 @@
           "pricePerThousand": 46,
           "updatedAt": "2026-08-31T10:57:50.123Z"
         },
-        "time": 1789389818400
+        "time": 1789390276304
       }
     ],
     [
@@ -429,7 +473,7 @@
           "isCombo": false,
           "updatedAt": "2026-08-31T10:51:14.552Z"
         },
-        "time": 1789389818400
+        "time": 1789390276304
       }
     ],
     [
@@ -457,7 +501,7 @@
           "packageQuantity": null,
           "updatedAt": "2026-09-05T23:28:11.098Z"
         },
-        "time": 1789389818400
+        "time": 1789390276304
       }
     ],
     [
@@ -485,7 +529,7 @@
           "providerId": "talVdnSEg8QGpNVpaUTi",
           "providerName": "Wholesale Smm Store"
         },
-        "time": 1789389818400
+        "time": 1789390276304
       }
     ],
     [
@@ -512,7 +556,7 @@
           "packageQuantity": null,
           "updatedAt": "2026-08-31T10:56:50.712Z"
         },
-        "time": 1789389818400
+        "time": 1789390276304
       }
     ],
     [
@@ -539,7 +583,7 @@
           "packageQuantity": null,
           "updatedAt": "2026-08-31T10:54:44.003Z"
         },
-        "time": 1789389818400
+        "time": 1789390276304
       }
     ],
     [
@@ -566,7 +610,7 @@
           "minLimit": 300,
           "updatedAt": "2026-09-05T23:45:45.337Z"
         },
-        "time": 1789389818400
+        "time": 1789390276304
       }
     ],
     [
@@ -593,11 +637,34 @@
           "serviceType": "followers",
           "createdAt": "2026-09-05T23:26:21.899Z"
         },
-        "time": 1789389818400
+        "time": 1789390276304
       }
     ]
   ],
-  "users": [],
+  "users": [
+    [
+      "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      {
+        "data": {
+          "id": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "updatedAt": "2026-09-13T14:49:04.293Z",
+          "createdAt": {
+            "_methodName": "serverTimestamp"
+          },
+          "email": "mtasvir375@gmail.com",
+          "balance": 0,
+          "role": "student",
+          "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "last_ordered_at": "2026-07-12T20:24:51.921Z",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIVDCPXKVjVCP0jqcCpWx5c759WFIsH20U7smDKXtVCJQmldT5A=s96-c",
+          "lastOrderedAt": "2026-06-16T15:45:53.831Z",
+          "lastActive": "2026-06-17T09:24:31.827Z",
+          "displayName": "Md Saad Alam"
+        },
+        "time": 1789389954085
+      }
+    ]
+  ],
   "deposits": [],
   "orders": []
 }

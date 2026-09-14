@@ -68,6 +68,7 @@ axios.defaults.httpAgent = keepAliveHttpAgent;
     if (!admin.apps.length) {
       try {
         adminApp = admin.initializeApp({
+          projectId: configProjectId,
           credential: admin.credential.applicationDefault()
         });
         console.log(`[FIREBASE] Admin SDK initialized with default credentials.`);
