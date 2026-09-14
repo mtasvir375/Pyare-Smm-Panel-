@@ -536,31 +536,15 @@ export async function startServer() {
 
     // Seed defaults if empty
     if (serverCache.courses.size === 0) {
-      DEFAULT_COURSES_SEED.forEach(s => {
-        serverCache.courses.set(s.id, { data: s, time: Date.now() });
-      });
-      serverCachedCourses = DEFAULT_COURSES_SEED;
-      serverCachedCoursesTime = Date.now();
-      console.log(`[PERSISTENT-CACHE] Seeded ${serverCache.courses.size} default courses into memory.`);
+      console.log(`[PERSISTENT-CACHE] No default courses seeded into memory.`);
     }
 
     if (serverCache.providers.size === 0) {
-      DEFAULT_PROVIDERS_SEED.forEach(([id, cacheObj]) => {
-        serverCache.providers.set(id, cacheObj);
-      });
-      console.log(`[PERSISTENT-CACHE] Seeded ${serverCache.providers.size} default providers.`);
+      console.log(`[PERSISTENT-CACHE] No default providers seeded to allow fetching from DB.`);
     }
 
     if (!serverCache.settings || !serverCache.settings.data) {
-      serverCache.settings = {
-        data: {
-          providerApiKey: "f55bb2dfdc035f9c3c9e737bb72922a51d64309f",
-          providerApiUrl: "https://www.smmbin.com/api/v2",
-          merchantName: "Pyare SMM Panel"
-        },
-        time: Date.now()
-      };
-      console.log("[PERSISTENT-CACHE] Seeded default settings.");
+      console.log("[PERSISTENT-CACHE] No default settings seeded to allow fetching from DB.");
     }
   };
 
@@ -1048,9 +1032,8 @@ export async function startServer() {
 
     // CACHE-FIRST: If settings and providers are already loaded from persistent disk cache,
     // do NOT perform a test read or sync against Firestore on startup! (0 Firestore reads)
-    const isDefaultSetting = serverCache.settings?.data?.providerApiKey === "f55bb2dfdc035f9c3c9e737bb72922a51d64309f";
     
-    if (serverCache.settings && serverCache.settings.data && !isDefaultSetting) {
+    if (serverCache.settings && serverCache.settings.data) {
       console.log("[STARTUP] Cache-first: settings/payment already loaded from persistent disk. Skipping Firestore test read.");
       adminSdkSucceeded = true;
       useRestFallback = false;
@@ -1158,34 +1141,46 @@ export async function startServer() {
     // Bypassing Firestore read completely for SMM providers, Global settings, and services if called internally (no token) and already cached
     if (!token && !forceFresh) {
       if (collect === "settings" && id === "payment" && serverCache.settings && (now - (serverCache.settings.time || 0) < CACHE_TTL)) {
-        console.log(`[GET-SAFE-INTERNAL] Serving settings/payment from persistent cache (no token).`);
-        return { exists: true, data: () => serverCache.settings.data };
+        if (serverCache.settings.data?.providerApiKey !== "f55bb2dfdc035f9c3c9e737bb72922a51d64309f") {
+          console.log(`[GET-SAFE-INTERNAL] Serving settings/payment from persistent cache (no token).`);
+          return { exists: true, data: () => serverCache.settings.data };
+        }
       }
       if (collect === "providers" && id && serverCache.providers.has(id)) {
-        console.log(`[GET-SAFE-INTERNAL] Serving providers/${id} from persistent cache (no token).`);
-        return { exists: true, data: () => serverCache.providers.get(id).data };
+        if (!serverCache.providers.has("z9lfdj7ByNCeGNO6WbGZ") || serverCache.providers.size > 10) {
+          console.log(`[GET-SAFE-INTERNAL] Serving providers/${id} from persistent cache (no token).`);
+          return { exists: true, data: () => serverCache.providers.get(id).data };
+        }
       }
       if (collect === "courses" && id && serverCache.courses.has(id)) {
-        console.log(`[GET-SAFE-INTERNAL] Serving courses/${id} from persistent cache (no token).`);
-        return { exists: true, data: () => serverCache.courses.get(id).data };
+        if (!serverCache.courses.has("srv_ig_followers_nondrop") || serverCache.courses.size > 20) {
+          console.log(`[GET-SAFE-INTERNAL] Serving courses/${id} from persistent cache (no token).`);
+          return { exists: true, data: () => serverCache.courses.get(id).data };
+        }
       }
     }
 
     // Cache lookup for common static/global configurations (always safe to cache regardless of user auth tokens)
     if (!forceFresh) {
       if (collect === "settings" && id === "payment" && serverCache.settings && now - serverCache.settings.time < CACHE_TTL) {
-        return { exists: true, data: () => serverCache.settings.data };
+        if (serverCache.settings.data?.providerApiKey !== "f55bb2dfdc035f9c3c9e737bb72922a51d64309f") {
+          return { exists: true, data: () => serverCache.settings.data };
+        }
       }
       if (collect === "courses" && id && serverCache.courses && serverCache.courses.has(id)) {
-        const cached = serverCache.courses.get(id);
-        if (now - cached.time < CACHE_TTL) {
-          return { exists: true, data: () => cached.data };
+        if (!serverCache.courses.has("srv_ig_followers_nondrop") || serverCache.courses.size > 20) {
+          const cached = serverCache.courses.get(id);
+          if (now - cached.time < CACHE_TTL) {
+            return { exists: true, data: () => cached.data };
+          }
         }
       }
       if (collect === "providers" && id && serverCache.providers && serverCache.providers.has(id)) {
-        const cached = serverCache.providers.get(id);
-        if (now - cached.time < CACHE_TTL) {
-          return { exists: true, data: () => cached.data };
+        if (!serverCache.providers.has("z9lfdj7ByNCeGNO6WbGZ") || serverCache.providers.size > 10) {
+          const cached = serverCache.providers.get(id);
+          if (now - cached.time < CACHE_TTL) {
+            return { exists: true, data: () => cached.data };
+          }
         }
       }
     }
@@ -1675,7 +1670,7 @@ export async function startServer() {
         } else if (serverCachedCourses && serverCachedCourses.length > 0) {
           results = serverCachedCourses;
         } else {
-          results = DEFAULT_COURSES_SEED;
+          results = []; // Do not use default seed
         }
         
         const mapped = results.map(c => ({
@@ -1850,23 +1845,13 @@ export async function startServer() {
       }
       const snap = await listDocsSafe("providers", req.headers.authorization as string, false);
       let providersList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      if (!providersList || providersList.length === 0) {
-        DEFAULT_PROVIDERS_SEED.forEach(([id, cacheObj]) => {
-          serverCache.providers.set(id, cacheObj);
-        });
-        providersList = Array.from(serverCache.providers.entries()).map(([id, p]) => ({ id, ...(p?.data ? p.data : p) }));
-      } else {
+      if (providersList && providersList.length > 0) {
         providersList.forEach(p => serverCache.providers.set(p.id, { data: p, time: Date.now() }));
+        savePersistentCache();
       }
-      savePersistentCache();
       res.json(providersList);
     } catch (err: any) {
       console.error("[SERVER-DB] Error fetching providers:", err.message);
-      if (serverCache.providers.size === 0) {
-        DEFAULT_PROVIDERS_SEED.forEach(([id, cacheObj]) => {
-          serverCache.providers.set(id, cacheObj);
-        });
-      }
       const fallbackList = Array.from(serverCache.providers.entries()).map(([id, p]) => ({ id, ...(p?.data ? p.data : p) }));
       res.json(fallbackList);
     }
@@ -1896,7 +1881,7 @@ export async function startServer() {
     if (checkQuotaCooldown()) {
       console.log("[SERVER-CACHE] Quota circuit breaker active: serving in-memory/default courses (0 reads)");
       if (serverCachedCourses && serverCachedCourses.length > 0) return res.json(serverCachedCourses);
-      return res.json(DEFAULT_COURSES_SEED);
+      return res.json([]); // Do not use default seed
     }
 
     try {
@@ -1936,7 +1921,7 @@ export async function startServer() {
         if (serverCache.courses.size > 0) {
           return res.json(Array.from(serverCache.courses.values()).map(c => c.data || c));
         }
-        return res.json(DEFAULT_COURSES_SEED);
+        return res.json([]); // Do not use default seed
       }
 
       // Only show services that are not explicitly 'archived' or 'hidden'
@@ -1979,7 +1964,7 @@ export async function startServer() {
       if (serverCache.courses.size > 0) {
         return res.json(Array.from(serverCache.courses.values()).map(c => c.data || c));
       }
-      return res.json(DEFAULT_COURSES_SEED);
+      return res.json([]); // Do not use default seed
     }
   });
 
@@ -1988,11 +1973,15 @@ export async function startServer() {
     const isFresh = req.query.fresh === "1" || req.query.fresh === "true" || req.query.force === "true";
     const now = Date.now();
     if (!isFresh && serverCachedSettings && (now - serverCachedSettingsTime < BACKEND_CACHE_DURATION)) {
-      return res.json(serverCachedSettings);
+      if (serverCachedSettings.providerApiKey !== "f55bb2dfdc035f9c3c9e737bb72922a51d64309f") {
+        return res.json(serverCachedSettings);
+      }
     }
 
     if (checkQuotaCooldown() && serverCache.settings?.data) {
-      return res.json(serverCache.settings.data);
+      if (serverCache.settings.data.providerApiKey !== "f55bb2dfdc035f9c3c9e737bb72922a51d64309f") {
+        return res.json(serverCache.settings.data);
+      }
     }
 
     try {
