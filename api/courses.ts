@@ -53,7 +53,37 @@ export default async function handler(req: any, res: any) {
       return { id, ...data };
     });
 
-    res.setHeader("Cache-Control", "public, s-maxage=300, stale-while-revalidate=600");
+    const categoryOrder = ["Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Twitter", "Other"];
+    const getTimestamp = (item: any) => {
+      const val = item.updatedAt || item.updated_at || item.createdAt || item.created_at;
+      if (!val) return 0;
+      if (typeof val.toDate === "function") return val.toDate().getTime();
+      if (typeof val.seconds === "number") return val.seconds * 1000;
+      if (val._seconds !== undefined) return val._seconds * 1000;
+      const t = new Date(val).getTime();
+      return isNaN(t) ? 0 : t;
+    };
+
+    courses.sort((a: any, b: any) => {
+      const catA = a.category || "Other";
+      const catB = b.category || "Other";
+
+      if (catA.toLowerCase() === "instagram" && catB.toLowerCase() !== "instagram") return -1;
+      if (catB.toLowerCase() === "instagram" && catA.toLowerCase() !== "instagram") return 1;
+
+      const orderA = categoryOrder.findIndex(c => c.toLowerCase() === catA.toLowerCase());
+      const orderB = categoryOrder.findIndex(c => c.toLowerCase() === catB.toLowerCase());
+      const rankA = orderA === -1 ? 999 : orderA;
+      const rankB = orderB === -1 ? 999 : orderB;
+      if (rankA !== rankB) return rankA - rankB;
+
+      // Within category: latest updated / added on top
+      const timeA = getTimestamp(a);
+      const timeB = getTimestamp(b);
+      return timeB - timeA;
+    });
+
+    res.setHeader("Cache-Control", "public, s-maxage=60, stale-while-revalidate=120");
     return res.status(200).json(courses);
   } catch (err: any) {
     console.error("[VERCEL-API-COURSES] Error:", err.message);

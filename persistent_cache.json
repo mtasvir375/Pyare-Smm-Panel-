@@ -42,7 +42,7 @@
       "paytmEnv": "sandbox",
       "guideVideoUrl": ""
     },
-    "time": 1789395182078
+    "time": 1789408231943
   },
   "providers": [
     [
@@ -122,7 +122,7 @@
           "pricePerThousand": 320,
           "updatedAt": "2026-09-12T07:59:23.275Z"
         },
-        "time": 1789390276304
+        "time": 1789408774524
       }
     ],
     [
@@ -147,9 +147,9 @@
           "packageQuantity": null,
           "minLimit": 100,
           "pricePerThousand": 1,
-          "updatedAt": "2026-09-10T18:13:49.487Z"
+          "updatedAt": "2026-09-14T15:10:18.124Z"
         },
-        "time": 1789390276304
+        "time": 1789408774524
       }
     ],
     [
@@ -176,7 +176,7 @@
           "pricePerThousand": 12,
           "updatedAt": "2026-09-10T18:13:36.024Z"
         },
-        "time": 1789390276304
+        "time": 1789408774524
       }
     ],
     [
@@ -203,7 +203,7 @@
           "pricePerThousand": 10,
           "updatedAt": "2026-09-07T09:30:05.354Z"
         },
-        "time": 1789390276304
+        "time": 1789408774524
       }
     ],
     [
@@ -230,7 +230,7 @@
           "providerId": "z9lfdj7ByNCeGNO6WbGZ",
           "updatedAt": "2026-09-06T08:18:31.357Z"
         },
-        "time": 1789390276304
+        "time": 1789408774524
       }
     ],
     [
@@ -257,7 +257,7 @@
           "packageQuantity": null,
           "updatedAt": "2026-08-31T10:53:41.899Z"
         },
-        "time": 1789390276304
+        "time": 1789408774524
       }
     ],
     [
@@ -284,7 +284,7 @@
           "isCombo": false,
           "updatedAt": "2026-08-31T10:52:13.501Z"
         },
-        "time": 1789390276304
+        "time": 1789408774524
       }
     ],
     [
@@ -311,7 +311,7 @@
           "packageQuantity": null,
           "updatedAt": "2026-08-31T10:50:22.385Z"
         },
-        "time": 1789390276304
+        "time": 1789408774524
       }
     ],
     [
@@ -338,7 +338,7 @@
           "preventDuplicateLink": false,
           "createdAt": "2026-09-08T19:29:49.343Z"
         },
-        "time": 1789390276304
+        "time": 1789408774524
       }
     ],
     [
@@ -346,26 +346,26 @@
       {
         "data": {
           "id": "1qSuYvGuPk96oFehUSmj",
-          "minLimit": 10000,
-          "pricePerThousand": 89.9,
           "description": "Offer Price: ₹899 for 10000 fixed quantity",
-          "isPackage": true,
           "isCombo": false,
-          "title": "10k Followers ♻️",
           "providerServiceId": "6124",
           "preventDuplicateLink": false,
           "category": "Facebook",
           "comboItems": [],
-          "packageQuantity": 10000,
-          "updatedAt": "2026-09-08T19:29:15.040Z",
           "status": "published",
-          "providerId": "z4luhVVgYKgHULKPXj8j",
-          "packagePrice": 899,
           "iconUrl": null,
           "serviceType": "followers",
-          "createdAt": "2026-09-08T19:29:16.917Z"
+          "createdAt": "2026-09-08T19:29:16.917Z",
+          "providerId": "3eaZMZbSKVvMUbRI4kei",
+          "pricePerThousand": 99,
+          "packagePrice": null,
+          "isPackage": false,
+          "minLimit": 100,
+          "packageQuantity": null,
+          "title": "Followers Lifetime Refill ♻️",
+          "updatedAt": "2026-09-14T17:46:16.772Z"
         },
-        "time": 1789390276304
+        "time": 1789408774524
       }
     ],
     [
@@ -392,7 +392,7 @@
           "minLimit": 500,
           "updatedAt": "2026-09-04T17:45:57.323Z"
         },
-        "time": 1789390276304
+        "time": 1789408774524
       }
     ],
     [
@@ -419,7 +419,7 @@
           "minLimit": 100,
           "updatedAt": "2026-08-31T11:03:48.476Z"
         },
-        "time": 1789390276304
+        "time": 1789408774524
       }
     ],
     [
@@ -446,7 +446,7 @@
           "pricePerThousand": 46,
           "updatedAt": "2026-08-31T10:57:50.123Z"
         },
-        "time": 1789390276304
+        "time": 1789408774524
       }
     ],
     [
@@ -473,7 +473,7 @@
           "isCombo": false,
           "updatedAt": "2026-08-31T10:51:14.552Z"
         },
-        "time": 1789390276304
+        "time": 1789408774524
       }
     ],
     [
@@ -501,7 +501,7 @@
           "packageQuantity": null,
           "updatedAt": "2026-09-05T23:28:11.098Z"
         },
-        "time": 1789390276304
+        "time": 1789408774524
       }
     ],
     [
@@ -529,7 +529,7 @@
           "providerId": "talVdnSEg8QGpNVpaUTi",
           "providerName": "Wholesale Smm Store"
         },
-        "time": 1789390276304
+        "time": 1789408774524
       }
     ],
     [
@@ -556,7 +556,7 @@
           "packageQuantity": null,
           "updatedAt": "2026-08-31T10:56:50.712Z"
         },
-        "time": 1789390276304
+        "time": 1789408774524
       }
     ],
     [
@@ -576,14 +576,14 @@
           "createdAt": "2026-05-02T20:55:34.373Z",
           "isPackage": false,
           "providerId": "z9lfdj7ByNCeGNO6WbGZ",
-          "pricePerThousand": 19,
           "comboItems": [],
           "packagePrice": null,
           "isCombo": false,
           "packageQuantity": null,
-          "updatedAt": "2026-08-31T10:54:44.003Z"
+          "pricePerThousand": 12,
+          "updatedAt": "2026-09-14T17:47:03.011Z"
         },
-        "time": 1789390276304
+        "time": 1789408774524
       }
     ],
     [
@@ -610,7 +610,7 @@
           "minLimit": 300,
           "updatedAt": "2026-09-05T23:45:45.337Z"
         },
-        "time": 1789390276304
+        "time": 1789408774524
       }
     ],
     [
@@ -637,7 +637,7 @@
           "serviceType": "followers",
           "createdAt": "2026-09-05T23:26:21.899Z"
         },
-        "time": 1789390276304
+        "time": 1789408774524
       }
     ]
   ],

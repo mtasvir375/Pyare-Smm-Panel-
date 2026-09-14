@@ -1941,9 +1941,17 @@ export async function startServer() {
       };
 
       activeServices.sort((a: any, b: any) => {
-        const orderA = categoryOrder.indexOf(a.category) === -1 ? 99 : categoryOrder.indexOf(a.category);
-        const orderB = categoryOrder.indexOf(b.category) === -1 ? 99 : categoryOrder.indexOf(b.category);
-        if (orderA !== orderB) return orderA - orderB;
+        const catA = a.category || "Other";
+        const catB = b.category || "Other";
+
+        if (catA.toLowerCase() === "instagram" && catB.toLowerCase() !== "instagram") return -1;
+        if (catB.toLowerCase() === "instagram" && catA.toLowerCase() !== "instagram") return 1;
+
+        const orderA = categoryOrder.findIndex(c => c.toLowerCase() === catA.toLowerCase());
+        const orderB = categoryOrder.findIndex(c => c.toLowerCase() === catB.toLowerCase());
+        const rankA = orderA === -1 ? 999 : orderA;
+        const rankB = orderB === -1 ? 999 : orderB;
+        if (rankA !== rankB) return rankA - rankB;
         
         const timeA = getTimestamp(a);
         const timeB = getTimestamp(b);

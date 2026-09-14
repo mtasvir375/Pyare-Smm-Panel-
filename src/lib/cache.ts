@@ -35,6 +35,39 @@ const isMockCourses = (list: any[]) => {
   return Array.isArray(list) && list.length > 0 && list.every(item => item && typeof item.id === "string" && item.id.startsWith("srv_"));
 };
 
+export const getServiceTimestamp = (item: any): number => {
+  if (!item) return 0;
+  const val = item.updatedAt || item.updated_at || item.createdAt || item.created_at;
+  if (!val) return 0;
+  if (typeof val.toDate === "function") return val.toDate().getTime();
+  if (typeof val.seconds === "number") return val.seconds * 1000;
+  if (val._seconds !== undefined) return val._seconds * 1000;
+  const t = new Date(val).getTime();
+  return isNaN(t) ? 0 : t;
+};
+
+export const sortServicesList = (list: any[]): any[] => {
+  const categoryOrder = ["Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Twitter", "X", "Other"];
+  return [...list].sort((a: any, b: any) => {
+    const catA = a.category || "Other";
+    const catB = b.category || "Other";
+
+    if (catA.toLowerCase() === "instagram" && catB.toLowerCase() !== "instagram") return -1;
+    if (catB.toLowerCase() === "instagram" && catA.toLowerCase() !== "instagram") return 1;
+
+    const orderA = categoryOrder.findIndex(c => c.toLowerCase() === catA.toLowerCase());
+    const orderB = categoryOrder.findIndex(c => c.toLowerCase() === catB.toLowerCase());
+    const rankA = orderA === -1 ? 999 : orderA;
+    const rankB = orderB === -1 ? 999 : orderB;
+    if (rankA !== rankB) return rankA - rankB;
+
+    // Within each category: Latest updated / added service on TOP
+    const timeA = getServiceTimestamp(a);
+    const timeB = getServiceTimestamp(b);
+    return timeB - timeA;
+  });
+};
+
 // Helper to detect if settings are just the unconfigured defaults
 const isDefaultSettings = (s: any) => {
   return s && s.whatsappChatNumber === "+919999999999" && (!s.updatedAt || s.upiId === "paytmqr281005050101111956557626@paytm");
@@ -56,27 +89,7 @@ export const getCachedCourses = async (forceRefresh = false) => {
         if (lsData) {
           const parsed = JSON.parse(lsData);
           if (Array.isArray(parsed) && parsed.length > 0 && !isMockCourses(parsed)) {
-            const categoryOrder = ["Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Twitter", "Other"];
-            const getTimestamp = (item: any) => {
-              const val = item.updatedAt || item.updated_at || item.createdAt || item.created_at;
-              if (!val) return 0;
-              if (typeof val.toDate === "function") return val.toDate().getTime();
-              if (typeof val.seconds === "number") return val.seconds * 1000;
-              if (val._seconds !== undefined) return val._seconds * 1000;
-              const t = new Date(val).getTime();
-              return isNaN(t) ? 0 : t;
-            };
-
-            parsed.sort((a: any, b: any) => {
-              const orderA = categoryOrder.indexOf(a.category) === -1 ? 99 : categoryOrder.indexOf(a.category);
-              const orderB = categoryOrder.indexOf(b.category) === -1 ? 99 : categoryOrder.indexOf(b.category);
-              if (orderA !== orderB) return orderA - orderB;
-              
-              const timeA = getTimestamp(a);
-              const timeB = getTimestamp(b);
-              return timeB - timeA;
-            });
-            cachedCourses = parsed;
+            cachedCourses = sortServicesList(parsed);
             lastCoursesFetch = parseInt(lsTime);
             return cachedCourses;
           }
@@ -108,7 +121,7 @@ export const getCachedCourses = async (forceRefresh = false) => {
         icon_url: data.iconUrl || data.icon_url || null,
       }));
 
-      cachedCourses = activeServices;
+      cachedCourses = sortServicesList(activeServices);
       lastCoursesFetch = now;
       try {
         localStorage.setItem("cached_courses_time", now.toString());
@@ -148,7 +161,7 @@ export const getCachedCourses = async (forceRefresh = false) => {
         };
       });
 
-      cachedCourses = activeServices;
+      cachedCourses = sortServicesList(activeServices);
       lastCoursesFetch = now;
       try {
         localStorage.setItem("cached_courses_time", now.toString());

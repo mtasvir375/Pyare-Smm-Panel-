@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { motion } from "motion/react";
 import { Search, Filter, Star, Users, BookOpen, QrCode, Upload, Share2, CheckCircle2, Image as ImageIcon, Wallet, AlertCircle, Copy, Check, Instagram, Youtube, Facebook, Music2, Send, Zap, RefreshCw } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -29,6 +29,38 @@ import { QRCodeSVG } from "qrcode.react";
 
 const CATEGORIES = ["All", "Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Other"];
 
+// Priority category order: Instagram is ALWAYS #1 at the top
+const PRIORITY_CATEGORIES = ["Instagram", "YouTube", "Facebook", "Telegram", "Twitter", "TikTok", "Other"];
+
+// Helper to extract timestamp (updatedAt takes priority over createdAt so latest edit/add is at top)
+const getServiceTimestamp = (item: any): number => {
+  if (!item) return 0;
+  const val = item.updatedAt || item.updated_at || item.createdAt || item.created_at;
+  if (!val) return 0;
+  if (typeof val === "number") return val;
+  if (typeof val.toDate === "function") return val.toDate().getTime();
+  if (typeof val.seconds === "number") return val.seconds * 1000;
+  if (val._seconds !== undefined) return val._seconds * 1000;
+  const parsed = new Date(val).getTime();
+  return isNaN(parsed) ? 0 : parsed;
+};
+
+const sortCategoriesWithInstagramFirst = (cats: any[]): string[] => {
+  return [...cats].map(c => String(c || "")).filter(Boolean).sort((a, b) => {
+    const isAInsta = a.toLowerCase().includes("instagram");
+    const isBInsta = b.toLowerCase().includes("instagram");
+    if (isAInsta && !isBInsta) return -1;
+    if (!isAInsta && isBInsta) return 1;
+
+    const idxA = PRIORITY_CATEGORIES.findIndex(p => p.toLowerCase() === a.toLowerCase());
+    const idxB = PRIORITY_CATEGORIES.findIndex(p => p.toLowerCase() === b.toLowerCase());
+    const orderA = idxA === -1 ? 99 : idxA;
+    const orderB = idxB === -1 ? 99 : idxB;
+    if (orderA !== orderB) return orderA - orderB;
+    return a.localeCompare(b);
+  });
+};
+
 export default function Courses() {
   const { user, userProfile: profile, updateUserProfileLocal, refreshUserProfile } = useAuth();
   const navigate = useNavigate();
@@ -36,8 +68,8 @@ export default function Courses() {
   const [courses, setCourses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
-  // New Order Form State
-  const [selectedCategory, setSelectedCategory] = useState("");
+  // New Order Form State: Default category is always Instagram
+  const [selectedCategory, setSelectedCategory] = useState("Instagram");
   const [selectedCourseId, setSelectedCourseId] = useState("");
   const [targetLink, setTargetLink] = useState("");
   const [quantity, setQuantity] = useState<string>("");
@@ -65,8 +97,23 @@ export default function Courses() {
     document.title = "Pyare SMM Panel - #1 Cheapest SMM Panel for Instagram, YouTube, Facebook & Telegram";
   }, []);
 
-  const categories = Array.from(new Set(courses.map(c => c.category || "Other")));
-  const filteredServices = courses.filter(c => c.category === selectedCategory);
+  // Category list sorted with Instagram strictly at top
+  const categories = useMemo(() => {
+    const unique = Array.from(new Set(courses.map(c => String(c.category || "Other")))) as string[];
+    return sortCategoriesWithInstagramFirst(unique);
+  }, [courses]);
+
+  // Services inside selected category: sorted with latest edited (updated) or added service on top
+  const filteredServices = useMemo(() => {
+    return courses
+      .filter(c => (c.category || "Other").toLowerCase() === (selectedCategory || "").toLowerCase())
+      .sort((a, b) => {
+        const timeA = getServiceTimestamp(a);
+        const timeB = getServiceTimestamp(b);
+        return timeB - timeA; // Descending: latest first!
+      });
+  }, [courses, selectedCategory]);
+
   const selectedCourse = courses.find(c => c.id === selectedCourseId);
 
   const fetchCourses = async (forceRefresh = false) => {
@@ -84,7 +131,7 @@ export default function Courses() {
       setLoading(false);
       
       if (activeServices.length > 0) {
-        // Priority to query param, then current selection, then first available
+        // Priority to query param, then Instagram, then first category
         const queryCategory = searchParams.get("category")?.toLowerCase();
         
         if (queryCategory) {
@@ -95,10 +142,15 @@ export default function Courses() {
           }
         }
         
-        // If current selection is invalid or empty, pick the first one
-        const categories = Array.from(new Set(activeServices.map(c => c.category)));
-        if (!selectedCategory || !categories.includes(selectedCategory)) {
-          setSelectedCategory(activeServices[0].category);
+        const unique = Array.from(new Set(activeServices.map(c => String(c.category || "Other")))) as string[];
+        const sortedCats = sortCategoriesWithInstagramFirst(unique);
+
+        // Always prioritize Instagram when user visits the site
+        const instaCat = sortedCats.find(c => c.toLowerCase().includes("instagram"));
+        if (instaCat) {
+          setSelectedCategory(instaCat);
+        } else if (!selectedCategory || !sortedCats.includes(selectedCategory)) {
+          setSelectedCategory(sortedCats[0] || "");
         }
       }
     } catch (error) {
@@ -152,15 +204,15 @@ export default function Courses() {
   }, [isAddFundsOpen]);
 
   useEffect(() => {
-    const services = courses.filter(c => c.category === selectedCategory);
-    if (services.length > 0) {
-      if (!selectedCourseId || !services.find(s => s.id === selectedCourseId)) {
-        setSelectedCourseId(services[0].id);
+    if (filteredServices.length > 0) {
+      if (!selectedCourseId || !filteredServices.find(s => s.id === selectedCourseId)) {
+        // Automatically select the topmost service (the latest edited or added by admin)
+        setSelectedCourseId(filteredServices[0].id);
       }
     } else {
       setSelectedCourseId("");
     }
-  }, [selectedCategory, courses, selectedCourseId]);
+  }, [selectedCategory, filteredServices, selectedCourseId]);
 
   useEffect(() => {
     if (selectedCourse) {
