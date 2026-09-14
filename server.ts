@@ -1486,7 +1486,7 @@ export async function startServer() {
     const isCore = col === "providers" || col === "settings" || col === "courses" || col === "services";
     if (!useRestFallback || (adminSdkSucceeded && isCore)) {
       try {
-        await fdb.collection(col).doc(id).update({ ...data, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+        await fdb.collection(col).doc(id).set({ ...data, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
         return true;
       } catch (err: any) {
         console.warn(`[FIREBASE-UPDATE] Error updating ${col}/${id}:`, err.message);

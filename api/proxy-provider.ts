@@ -42,7 +42,7 @@ const DEFAULT_PROVIDER = {
 
 const FIREBASE_PROJECT_ID = "gen-lang-client-0629912823";
 const FIREBASE_DATABASE_ID = "ai-studio-f36429fa-50a3-4e58-b960-86b1e1d0141c";
-const FIREBASE_API_KEY = process.env.VITE_FIREBASE_API_KEY || "";
+const FIREBASE_API_KEY = process.env.VITE_FIREBASE_API_KEY || "AIzaSyBW_IUbuocn83oBCfQfbZsGbswo-OcgxRY";
 
 function wrapFirestoreFields(data: any): any {
   const fields: any = {};

@@ -68,7 +68,7 @@ export const dbClient = {
   async getDocs(table: string, constraints: any[] = []): Promise<any[]> {
     // 1. Try authoritative backend proxy first (0 reads if cached in server/disk memory)
     try {
-      const res = await axios.post('/api/db/list', { collection: table, limit: 30 });
+      const res = await axios.post('/api/db/list', { collection: table, limit: table === 'courses' ? 100 : 30 });
       if (res.data && res.data.success && Array.isArray(res.data.data)) {
         return res.data.data;
       }
@@ -79,7 +79,11 @@ export const dbClient = {
     // 2. Safe capped fallback only if proxy fails
     try {
       const colRef = collection(db, table);
-      const qSafe = query(colRef, limit(20));
+      const limitCount = table === 'courses' ? 200 : (table === 'providers' ? 50 : 30);
+      const effectiveConstraints = constraints && constraints.length > 0 
+        ? constraints 
+        : [limit(limitCount)];
+      const qSafe = query(colRef, ...effectiveConstraints);
       const snap = await getDocs(qSafe);
       return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     } catch (err: any) {
@@ -115,7 +119,8 @@ export const dbClient = {
     }
 
     const docRef = doc(db, table, id);
-    await updateDoc(docRef, { ...data, updatedAt: serverTimestamp() });
+    // Use setDoc with merge: true to avoid "No document to update" error if doc was newly added or not present in Firestore
+    await setDoc(docRef, { ...data, updatedAt: serverTimestamp() }, { merge: true });
   },
 
   async addDoc(table: string, data: any): Promise<any> {
@@ -248,11 +253,18 @@ export const dbClient = {
   async getDepositsAdmin(l = 50, force = false): Promise<any[]> {
     try {
       const res = await axios.get(`/api/admin/all-deposits?limit=${l}&force=${force}`);
-      if (Array.isArray(res.data)) return res.data;
+      if (Array.isArray(res.data) && res.data.length > 0) return res.data;
     } catch (e) {
       console.warn("[DB-CLIENT] getDepositsAdmin API failed:", e);
     }
-    return [];
+    // Direct Firestore fallback
+    try {
+      const q = query(collection(db, 'deposits'), limit(l));
+      const snap = await getDocs(q);
+      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch (e) {
+      return [];
+    }
   },
 
   async processDepositAction(depositId: string, action: 'approved' | 'cancelled', deposit?: any, adminEmail?: string): Promise<any> {
