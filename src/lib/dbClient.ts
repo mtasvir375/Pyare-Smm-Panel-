@@ -154,7 +154,7 @@ export const dbClient = {
     
     // 1. Try authoritative backend proxy first (avoids stale client-side cache and guarantees real-time balance)
     try {
-      const res = await axios.post('/api/db/get', { collection: 'users', id: uid });
+      const res = await axios.post('/api/db/get', { collection: 'users', id: uid, fresh: true });
       if (res.data && res.data.success && res.data.data) {
         return { id: uid, uid, ...res.data.data };
       }

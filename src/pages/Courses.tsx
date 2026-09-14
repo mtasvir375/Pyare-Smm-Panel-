@@ -416,6 +416,16 @@ export default function Courses() {
         updateUserProfileLocal({ balance: finalBal });
       }
 
+      // Persist deducted balance so it reliably stays updated across page refresh
+      try {
+        await dbClient.updateUserProfile(user.uid, {
+          balance: finalBal,
+          lastOrderedAt: new Date().toISOString()
+        });
+      } catch (persistErr) {
+        console.warn("[ORDER] Profile balance direct sync error:", persistErr);
+      }
+
       // Update local state and UI (Server already deducted balance in Firestore and in-memory cache)
       setLastOrder({ ...orderData, status: "Pending", providerOrderId: finalProviderOrderId });
       setIsOrderSuccessOpen(true);

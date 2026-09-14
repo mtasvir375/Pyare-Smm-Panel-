@@ -1124,10 +1124,10 @@ export async function startServer() {
       return { exists: true, data: () => serverCache.courses.get(id).data };
     }
 
-    // Dynamic cache for users
+    // Dynamic cache for users (15s TTL if not forceFresh)
     if (collect === "users" && id && serverCache.users.has(id)) {
       const cached = serverCache.users.get(id);
-      if (checkQuotaCooldown() || !forceFresh || (now - cached.time < DYNAMIC_CACHE_TTL)) {
+      if (checkQuotaCooldown() || (!forceFresh && (now - cached.time < 15000))) {
         return { exists: true, data: () => cached.data };
       }
     }
@@ -1189,7 +1189,7 @@ export async function startServer() {
     if (!forceFresh) { // Cache user balance within dynamic TTL to avoid redundant reads on rapid orders
       if (collect === "users" && id && serverCache.users && serverCache.users.has(id)) {
         const cached = serverCache.users.get(id);
-        if (now - cached.time < DYNAMIC_CACHE_TTL) {
+        if (now - cached.time < 15000) {
           return { exists: true, data: () => cached.data };
         }
       }
@@ -1478,6 +1478,7 @@ export async function startServer() {
       const existing = serverCache.users.get(id);
       const existingData = existing ? (existing.data || existing) : {};
       serverCache.users.set(id, { data: { ...existingData, ...data }, time: Date.now() });
+      savePersistentCache();
     }
     if (col === "deposits") {
       const existing = serverCache.deposits.get(id) || {};
@@ -4098,24 +4099,26 @@ export async function startServer() {
         }
       }
 
-      // Exact provider key resolution overrides to ensure 100% reliability for all known providers
-      const checkStr = `${c.providerId || ""} ${providerName || ""} ${pUrl || ""} ${c.title || ""}`.toLowerCase();
-      if (checkStr.includes("wholesale") || c.providerId === "talVdnSEg8QGpNVpaUTi" || c.providerId === "BjKqhBjQkzJ6y1GIYf5R") {
-        pUrl = "https://wholesalesmmstore.com/api/v2";
-        pKey = "e88f2599c82bf15a44b759e61f63673ceae954b8";
-        providerName = "Wholesale Smm Store";
-      } else if (checkStr.includes("main smm") || checkStr.includes("themainsmm") || c.providerId === "z4luhVVgYKgHULKPXj8j" || c.providerId === "k7IIPgA8QcpGmZGul3Pw") {
-        pUrl = "https://themainsmmprovider.com/api/v2";
-        pKey = "e104906e7686a6177f614c7ddbe0a240124a1795";
-        providerName = "The main smm provider";
-      } else if (checkStr.includes("smm bin") || checkStr.includes("smmbin") || c.providerId === "z9lfdj7ByNCeGNO6WbGZ" || c.providerId === "GbtZDOMSvSrBPgeRy6aU") {
-        pUrl = "https://smmbin.com/api/v2";
-        pKey = "f55bb2dfdc035f9c3c9e737bb72922a51d64309f";
-        providerName = "Smm bin";
-      } else if (checkStr.includes("mainsmmpanel") || checkStr.includes("main smm panel") || c.providerId === "1RmzJhc5ZeyOCU23uZMy") {
-        pUrl = "https://mainsmmpanel.in/api/v2";
-        pKey = "5a2749e1fdafdf50cd81f2137f9b5806";
-        providerName = "MainSMMpanel ♥️";
+      // Fallback provider key resolution only if pKey was not already resolved from database provider
+      if (!pKey) {
+        const checkStr = `${c.providerId || ""} ${providerName || ""} ${pUrl || ""} ${c.title || ""}`.toLowerCase();
+        if (checkStr.includes("wholesale") || c.providerId === "talVdnSEg8QGpNVpaUTi" || c.providerId === "BjKqhBjQkzJ6y1GIYf5R") {
+          pUrl = "https://wholesalesmmstore.com/api/v2";
+          pKey = "e88f2599c82bf15a44b759e61f63673ceae954b8";
+          providerName = "Wholesale Smm Store";
+        } else if (checkStr.includes("main smm") || checkStr.includes("themainsmm") || c.providerId === "3eaZMZbSKVvMUbRI4kei" || c.providerId === "z4luhVVgYKgHULKPXj8j" || c.providerId === "k7IIPgA8QcpGmZGul3Pw") {
+          pUrl = "https://themainsmmprovider.com/api/v2";
+          pKey = "a10c05a0cacf6ed5c83b55e374e690495b727586";
+          providerName = "The main smm provider ♥️♥️";
+        } else if (checkStr.includes("smm bin") || checkStr.includes("smmbin") || c.providerId === "z9lfdj7ByNCeGNO6WbGZ" || c.providerId === "GbtZDOMSvSrBPgeRy6aU") {
+          pUrl = "https://smmbin.com/api/v2";
+          pKey = "f55bb2dfdc035f9c3c9e737bb72922a51d64309f";
+          providerName = "Smm bin";
+        } else if (checkStr.includes("mainsmmpanel") || checkStr.includes("main smm panel") || c.providerId === "1RmzJhc5ZeyOCU23uZMy") {
+          pUrl = "https://mainsmmpanel.in/api/v2";
+          pKey = "5a2749e1fdafdf50cd81f2137f9b5806";
+          providerName = "MainSMMpanel ♥️";
+        }
       }
 
       // ULTIMATE FALLBACK: If pKey is still empty, scan ALL providers in memory, Firestore, and REST
@@ -4594,7 +4597,13 @@ export async function startServer() {
         }
 
         await refundIfDeducted(userId, orderId, orderAmount);
-        return { success: false, error: finalErrorStr };
+        return { 
+          success: false, 
+          error: finalErrorStr,
+          currentBalance: currentOrderData?.newBalance,
+          newBalance: currentOrderData?.newBalance,
+          statusCode: 400
+        };
       }
     } catch (e: any) {
       console.error(`[TRANSMIT] Severe Exception: ${e.message}`);
