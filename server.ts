@@ -4531,6 +4531,15 @@ export async function startServer() {
           }
         }
 
+        if (updatedUserBal === undefined && oUserId) {
+          if (serverCache.users.has(oUserId)) {
+            const cachedData = serverCache.users.get(oUserId)?.data || serverCache.users.get(oUserId);
+            if (typeof cachedData?.balance === "number") {
+              updatedUserBal = cachedData.balance;
+            }
+          }
+        }
+
         return { success: true, providerOrderId: oId, newBalance: updatedUserBal };
       } else {
         // Collect rejection errors cleanly

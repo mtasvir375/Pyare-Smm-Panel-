@@ -152,6 +152,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           unsubSnapshot = onSnapshot(userDocRef, (snap) => {
             if (snap.exists()) {
               const liveData = snap.data();
+              const liveBal = typeof liveData.balance === 'number' ? liveData.balance : Number(liveData.balance || 0);
               setUserProfile((prev: UserProfile | null) => {
                 const updated: UserProfile = {
                   uid: snap.id,
@@ -159,10 +160,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   displayName: firebaseUser.displayName || 'User',
                   photoURL: firebaseUser.photoURL || '',
                   role: 'student',
-                  balance: 0,
                   createdAt: new Date(),
                   ...(prev || {}),
-                  ...liveData
+                  ...liveData,
+                  balance: liveBal
                 };
                 try {
                   localStorage.setItem(`user_profile_${firebaseUser.uid}`, JSON.stringify(updated));
