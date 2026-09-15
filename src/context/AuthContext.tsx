@@ -4,7 +4,8 @@ import {
   User as FirebaseUser,
   signOut as firebaseSignOut
 } from 'firebase/auth';
-import { auth } from '@/lib/firebase';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { auth, db } from '@/lib/firebase';
 import { dbClient, UserProfile } from '@/lib/dbClient';
 import axios from 'axios';
 
@@ -70,8 +71,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return Promise.reject(error);
     });
 
+    let unsubSnapshot: (() => void) | null = null;
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
+      
+      // Cleanup previous user snapshot listener if any
+      if (unsubSnapshot) {
+        unsubSnapshot();
+        unsubSnapshot = null;
+      }
       
       if (firebaseUser) {
         // First check if we have a locally cached profile to instantly show balance without waiting
@@ -135,6 +144,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             isFallback: true
           });
         }
+
+        // REAL-TIME SYNC ACROSS ALL DEVICES (BROWSER, PWA APP, PHONE, DESKTOP):
+        // Automatically syncs balance the exact millisecond an order is placed on another device or funds are added!
+        try {
+          const userDocRef = doc(db, 'users', firebaseUser.uid);
+          unsubSnapshot = onSnapshot(userDocRef, (snap) => {
+            if (snap.exists()) {
+              const liveData = snap.data();
+              setUserProfile((prev: UserProfile | null) => {
+                const updated: UserProfile = {
+                  uid: snap.id,
+                  email: firebaseUser.email || '',
+                  displayName: firebaseUser.displayName || 'User',
+                  photoURL: firebaseUser.photoURL || '',
+                  role: 'student',
+                  balance: 0,
+                  createdAt: new Date(),
+                  ...(prev || {}),
+                  ...liveData
+                };
+                try {
+                  localStorage.setItem(`user_profile_${firebaseUser.uid}`, JSON.stringify(updated));
+                } catch (e) {}
+                return updated;
+              });
+            }
+          }, (err) => {
+            console.warn("[AUTH-SNAPSHOT] Real-time listener notice:", err.message);
+          });
+        } catch (snapErr: any) {
+          console.warn("[AUTH-SNAPSHOT] Setup error:", snapErr.message);
+        }
       } else {
         setUserProfile(null);
       }
@@ -146,8 +187,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const handleVisibilityOrFocus = () => {
       if (document.visibilityState === 'visible' && auth.currentUser) {
         const now = Date.now();
-        // Refresh only if at least 3 minutes have passed since last check to prevent extra reads
-        if (now - lastRefreshTime > 180000) {
+        // Refresh if at least 10 seconds passed when user refocuses or opens app from background
+        if (now - lastRefreshTime > 10000) {
           lastRefreshTime = now;
           refreshUserProfile();
         }
@@ -157,6 +198,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     document.addEventListener('visibilitychange', handleVisibilityOrFocus);
 
     return () => {
+      if (unsubSnapshot) {
+        unsubSnapshot();
+        unsubSnapshot = null;
+      }
       unsubscribe();
       window.removeEventListener('focus', handleVisibilityOrFocus);
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);

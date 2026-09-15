@@ -406,24 +406,13 @@ export default function Courses() {
 
       finalProviderOrderId = String(resData.providerOrderId).trim();
 
-      // Deduct user balance in local state immediately only after provider confirms order ID
-      const currentBal = Number(profile?.balance || 0);
-      const calculatedBal = Math.max(0, Number((currentBal - totalPrice).toFixed(2)));
-      const finalBal = (resData && typeof resData.newBalance === "number") ? resData.newBalance : calculatedBal;
-      
-      // Local profile is immediately synchronized with the exact Firebase remaining balance returned by server (0 extra Firebase writes/reads)
-      if (updateUserProfileLocal) {
-        updateUserProfileLocal({ balance: finalBal });
-      }
-
-      // Persist deducted balance so it reliably stays updated across page refresh
-      try {
-        await dbClient.updateUserProfile(user.uid, {
-          balance: finalBal,
-          lastOrderedAt: new Date().toISOString()
-        });
-      } catch (persistErr) {
-        console.warn("[ORDER] Profile balance direct sync error:", persistErr);
+      // Update user balance authoritatively from server response
+      if (resData && typeof resData.newBalance === "number") {
+        if (updateUserProfileLocal) {
+          updateUserProfileLocal({ balance: resData.newBalance });
+        }
+      } else {
+        refreshUserProfile().catch(() => {});
       }
 
       // Update local state and UI (Server already deducted balance in Firestore and in-memory cache)

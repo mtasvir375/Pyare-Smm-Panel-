@@ -42,7 +42,7 @@
       "paytmEnv": "sandbox",
       "guideVideoUrl": ""
     },
-    "time": 1789408231943
+    "time": 1789502546471
   },
   "providers": [
     [
@@ -646,19 +646,19 @@
       "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
       {
         "data": {
-          "balance": 12530,
-          "role": "student",
-          "lastOrderedAt": "2026-06-16T15:45:53.831Z",
-          "last_ordered_at": "2026-07-12T20:24:51.921Z",
-          "createdAt": "2026-09-14T13:39:37.418Z",
           "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIVDCPXKVjVCP0jqcCpWx5c759WFIsH20U7smDKXtVCJQmldT5A=s96-c",
+          "last_ordered_at": "2026-07-12T20:24:51.921Z",
+          "balance": 5152.82,
           "email": "mtasvir375@gmail.com",
-          "lastActive": "2026-06-17T09:24:31.827Z",
-          "updatedAt": "2026-09-14T18:37:01.888Z",
+          "lastOrderedAt": "2026-09-15T21:25:04.895Z",
           "displayName": "Md Saad Alam",
-          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIVDCPXKVjVCP0jqcCpWx5c759WFIsH20U7smDKXtVCJQmldT5A=s96-c"
+          "lastActive": "2026-06-17T09:24:31.827Z",
+          "role": "student",
+          "createdAt": "2026-09-14T13:39:37.418Z",
+          "updatedAt": "2026-09-15T21:25:08.523Z"
         },
-        "time": 1789411446524
+        "time": 1789507986022
       }
     ],
     [

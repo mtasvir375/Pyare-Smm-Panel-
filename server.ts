@@ -1036,8 +1036,8 @@ export async function startServer() {
     
     if (serverCache.settings && serverCache.settings.data) {
       console.log("[STARTUP] Cache-first: settings/payment already loaded from persistent disk. Skipping Firestore test read.");
-      adminSdkSucceeded = true;
-      useRestFallback = false;
+      adminSdkSucceeded = false;
+      useRestFallback = true;
       if (serverCache.providers.size > 0) {
         console.log(`[STARTUP] Cache-first: ${serverCache.providers.size} providers already loaded from disk. Skipping Firestore read.`);
       } else {
@@ -3896,7 +3896,7 @@ export async function startServer() {
         
         if (currentOrderData.providerOrderId) {
           console.log(`[TRANSMIT] Order ${orderId} already has providerOrderId registered: ${currentOrderData.providerOrderId}`);
-          return { success: true, providerOrderId: currentOrderData.providerOrderId };
+          return { success: true, providerOrderId: currentOrderData.providerOrderId, newBalance: currentOrderData?.newBalance };
         }
       }
 
@@ -4311,7 +4311,7 @@ export async function startServer() {
             updatedAt: new Date().toISOString()
           }, token);
 
-          return { success: true, providerOrderId: combinedProviderOrderId };
+          return { success: true, providerOrderId: combinedProviderOrderId, newBalance: currentOrderData?.newBalance };
         } else {
           const failReason = comboErrors.join(" ; ") || "All combo items failed to transmit to providers.";
           await refundIfDeducted(userId, orderId, orderAmount);
