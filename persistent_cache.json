@@ -42,7 +42,7 @@
       "paytmEnv": "sandbox",
       "guideVideoUrl": ""
     },
-    "time": 1789502546471
+    "time": 1789923419909
   },
   "providers": [
     [
@@ -667,16 +667,18 @@
       {
         "data": {
           "id": "test_user_123",
-          "balance": 50,
-          "email": "test@example.com"
+          "balance": 300,
+          "email": "test@example.com",
+          "updatedAt": "2026-09-20T17:06:39.350Z"
         },
-        "time": 1789410793729
+        "time": 1789923999350
       }
     ],
     [
       "w1VAF0MJoYducsSTQtMRW907OBX2",
       {
         "data": {
+          "id": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "referralCount": 68,
           "lastActive": "2026-06-19T17:34:46.827Z",
           "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIUTpZ85iklK5gQBo-8WZW4pbsWDEuag3g-3zNEAbq7K1wBaw=s96-c",
@@ -695,9 +697,97 @@
         },
         "time": 1789509717102
       }
+    ],
+    [
+      "user_pending_test",
+      {
+        "data": {
+          "uid": "user_pending_test",
+          "role": "student",
+          "createdAt": "2026-09-20T17:06:51.119Z",
+          "balance": 100,
+          "updatedAt": "2026-09-20T17:06:51.119Z"
+        },
+        "time": 1789924011119
+      }
     ]
   ],
-  "deposits": [],
+  "deposits": [
+    [
+      "dep_1789923999537_6pgx0",
+      {
+        "data": {
+          "id": "dep_auto_425198765439_1789923999537",
+          "userId": "test_user_123",
+          "userEmail": "testuser@gmail.com",
+          "amount": 250,
+          "utr": "425198765439",
+          "status": "approved",
+          "type": "auto_gateway_verify",
+          "provider": "sms_forwarder",
+          "verifiedAt": "2026-09-20T17:06:39.537Z",
+          "createdAt": "2026-09-20T17:06:39.537Z",
+          "updatedAt": "2026-09-20T17:06:39.537Z"
+        },
+        "time": 1789923999538
+      }
+    ],
+    [
+      "dep_auto_425198765439_1789923999537",
+      {
+        "data": {
+          "id": "dep_auto_425198765439_1789923999537",
+          "userId": "test_user_123",
+          "userEmail": "testuser@gmail.com",
+          "amount": 250,
+          "utr": "425198765439",
+          "status": "approved",
+          "type": "auto_gateway_verify",
+          "provider": "sms_forwarder",
+          "verifiedAt": "2026-09-20T17:06:39.537Z",
+          "createdAt": "2026-09-20T17:06:39.537Z"
+        },
+        "time": 1789923999649
+      }
+    ],
+    [
+      "dep_1789924011183_u0wu6",
+      {
+        "data": {
+          "id": "dep_auto_425198765488_1789924011183",
+          "userId": "user_pending_test",
+          "userEmail": "pending@gmail.com",
+          "amount": 100,
+          "utr": "425198765488",
+          "status": "approved",
+          "type": "auto_gateway_verify",
+          "provider": "sms_forwarder",
+          "verifiedAt": "2026-09-20T17:06:51.183Z",
+          "createdAt": "2026-09-20T17:06:51.183Z",
+          "updatedAt": "2026-09-20T17:06:51.183Z"
+        },
+        "time": 1789924011183
+      }
+    ],
+    [
+      "dep_auto_425198765488_1789924011183",
+      {
+        "data": {
+          "id": "dep_auto_425198765488_1789924011183",
+          "userId": "user_pending_test",
+          "userEmail": "pending@gmail.com",
+          "amount": 100,
+          "utr": "425198765488",
+          "status": "approved",
+          "type": "auto_gateway_verify",
+          "provider": "sms_forwarder",
+          "verifiedAt": "2026-09-20T17:06:51.183Z",
+          "createdAt": "2026-09-20T17:06:51.183Z"
+        },
+        "time": 1789924011241
+      }
+    ]
+  ],
   "orders": [
     [
       "ord_1788084408855_qghtc",
@@ -1776,5 +1866,7 @@
         "time": 1789410993341
       }
     ]
-  ]
+  ],
+  "received_gateway_payments": [],
+  "sms_forwarder_logs": []
 }

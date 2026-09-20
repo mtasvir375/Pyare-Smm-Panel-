@@ -199,7 +199,9 @@ export async function startServer() {
     users: new Map<string, any>(),
     orders: new Map<string, any>(),
     deposits: new Map<string, any>(),
-    received_gateway_payments: new Map<string, any>(), // Track real-time payments from Paytm/PhonePe/UPIGateway webhooks
+    received_gateway_payments: new Map<string, any>(), // Track real-time payments from Paytm/PhonePe/UPIGateway/SMS webhooks
+    sms_forwarder_logs: [] as any[], // Real-time logs for SMS forwarder webhook
+    pending_user_utrs: new Map<string, { userId: string; userEmail?: string; amount: number; timestamp: number }>(), // Pending UTR claims waiting for SMS
     latestOrders: [] as any[] // Globally tracked latest orders in memory
   };
 
@@ -530,6 +532,19 @@ export async function startServer() {
           serverCache.latestOrders.sort((a, b) => getTimestampMs(b.createdAt || b.created_at) - getTimestampMs(a.createdAt || a.created_at));
           console.log(`[PERSISTENT-CACHE] Loaded ${serverCache.orders.size} orders from disk (0 Firestore reads required).`);
         }
+
+        if (parsed.received_gateway_payments && Array.isArray(parsed.received_gateway_payments)) {
+          serverCache.received_gateway_payments.clear();
+          parsed.received_gateway_payments.forEach(([k, v]: [string, any]) => {
+            serverCache.received_gateway_payments.set(k, v);
+          });
+          console.log(`[PERSISTENT-CACHE] Loaded ${serverCache.received_gateway_payments.size} gateway/sms payments from disk.`);
+        }
+
+        if (parsed.sms_forwarder_logs && Array.isArray(parsed.sms_forwarder_logs)) {
+          serverCache.sms_forwarder_logs = parsed.sms_forwarder_logs;
+          console.log(`[PERSISTENT-CACHE] Loaded ${serverCache.sms_forwarder_logs.length} SMS forwarder logs from disk.`);
+        }
       }
     } catch (err: any) {
       console.error("[PERSISTENT-CACHE-ERR] Failed to load persistent cache:", err.message);
@@ -558,7 +573,9 @@ export async function startServer() {
         courses: Array.from(serverCache.courses.entries()),
         users: Array.from(serverCache.users.entries()),
         deposits: Array.from(serverCache.deposits.entries()).slice(-100),
-        orders: Array.from(serverCache.orders.entries()).slice(-500)
+        orders: Array.from(serverCache.orders.entries()).slice(-500),
+        received_gateway_payments: Array.from(serverCache.received_gateway_payments.entries()).slice(-100),
+        sms_forwarder_logs: (serverCache.sms_forwarder_logs || []).slice(-100)
       };
       fs.writeFileSync(cacheFilePath, JSON.stringify(dataToSave, null, 2), "utf-8");
       console.log("[PERSISTENT-CACHE] Saved settings, providers, courses, users, deposits & orders cache to disk.");
@@ -3475,10 +3492,18 @@ export async function startServer() {
 
     // 4. If NOT verified: ZERO Firestore writes!
     if (!isVerified) {
+      // Register in pending UTR queue so if the Bank SMS arrives shortly, it can automatically credit!
+      serverCache.pending_user_utrs.set(cleanUtr, {
+        userId,
+        userEmail: userEmail || "",
+        amount: Number(amount),
+        timestamp: Date.now()
+      });
+
       return { 
         success: false, 
         status: 400, 
-        error: `Payment verification failed: No confirmed transaction found for UTR ${cleanUtr}. Please make sure you transferred ₹${amount} and entered the exact 12-digit UTR.` 
+        error: `Payment verification pending: No confirmed transaction received yet for UTR ${cleanUtr}. If you just completed the payment, please wait 15–30 seconds for the Bank/UPI SMS to arrive, then click Confirm again.` 
       };
     }
 
@@ -3487,6 +3512,16 @@ export async function startServer() {
     if (!adjusted) {
       return { success: false, status: 500, error: "Payment verified, but failed to credit wallet. Please contact support." };
     }
+
+    // Mark SMS log as claimed if it came from SMS Forwarder
+    const existingLog = (serverCache.sms_forwarder_logs || []).find((l: any) => l.utr === cleanUtr);
+    if (existingLog) {
+      existingLog.status = "claimed";
+      existingLog.claimedBy = userId;
+      existingLog.claimedEmail = userEmail || "";
+      existingLog.claimedAt = new Date().toISOString();
+    }
+    serverCache.pending_user_utrs.delete(cleanUtr);
 
     // Fetch new balance
     const userDoc = await getDocSafe("users", userId);
@@ -3785,6 +3820,326 @@ export async function startServer() {
     } catch (err: any) {
       console.error("[WEBHOOK-UPIGATEWAY-ERR]", err.message);
       res.status(200).send("OK");
+    }
+  });
+
+  // ==========================================
+  // BANK SMS PARSING ENGINE FOR AUTOMATIC UPI
+  // ==========================================
+  function parseBankSms(smsText: string) {
+    if (!smsText || typeof smsText !== "string") return null;
+    const cleanText = smsText.replace(/\r\n/g, " ").replace(/\n/g, " ").trim();
+    const lower = cleanText.toLowerCase();
+
+    // Rejection check: Explicit debits, expenditures, or withdrawals
+    const isDebit = (
+      lower.includes("debited") || 
+      lower.includes("spent") || 
+      lower.includes("withdrawn") || 
+      lower.includes("sent to") ||
+      lower.includes("paid to") ||
+      lower.includes("purchase of") ||
+      lower.includes("transfer to") ||
+      lower.includes("debited from")
+    ) && !lower.includes("credited") && !lower.includes("received");
+
+    if (isDebit) {
+      return { isCredit: false, reason: "Debit transaction ignored" };
+    }
+
+    // Acceptance check: Credit, received, added, deposited
+    const isCredit = 
+      lower.includes("credit") || 
+      lower.includes("received") || 
+      lower.includes("deposited") || 
+      lower.includes("added to") ||
+      lower.includes("sent you") ||
+      lower.includes("payment of rs") ||
+      lower.includes("payment of inr") ||
+      lower.includes("payment of ₹") ||
+      lower.includes("has transferred rs") ||
+      lower.includes("has transferred inr");
+
+    if (!isCredit) {
+      return { isCredit: false, reason: "No payment credit keyword found in message" };
+    }
+
+    // Amount extraction
+    let amount = 0;
+    const amtPatterns = [
+      /(?:rs\.?|inr|₹)\s*([0-9]+(?:,[0-9]+)*(?:\.[0-9]{1,2})?)/i,
+      /(?:credited\s*(?:by|with)?|received|deposited|payment of)\s*(?:rs\.?|inr|₹)?\s*([0-9]+(?:,[0-9]+)*(?:\.[0-9]{1,2})?)/i,
+      /([0-9]+(?:,[0-9]+)*(?:\.[0-9]{1,2})?)\s*(?:rs\.?|inr|₹)\b/i
+    ];
+
+    for (const pat of amtPatterns) {
+      const match = cleanText.match(pat);
+      if (match && match[1]) {
+        const parsed = parseFloat(match[1].replace(/,/g, ""));
+        if (!isNaN(parsed) && parsed > 0) {
+          amount = parsed;
+          break;
+        }
+      }
+    }
+
+    // 12-digit UTR / UPI Ref ID extraction
+    let utr = "";
+    const specificUtrPatterns = [
+      /(?:upi\s*ref(?:\s*no|\s*id)?|ref(?:\s*no|\s*id)?|utr(?:\s*no|\s*id)?|rrn|upi\s*txn\s*id)[\s:/-]*([0-9]{12})\b/i,
+      /upi[\/:][\s]*([0-9]{12})\b/i,
+      /(?:upi\/|ref\s*#?|utr\s*#?)([0-9]{12})\b/i
+    ];
+
+    for (const pat of specificUtrPatterns) {
+      const match = cleanText.match(pat);
+      if (match && match[1]) {
+        utr = match[1];
+        break;
+      }
+    }
+
+    // Fallback: any standalone 12-digit sequence in a confirmed credit SMS
+    if (!utr) {
+      const fallbackMatch = cleanText.match(/\b([0-9]{12})\b/);
+      if (fallbackMatch && fallbackMatch[1]) {
+        utr = fallbackMatch[1];
+      }
+    }
+
+    return {
+      isCredit: true,
+      amount,
+      utr,
+      valid: amount > 0 && utr.length === 12
+    };
+  }
+
+  // Universal SMS Forwarder Webhook
+  // Accepts GET or POST from any Android SMS forwarder app (e.g. SMS Forwarder, MacroDroid, Tasker, AutoForward)
+  app.all("/api/sms-webhook", async (req, res) => {
+    try {
+      const body = req.body || {};
+      const query = req.query || {};
+
+      // Flexible extraction across different SMS forwarding app schemas
+      const smsText = String(
+        body.text || body.message || body.body || body.sms || body.content || body.msg || body.raw || body.textMessage ||
+        query.text || query.message || query.body || query.sms || ""
+      ).trim();
+
+      const sender = String(
+        body.from || body.sender || body.address || body.phone || body.number || body.originatingAddress ||
+        query.from || query.sender || "SMS_APP"
+      ).trim();
+
+      const receivedSecret = String(
+        body.secret || body.key || body.token || body.api_key || body.apiKey ||
+        query.secret || query.key || query.token ||
+        req.headers["x-sms-secret"] || req.headers["x-secret-key"] || ""
+      ).trim();
+
+      // Check configured payment settings
+      const settingsSnap = await getDocSafe("settings", "payment");
+      const settings = settingsSnap.data() || {};
+      const expectedSecret = String(settings.smsForwarderSecret || "").trim();
+      const isSmsEnabled = settings.smsForwarderEnabled !== false;
+
+      if (!isSmsEnabled) {
+        return res.status(403).json({ success: false, error: "SMS Forwarder is currently disabled in Admin settings." });
+      }
+
+      if (expectedSecret && receivedSecret !== expectedSecret) {
+        console.warn(`[SMS-FORWARDER-AUTH-FAIL] Secret mismatch from ${sender}`);
+        return res.status(401).json({ success: false, error: "Unauthorized: Invalid SMS secret key" });
+      }
+
+      if (!smsText) {
+        return res.status(200).json({ 
+          success: true, 
+          message: "SMS Forwarder webhook endpoint is live and ready. Forward SMS text using POST json with 'message' or 'text' key." 
+        });
+      }
+
+      console.log(`[SMS-FORWARDER-INCOMING] From: ${sender} | Text: "${smsText.substring(0, 120)}..."`);
+
+      const parsed = parseBankSms(smsText);
+
+      const logEntry: any = {
+        id: `sms_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        timestamp: new Date().toISOString(),
+        sender,
+        rawText: smsText,
+        isCredit: !!parsed?.isCredit,
+        amount: parsed?.amount || 0,
+        utr: parsed?.utr || "",
+        valid: !!parsed?.valid,
+        status: "ignored"
+      };
+
+      if (!parsed || !parsed.isCredit) {
+        logEntry.status = "ignored_not_credit";
+        logEntry.reason = parsed?.reason || "Not a payment credit SMS";
+        serverCache.sms_forwarder_logs.unshift(logEntry);
+        if (serverCache.sms_forwarder_logs.length > 200) serverCache.sms_forwarder_logs.pop();
+        savePersistentCache();
+        return res.status(200).json({ success: true, message: "Ignored non-credit SMS", reason: logEntry.reason });
+      }
+
+      if (!parsed.valid || !parsed.utr || parsed.amount <= 0) {
+        logEntry.status = "invalid_format";
+        logEntry.reason = `Could not find 12-digit UTR (${parsed.utr || "none"}) or valid amount (₹${parsed.amount})`;
+        serverCache.sms_forwarder_logs.unshift(logEntry);
+        if (serverCache.sms_forwarder_logs.length > 200) serverCache.sms_forwarder_logs.pop();
+        savePersistentCache();
+        return res.status(200).json({ success: true, message: "Received SMS but UTR or amount not detected", details: parsed });
+      }
+
+      const cleanUtr = parsed.utr;
+      const amount = parsed.amount;
+
+      // 1. Cache the payment for user verification
+      serverCache.received_gateway_payments.set(cleanUtr, {
+        amount,
+        provider: "sms_forwarder",
+        sender,
+        time: Date.now(),
+        rawSms: smsText,
+        status: "available"
+      });
+      logEntry.status = "available";
+
+      console.log(`[SMS-FORWARDER-CACHED] Available payment for UTR ${cleanUtr}: ₹${amount}`);
+
+      // 2. Check if a user entered this UTR earlier and was waiting in pending_user_utrs!
+      const pendingUser = serverCache.pending_user_utrs.get(cleanUtr);
+      let autoCredited = false;
+      if (pendingUser && (amount >= pendingUser.amount || Math.abs(amount - pendingUser.amount) <= 1)) {
+        console.log(`[SMS-FORWARDER-AUTO-MATCH] Auto-crediting waiting user ${pendingUser.userId} for UTR ${cleanUtr} (₹${amount})`);
+        try {
+          const credRes = await verifyAndCreditPayment({
+            userId: pendingUser.userId,
+            userEmail: pendingUser.userEmail,
+            amount: pendingUser.amount,
+            utr: cleanUtr
+          });
+          if (credRes.success) {
+            autoCredited = true;
+            logEntry.status = "claimed_auto";
+            logEntry.claimedBy = pendingUser.userId;
+            logEntry.claimedEmail = pendingUser.userEmail;
+            serverCache.pending_user_utrs.delete(cleanUtr);
+          }
+        } catch (autoErr: any) {
+          console.error(`[SMS-FORWARDER-AUTO-ERR]`, autoErr.message);
+        }
+      }
+
+      serverCache.sms_forwarder_logs.unshift(logEntry);
+      if (serverCache.sms_forwarder_logs.length > 200) serverCache.sms_forwarder_logs.pop();
+      savePersistentCache();
+
+      return res.status(200).json({
+        success: true,
+        message: autoCredited 
+          ? `₹${amount} (UTR: ${cleanUtr}) received and auto-credited to waiting user!` 
+          : `₹${amount} (UTR: ${cleanUtr}) received and ready for instant user claim.`,
+        utr: cleanUtr,
+        amount,
+        autoCredited
+      });
+    } catch (err: any) {
+      console.error("[SMS-FORWARDER-ERR]", err.message);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // SMS Parser Test & Simulation Endpoint (For Admin testing)
+  app.post("/api/sms-forwarder/test-parse", async (req, res) => {
+    try {
+      const { smsText, simulate } = req.body || {};
+      if (!smsText) return res.status(400).json({ error: "Missing smsText" });
+
+      const parsed = parseBankSms(smsText);
+      let simulated = false;
+
+      if (simulate && parsed && parsed.valid) {
+        serverCache.received_gateway_payments.set(parsed.utr, {
+          amount: parsed.amount,
+          provider: "sms_forwarder_simulated",
+          sender: "ADMIN_SIMULATOR",
+          time: Date.now(),
+          rawSms: smsText,
+          status: "available"
+        });
+
+        // Check if any user was waiting for this UTR
+        const pendingUser = serverCache.pending_user_utrs.get(parsed.utr);
+        let autoCredited = false;
+        if (pendingUser && (parsed.amount >= pendingUser.amount || Math.abs(parsed.amount - pendingUser.amount) <= 1)) {
+          await verifyAndCreditPayment({
+            userId: pendingUser.userId,
+            userEmail: pendingUser.userEmail,
+            amount: pendingUser.amount,
+            utr: parsed.utr
+          });
+          autoCredited = true;
+          serverCache.pending_user_utrs.delete(parsed.utr);
+        }
+
+        serverCache.sms_forwarder_logs.unshift({
+          id: `sim_${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          sender: "ADMIN_SIMULATOR",
+          rawText: smsText,
+          isCredit: true,
+          amount: parsed.amount,
+          utr: parsed.utr,
+          valid: true,
+          status: autoCredited ? "claimed_auto" : "available",
+          claimedBy: autoCredited ? pendingUser?.userId : undefined
+        });
+
+        savePersistentCache();
+        simulated = true;
+      }
+
+      res.json({
+        success: true,
+        parsed,
+        simulated
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Get SMS forwarder logs & real-time available payments
+  app.get("/api/sms-forwarder/logs", async (req, res) => {
+    try {
+      const availableList = Array.from(serverCache.received_gateway_payments.entries())
+        .map(([utr, item]) => ({ utr, ...item }))
+        .filter(item => item.provider?.startsWith("sms_forwarder"));
+
+      res.json({
+        success: true,
+        logs: (serverCache.sms_forwarder_logs || []).slice(0, 50),
+        available: availableList.slice(0, 50),
+        pendingUsers: Array.from(serverCache.pending_user_utrs.entries()).map(([utr, u]) => ({ utr, ...u }))
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Clear SMS forwarder logs
+  app.post("/api/sms-forwarder/clear-logs", async (req, res) => {
+    try {
+      serverCache.sms_forwarder_logs = [];
+      savePersistentCache();
+      res.json({ success: true, message: "SMS Forwarder logs cleared successfully." });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 

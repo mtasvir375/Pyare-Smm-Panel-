@@ -30,7 +30,12 @@ import {
   Database,
   ShieldCheck,
   Palette,
-  Check
+  Check,
+  Smartphone,
+  Key,
+  Copy,
+  Zap,
+  Terminal
 } from "lucide-react";
 import CategoryIcon from "@/components/CategoryIcon";
 import { Button } from "@/components/ui/button";
@@ -182,6 +187,16 @@ export default function Admin() {
   const [qrAutoApiKey, setQrAutoApiKey] = useState("");
   const [qrAutoToken, setQrAutoToken] = useState("");
   const [qrAutoUrl, setQrAutoUrl] = useState("");
+  const [smsForwarderEnabled, setSmsForwarderEnabled] = useState(true);
+  const [smsForwarderSecret, setSmsForwarderSecret] = useState("");
+  const [smsTestText, setSmsTestText] = useState("");
+  const [smsTestSimulate, setSmsTestSimulate] = useState(false);
+  const [smsTestResult, setSmsTestResult] = useState<any>(null);
+  const [testingSms, setTestingSms] = useState(false);
+  const [smsLogs, setSmsLogs] = useState<any[]>([]);
+  const [smsAvailableList, setSmsAvailableList] = useState<any[]>([]);
+  const [smsPendingUsers, setSmsPendingUsers] = useState<any[]>([]);
+  const [loadingSmsLogs, setLoadingSmsLogs] = useState(false);
   const [providers, setProviders] = useState<any[]>([]);
   const [newProviderName, setNewProviderName] = useState("");
   const [newProviderApiUrl, setNewProviderApiUrl] = useState("");
@@ -356,8 +371,12 @@ export default function Admin() {
           setQrAutoToken(settingsData.qrAutoToken || "");
           setQrAutoUrl(settingsData.qrAutoUrl || "");
           
+          setSmsForwarderEnabled(settingsData.smsForwarderEnabled !== false);
+          setSmsForwarderSecret(settingsData.smsForwarderSecret || "");
+          
           const savedBackendUrl = settingsData.backendApiUrl || "";
           setBackendApiUrl(savedBackendUrl);
+          fetchSmsLogs();
         }
       }
       setFetchedTabs(prev => {
@@ -580,6 +599,8 @@ export default function Admin() {
         qrAutoApiKey: qrAutoApiKey.trim(),
         qrAutoToken: qrAutoToken.trim(),
         qrAutoUrl: qrAutoUrl.trim(),
+        smsForwarderEnabled: smsForwarderEnabled,
+        smsForwarderSecret: smsForwarderSecret.trim(),
         updatedAt: new Date().toISOString()
       });
       setQrUrl(base64);
@@ -595,6 +616,62 @@ export default function Admin() {
       toast.error(`Error saving settings: ${error.message}`);
     } finally {
       setSavingQr(false);
+    }
+  };
+
+  const fetchSmsLogs = async () => {
+    setLoadingSmsLogs(true);
+    try {
+      const res = await axios.get("/api/sms-forwarder/logs");
+      if (res.data && res.data.success) {
+        setSmsLogs(res.data.logs || []);
+        setSmsAvailableList(res.data.available || []);
+        setSmsPendingUsers(res.data.pendingUsers || []);
+      }
+    } catch (e: any) {
+      console.error("Failed to load SMS logs:", e.message);
+    } finally {
+      setLoadingSmsLogs(false);
+    }
+  };
+
+  const handleTestSmsParse = async (sampleText?: string) => {
+    const textToTest = sampleText || smsTestText;
+    if (!textToTest) {
+      toast.error("Please enter bank SMS text to test");
+      return;
+    }
+    setTestingSms(true);
+    try {
+      const res = await axios.post("/api/sms-forwarder/test-parse", {
+        smsText: textToTest,
+        simulate: smsTestSimulate
+      });
+      setSmsTestResult(res.data);
+      if (res.data?.parsed?.valid) {
+        toast.success(`Success! Amount: ₹${res.data.parsed.amount} | UTR: ${res.data.parsed.utr}`);
+        if (res.data.simulated) {
+          toast.success("Simulated payment added to available pool!");
+          fetchSmsLogs();
+        }
+      } else {
+        toast.error(res.data?.parsed?.reason || "Could not detect amount or 12-digit UTR");
+      }
+    } catch (err: any) {
+      toast.error(`Test Error: ${err.message}`);
+    } finally {
+      setTestingSms(false);
+    }
+  };
+
+  const handleClearSmsLogs = async () => {
+    if (!window.confirm("Are you sure you want to clear SMS Forwarder logs?")) return;
+    try {
+      await axios.post("/api/sms-forwarder/clear-logs");
+      setSmsLogs([]);
+      toast.success("SMS Logs cleared");
+    } catch (err: any) {
+      toast.error(err.message);
     }
   };
 
@@ -2983,6 +3060,317 @@ export default function Admin() {
                           )}
                         </div>
                       )}
+                    </div>
+
+                    {/* SMS FORWARDER AUTOMATIC PAYMENT VERIFICATION */}
+                    <div className="p-6 bg-gradient-to-br from-indigo-50/70 via-white to-purple-50/50 rounded-3xl border-2 border-indigo-200/80 shadow-sm space-y-6">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="flex items-start sm:items-center gap-3">
+                          <div className="p-3 bg-indigo-600 text-white rounded-2xl shadow-md shadow-indigo-200">
+                            <Smartphone className="w-6 h-6" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h3 className="text-base font-black text-gray-900 tracking-tight">
+                                SMS Forwarder Auto-Verification
+                              </h3>
+                              <span className="px-2 py-0.5 text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-700 rounded-full border border-indigo-200">
+                                Zero Gateway Needed
+                              </span>
+                            </div>
+                            <p className="text-xs text-gray-500 mt-0.5">
+                              Apne phone se Bank/UPI SMS ko forward karke UTR auto-match karein aur user ka wallet turant credit karein.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          <label className="text-xs font-black uppercase tracking-wider text-gray-600">
+                            {smsForwarderEnabled ? "Active" : "Disabled"}
+                          </label>
+                          <div 
+                            onClick={() => setSmsForwarderEnabled(!smsForwarderEnabled)}
+                            className={cn(
+                              "w-12 h-6 flex items-center rounded-full p-1 cursor-pointer transition-colors duration-300",
+                              smsForwarderEnabled ? "bg-indigo-600" : "bg-gray-300"
+                            )}
+                          >
+                            <div className={cn(
+                              "bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-300",
+                              smsForwarderEnabled ? "translate-x-6" : "translate-x-0"
+                            )} />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Setup Details & Webhook URLs */}
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        {/* Webhook URL Box */}
+                        <div className="p-4 bg-white rounded-2xl border border-indigo-100 shadow-sm space-y-2">
+                          <label className="text-[11px] font-black uppercase tracking-wider text-indigo-900 flex items-center gap-1.5">
+                            <Zap className="w-3.5 h-3.5 text-indigo-600" />
+                            Your SMS Webhook URL (Android App me daalein)
+                          </label>
+                          <div className="flex items-center gap-2 bg-gray-50 p-2.5 rounded-xl border border-gray-200">
+                            <code className="text-xs font-mono font-bold text-indigo-600 select-all flex-1 break-all">
+                              {window.location.origin}/api/sms-webhook
+                            </code>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-8 px-3 text-xs font-bold border-indigo-200 hover:bg-indigo-50 text-indigo-700 shrink-0"
+                              onClick={() => {
+                                navigator.clipboard.writeText(`${window.location.origin}/api/sms-webhook`);
+                                toast.success("SMS Webhook URL copied to clipboard!");
+                              }}
+                            >
+                              <Copy className="w-3.5 h-3.5 mr-1" />
+                              Copy URL
+                            </Button>
+                          </div>
+                          <p className="text-[10px] text-gray-400">
+                            Method: <b>POST</b> (or GET) | Supports JSON, Form-URL-Encoded, & Query parameters.
+                          </p>
+                        </div>
+
+                        {/* Secret Token Box */}
+                        <div className="p-4 bg-white rounded-2xl border border-indigo-100 shadow-sm space-y-2">
+                          <label className="text-[11px] font-black uppercase tracking-wider text-indigo-900 flex items-center gap-1.5">
+                            <Key className="w-3.5 h-3.5 text-indigo-600" />
+                            Secret Token (Optional Security)
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              value={smsForwarderSecret}
+                              onChange={(e) => setSmsForwarderSecret(e.target.value)}
+                              placeholder="e.g. smm_secret_token_123"
+                              className="h-10 text-xs font-mono font-bold"
+                            />
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              className="h-10 px-3 text-xs font-bold shrink-0"
+                              onClick={() => {
+                                const randomSecret = "smm_" + Math.random().toString(36).substring(2, 10);
+                                setSmsForwarderSecret(randomSecret);
+                                toast.success("Generated secure secret key!");
+                              }}
+                            >
+                              Generate
+                            </Button>
+                          </div>
+                          <p className="text-[10px] text-gray-400">
+                            App header: <code className="text-indigo-600">x-sms-secret</code> ya URL me: <code className="text-indigo-600">?secret={smsForwarderSecret || "YOUR_SECRET"}</code>
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Setup Guide Accordion / Steps */}
+                      <div className="p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100/80 space-y-2.5">
+                        <p className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                          <span>📋</span> 3 Simple Steps to Setup Free Android SMS Forwarder:
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-indigo-900/90 font-medium">
+                          <div className="bg-white/80 p-3 rounded-xl border border-indigo-100">
+                            <b className="text-indigo-600 block mb-1">1. Install App</b>
+                            Play Store se <b>"SMS Forwarder"</b> (developer: bogkonstantin) ya F-Droid se download karein.
+                          </div>
+                          <div className="bg-white/80 p-3 rounded-xl border border-indigo-100">
+                            <b className="text-indigo-600 block mb-1">2. Target: Webhook</b>
+                            Add Rule &gt; Destination: <b>Webhook URL (POST)</b> me upar wala URL paste karein.
+                          </div>
+                          <div className="bg-white/80 p-3 rounded-xl border border-indigo-100">
+                            <b className="text-indigo-600 block mb-1">3. JSON Template</b>
+                            Body me: <code className="text-[11px] font-mono block bg-gray-50 p-1 rounded mt-1 border">{'{"sender":"%from","message":"%text"} '}</code>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Live SMS Parser Tester & Simulator */}
+                      <div className="p-4 bg-white rounded-2xl border border-gray-200 shadow-sm space-y-3">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-black uppercase tracking-wider text-gray-800 flex items-center gap-1.5">
+                            <Terminal className="w-4 h-4 text-indigo-600" />
+                            Live SMS Parser & Tester
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <label className="flex items-center gap-1 text-[11px] font-bold text-gray-600 cursor-pointer">
+                              <input 
+                                type="checkbox"
+                                checked={smsTestSimulate}
+                                onChange={(e) => setSmsTestSimulate(e.target.checked)}
+                                className="rounded text-indigo-600 focus:ring-indigo-500"
+                              />
+                              Simulate & Add to Available Queue
+                            </label>
+                          </div>
+                        </div>
+
+                        {/* Quick Sample Buttons */}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[10px] font-bold text-gray-400">Quick Test Samples:</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const s = "Payment of Rs. 100.00 received via PhonePe from Customer. UPI Ref: 425123456789";
+                              setSmsTestText(s);
+                              handleTestSmsParse(s);
+                            }}
+                            className="px-2 py-1 bg-purple-50 text-purple-700 hover:bg-purple-100 rounded-lg text-[10px] font-bold border border-purple-200 transition-colors"
+                          >
+                            PhonePe ₹100
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const s = "Rs 500.00 received in your Paytm Payments Bank A/c 9876. UPI Ref no 425123456789. Check bal";
+                              setSmsTestText(s);
+                              handleTestSmsParse(s);
+                            }}
+                            className="px-2 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-[10px] font-bold border border-blue-200 transition-colors"
+                          >
+                            Paytm ₹500
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const s = "Dear SBI User, your A/C ending 1234 credited by Rs 1,000.00 on 20Sep24 by transfer from User Ref No 425123456789 -SBI";
+                              setSmsTestText(s);
+                              handleTestSmsParse(s);
+                            }}
+                            className="px-2 py-1 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg text-[10px] font-bold border border-emerald-200 transition-colors"
+                          >
+                            SBI ₹1,000
+                          </button>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <Input
+                            value={smsTestText}
+                            onChange={(e) => setSmsTestText(e.target.value)}
+                            placeholder="Bank/UPI se aaya hua SMS yahan paste karein..."
+                            className="h-10 text-xs font-medium"
+                          />
+                          <Button
+                            type="button"
+                            onClick={() => handleTestSmsParse()}
+                            disabled={testingSms || !smsTestText.trim()}
+                            className="h-10 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shrink-0"
+                          >
+                            {testingSms ? "Parsing..." : "Test Parse"}
+                          </Button>
+                        </div>
+
+                        {smsTestResult && (
+                          <div className={cn(
+                            "p-3 rounded-xl border text-xs space-y-1 font-medium",
+                            smsTestResult.parsed?.valid 
+                              ? "bg-emerald-50/80 border-emerald-200 text-emerald-800" 
+                              : "bg-amber-50/80 border-amber-200 text-amber-800"
+                          )}>
+                            <div className="flex items-center justify-between font-bold">
+                              <span>
+                                {smsTestResult.parsed?.valid ? "✅ Valid Payment Detected" : "⚠️ Parsing Issue"}
+                              </span>
+                              {smsTestResult.parsed?.valid && (
+                                <span className="text-emerald-700 text-xs">
+                                  ₹{smsTestResult.parsed.amount} | UTR: {smsTestResult.parsed.utr}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] opacity-90">
+                              {smsTestResult.parsed?.valid 
+                                ? (smsTestResult.simulated 
+                                    ? "Payment simulated! Users who enter UTR " + smsTestResult.parsed.utr + " will be credited instantly." 
+                                    : "SMS pattern is 100% compatible! Enable simulation to test live user verification.") 
+                                : (smsTestResult.parsed?.reason || "Could not detect valid amount or 12-digit UTR.")}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Real-time SMS Forwarder Logs */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-black uppercase tracking-wider text-gray-700">
+                              Recent Forwarded SMS Logs ({smsLogs.length})
+                            </span>
+                            {loadingSmsLogs && <span className="text-[10px] text-gray-400">Refreshing...</span>}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 px-2.5 text-[11px] font-bold"
+                              onClick={fetchSmsLogs}
+                            >
+                              <RefreshCw className="w-3 h-3 mr-1" />
+                              Refresh
+                            </Button>
+                            {smsLogs.length > 0 && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 text-[11px] font-bold text-red-500 hover:text-red-600 hover:bg-red-50"
+                                onClick={handleClearSmsLogs}
+                              >
+                                Clear
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+
+                        {smsLogs.length === 0 ? (
+                          <div className="p-6 text-center bg-white rounded-2xl border border-gray-100 text-xs text-gray-400">
+                            No forwarded SMS received yet. Forward your first Bank/UPI SMS or use the test parser above.
+                          </div>
+                        ) : (
+                          <div className="max-h-60 overflow-y-auto rounded-2xl border border-gray-200 divide-y divide-gray-100 bg-white shadow-inner">
+                            {smsLogs.map((log: any) => (
+                              <div key={log.id} className="p-3 text-xs space-y-1 hover:bg-gray-50/80 transition-colors">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-bold text-gray-800">{log.sender || "SMS_APP"}</span>
+                                    {log.amount > 0 && (
+                                      <span className="font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                                        ₹{log.amount}
+                                      </span>
+                                    )}
+                                    {log.utr && (
+                                      <span className="font-mono text-[11px] text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
+                                        UTR: {log.utr}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className={cn(
+                                      "px-2 py-0.5 text-[10px] font-black uppercase rounded-full",
+                                      log.status === "available" && "bg-blue-100 text-blue-700",
+                                      (log.status === "claimed" || log.status === "claimed_auto") && "bg-emerald-100 text-emerald-700",
+                                      log.status?.startsWith("ignored") && "bg-gray-100 text-gray-500"
+                                    )}>
+                                      {log.status === "available" ? "Ready for user" : 
+                                       log.status?.startsWith("claimed") ? `Claimed (${log.claimedEmail || log.claimedBy || "User"})` : 
+                                       "Ignored"}
+                                    </span>
+                                    <span className="text-[10px] text-gray-400">
+                                      {new Date(log.timestamp).toLocaleTimeString()}
+                                    </span>
+                                  </div>
+                                </div>
+                                <p className="text-[11px] text-gray-500 font-mono truncate">
+                                  {log.rawText}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                   <div className="grid gap-4 md:grid-cols-2">
