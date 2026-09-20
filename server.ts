@@ -3902,8 +3902,15 @@ export async function startServer() {
       lower.includes("payment of rs") ||
       lower.includes("payment of inr") ||
       lower.includes("payment of ₹") ||
-      lower.includes("has transferred rs") ||
-      lower.includes("has transferred inr");
+      lower.includes("has transferred") ||
+      lower.includes("transferred rs") ||
+      lower.includes("prapt") ||
+      lower.includes("jama") ||
+      lower.includes("aaye") ||
+      lower.includes("bheje") ||
+      lower.includes("khate me") ||
+      lower.includes("account") ||
+      lower.includes("upi");
 
     if (!isCredit) {
       return { isCredit: false, reason: "No payment credit keyword found in message" };
@@ -3965,6 +3972,9 @@ export async function startServer() {
   app.all("/api/sms-webhook", async (req, res) => {
     try {
       let body = req.body || {};
+      if (Buffer.isBuffer(body)) {
+        body = body.toString("utf-8");
+      }
       if (typeof body === "string") {
         try {
           body = JSON.parse(body);
@@ -3975,10 +3985,21 @@ export async function startServer() {
       const query = req.query || {};
 
       // Flexible extraction across different SMS forwarding app schemas
-      const smsText = String(
+      let smsText = String(
         body.text || body.message || body.body || body.sms || body.content || body.msg || body.raw || body.textMessage ||
-        query.text || query.message || query.body || query.sms || ""
+        body.msg_body || body.sms_body || body.data || body.notification ||
+        query.text || query.message || query.body || query.sms || query.msg || ""
       ).trim();
+
+      // If still empty, inspect all string values in body
+      if (!smsText && typeof body === "object") {
+        for (const val of Object.values(body)) {
+          if (typeof val === "string" && val.trim().length > 10) {
+            smsText = val.trim();
+            break;
+          }
+        }
+      }
 
       const sender = String(
         body.from || body.sender || body.address || body.phone || body.number || body.originatingAddress ||

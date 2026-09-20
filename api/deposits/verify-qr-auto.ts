@@ -1,8 +1,5 @@
-import axios from "axios";
-
-const FIREBASE_PROJECT_ID = "gen-lang-client-0629912823";
-const FIREBASE_DATABASE_ID = "ai-studio-f36429fa-50a3-4e58-b960-86b1e1d0141c";
-const FIREBASE_API_KEY = process.env.VITE_FIREBASE_API_KEY || "AIzaSyBW_IUbuocn83oBCfQfbZsGbswo-OcgxRY";
+import { db } from "../_firebase";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 
 export default async function handler(req: any, res: any) {
   res.setHeader("Access-Control-Allow-Credentials", "true");
@@ -25,27 +22,19 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: "Invalid UTR format. Must be 12 digits." });
     }
 
-    const firestoreBase = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents`;
-
-    // 1. Check if UTR exists in sms_forwarder_pool
-    let poolDoc: any = null;
-    try {
-      const poolRes = await axios.get(`${firestoreBase}/sms_forwarder_pool/${cleanUtr}?key=${FIREBASE_API_KEY}`, { timeout: 5000 });
-      if (poolRes.data && poolRes.data.fields) {
-        poolDoc = poolRes.data.fields;
-      }
-    } catch (e: any) {
-      // Not in pool yet
-    }
-
     const nowIso = new Date().toISOString();
 
-    if (poolDoc) {
-      const status = poolDoc.status?.stringValue || "available";
-      const poolAmount = poolDoc.amount?.doubleValue || poolDoc.amount?.integerValue || Number(reqAmount || 0);
+    // 1. Check if UTR exists in sms_forwarder_pool
+    const poolDocRef = doc(db, "sms_forwarder_pool", cleanUtr);
+    const poolSnap = await getDoc(poolDocRef);
+
+    if (poolSnap.exists()) {
+      const poolData = poolSnap.data();
+      const status = poolData?.status || "available";
+      const poolAmount = Number(poolData?.amount || reqAmount || 0);
 
       if (status === "claimed") {
-        const claimedBy = poolDoc.claimedBy?.stringValue || "";
+        const claimedBy = poolData?.claimedBy || "";
         if (claimedBy === userId) {
           return res.status(200).json({
             success: true,
@@ -64,15 +53,12 @@ export default async function handler(req: any, res: any) {
       // Update user balance in Firestore
       let newBalance = poolAmount;
       try {
-        const userSnap = await axios.get(`${firestoreBase}/users/${userId}?key=${FIREBASE_API_KEY}`, { timeout: 5000 });
-        const currentBal = userSnap.data?.fields?.balance?.doubleValue || userSnap.data?.fields?.balance?.integerValue || 0;
-        newBalance = currentBal + poolAmount;
+        const userDocRef = doc(db, "users", userId);
+        const userSnap = await getDoc(userDocRef);
+        const currentBal = userSnap.exists() ? (userSnap.data()?.balance || 0) : 0;
+        newBalance = Number(currentBal) + poolAmount;
 
-        await axios.patch(`${firestoreBase}/users/${userId}?updateMask.fieldPaths=balance&key=${FIREBASE_API_KEY}`, {
-          fields: {
-            balance: { doubleValue: newBalance }
-          }
-        }, { timeout: 5000 });
+        await setDoc(userDocRef, { balance: newBalance }, { merge: true });
       } catch (userErr: any) {
         console.error("[USER-BAL-UPDATE-FAIL]", userErr.message);
       }
@@ -80,31 +66,27 @@ export default async function handler(req: any, res: any) {
       // Create deposit doc in Firestore
       const depositId = `dep_${Date.now()}_${cleanUtr.slice(-4)}`;
       try {
-        await axios.patch(`${firestoreBase}/deposits/${depositId}?key=${FIREBASE_API_KEY}`, {
-          fields: {
-            userId: { stringValue: userId },
-            userEmail: { stringValue: userEmail || "" },
-            amount: { doubleValue: poolAmount },
-            utr: { stringValue: cleanUtr },
-            status: { stringValue: "approved" },
-            paymentMethod: { stringValue: "sms_forwarder" },
-            createdAt: { stringValue: nowIso },
-            verifiedAt: { stringValue: nowIso }
-          }
-        }, { timeout: 5000 });
+        await setDoc(doc(db, "deposits", depositId), {
+          userId,
+          userEmail: userEmail || "",
+          amount: poolAmount,
+          utr: cleanUtr,
+          status: "approved",
+          paymentMethod: "sms_forwarder",
+          createdAt: nowIso,
+          verifiedAt: nowIso
+        });
       } catch (depErr: any) {
         console.error("[DEPOSIT-DOC-FAIL]", depErr.message);
       }
 
       // Mark pool as claimed
-      await axios.patch(`${firestoreBase}/sms_forwarder_pool/${cleanUtr}?updateMask.fieldPaths=status&updateMask.fieldPaths=claimedBy&updateMask.fieldPaths=claimedEmail&updateMask.fieldPaths=claimedAt&key=${FIREBASE_API_KEY}`, {
-        fields: {
-          status: { stringValue: "claimed" },
-          claimedBy: { stringValue: userId },
-          claimedEmail: { stringValue: userEmail || "" },
-          claimedAt: { stringValue: nowIso }
-        }
-      }, { timeout: 5000 });
+      await setDoc(poolDocRef, {
+        status: "claimed",
+        claimedBy: userId,
+        claimedEmail: userEmail || "",
+        claimedAt: nowIso
+      }, { merge: true });
 
       return res.status(200).json({
         success: true,
@@ -117,15 +99,13 @@ export default async function handler(req: any, res: any) {
 
     // 2. Not in pool yet - Save to pending_user_utrs so as soon as SMS lands, it auto-credits!
     try {
-      await axios.patch(`${firestoreBase}/pending_user_utrs/${cleanUtr}?key=${FIREBASE_API_KEY}`, {
-        fields: {
-          utr: { stringValue: cleanUtr },
-          userId: { stringValue: userId },
-          userEmail: { stringValue: userEmail || "" },
-          amount: { doubleValue: Number(reqAmount || 0) },
-          timestamp: { stringValue: nowIso }
-        }
-      }, { timeout: 5000 });
+      await setDoc(doc(db, "pending_user_utrs", cleanUtr), {
+        utr: cleanUtr,
+        userId,
+        userEmail: userEmail || "",
+        amount: Number(reqAmount || 0),
+        timestamp: nowIso
+      });
     } catch (pendErr: any) {
       console.warn("[PENDING-USER-SAVE-FAIL]", pendErr.message);
     }
@@ -136,7 +116,7 @@ export default async function handler(req: any, res: any) {
       error: `Payment verification pending: No confirmed transaction received yet for UTR ${cleanUtr}. If you just completed the payment, please wait 15–30 seconds for the Bank/UPI SMS to arrive, then click Confirm again.`
     });
   } catch (err: any) {
-    console.error("[VERCEL-VERIFY-QR-AUTO-ERR]", err.message);
+    console.error("[VERIFY-QR-AUTO-ERR]", err.message);
     return res.status(500).json({ success: false, error: err.message });
   }
 }

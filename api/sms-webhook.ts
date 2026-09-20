@@ -1,8 +1,5 @@
-import axios from "axios";
-
-const FIREBASE_PROJECT_ID = "gen-lang-client-0629912823";
-const FIREBASE_DATABASE_ID = "ai-studio-f36429fa-50a3-4e58-b960-86b1e1d0141c";
-const FIREBASE_API_KEY = process.env.VITE_FIREBASE_API_KEY || "AIzaSyBW_IUbuocn83oBCfQfbZsGbswo-OcgxRY";
+import { db } from "./_firebase";
+import { doc, getDoc, setDoc, deleteDoc } from "firebase/firestore";
 
 function parseBankSms(smsText: string) {
   if (!smsText || typeof smsText !== "string") return null;
@@ -37,8 +34,13 @@ function parseBankSms(smsText: string) {
     lower.includes("payment of ₹") ||
     lower.includes("prapt") ||
     lower.includes("jama") ||
-    lower.includes("has transferred rs") ||
-    lower.includes("has transferred inr");
+    lower.includes("has transferred") ||
+    lower.includes("transferred rs") ||
+    lower.includes("aaye") ||
+    lower.includes("bheje") ||
+    lower.includes("khate me") ||
+    lower.includes("account") ||
+    lower.includes("upi");
 
   if (!isCredit) {
     return { isCredit: false, reason: "No payment credit keyword found in message" };
@@ -105,21 +107,38 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    let body = req.body || {};
+    let body = req.body;
+    if (Buffer.isBuffer(body)) {
+      body = body.toString("utf-8");
+    }
+
     if (typeof body === "string") {
       try {
         body = JSON.parse(body);
       } catch (e) {
+        // Plain text string
         body = { message: body };
       }
     }
 
+    body = body || {};
     const query = req.query || {};
 
-    const smsText = String(
+    let smsText = String(
       body.text || body.message || body.body || body.sms || body.content || body.msg || body.raw || body.textMessage ||
-      query.text || query.message || query.body || query.sms || ""
+      body.msg_body || body.sms_body || body.data ||
+      query.text || query.message || query.body || query.sms || query.msg || ""
     ).trim();
+
+    // If still empty, search all keys in body for a string containing numbers or keywords
+    if (!smsText && typeof body === "object") {
+      for (const val of Object.values(body)) {
+        if (typeof val === "string" && val.length > 10) {
+          smsText = val.trim();
+          break;
+        }
+      }
+    }
 
     const sender = String(
       body.from || body.sender || body.address || body.phone || body.number || body.originatingAddress ||
@@ -129,7 +148,7 @@ export default async function handler(req: any, res: any) {
     if (!smsText) {
       return res.status(200).json({
         success: true,
-        message: "SMS Forwarder webhook endpoint is live on Vercel and ready. Send POST with 'message' or 'text' key."
+        message: "SMS Forwarder webhook endpoint is live and ready. Send POST with 'message' or 'text' key."
       });
     }
 
@@ -137,24 +156,21 @@ export default async function handler(req: any, res: any) {
     const nowIso = new Date().toISOString();
     const logId = `sms_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
 
-    const firestoreBase = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents`;
-
-    // 1. Save log to Firestore
+    // 1. Save log to Firestore using SDK
     try {
-      await axios.patch(`${firestoreBase}/sms_forwarder_logs/${logId}?key=${FIREBASE_API_KEY}`, {
-        fields: {
-          timestamp: { stringValue: nowIso },
-          sender: { stringValue: sender },
-          rawText: { stringValue: smsText },
-          isCredit: { booleanValue: !!parsed?.isCredit },
-          amount: { doubleValue: parsed?.amount || 0 },
-          utr: { stringValue: parsed?.utr || "" },
-          valid: { booleanValue: !!parsed?.valid },
-          status: { stringValue: parsed?.valid ? "available" : "invalid" }
-        }
-      }, { timeout: 5000 });
-    } catch (e: any) {
-      console.warn("[VERCEL-SMS] Failed to write log:", e.message);
+      await setDoc(doc(db, "sms_forwarder_logs", logId), {
+        id: logId,
+        timestamp: nowIso,
+        sender,
+        rawText: smsText,
+        isCredit: !!parsed?.isCredit,
+        amount: parsed?.amount || 0,
+        utr: parsed?.utr || "",
+        valid: !!parsed?.valid,
+        status: parsed?.valid ? "available" : "invalid"
+      });
+    } catch (logErr: any) {
+      console.warn("[FIREBASE-SMS] Failed to write log:", logErr.message);
     }
 
     if (!parsed || !parsed.valid || !parsed.utr || parsed.amount <= 0) {
@@ -173,81 +189,69 @@ export default async function handler(req: any, res: any) {
     let waitingUser: any = null;
 
     try {
-      const pendingRes = await axios.get(`${firestoreBase}/pending_user_utrs/${cleanUtr}?key=${FIREBASE_API_KEY}`, { timeout: 4000 });
-      if (pendingRes.data && pendingRes.data.fields) {
-        const fields = pendingRes.data.fields;
-        waitingUser = {
-          userId: fields.userId?.stringValue || "",
-          userEmail: fields.userEmail?.stringValue || "",
-          amount: fields.amount?.doubleValue || fields.amount?.integerValue || amount
-        };
+      const pendingSnap = await getDoc(doc(db, "pending_user_utrs", cleanUtr));
+      if (pendingSnap.exists()) {
+        waitingUser = pendingSnap.data();
       }
-    } catch (e) {}
+    } catch (e: any) {
+      console.warn("[CHECK-PENDING-ERR]", e.message);
+    }
 
     if (waitingUser && waitingUser.userId) {
       // Auto-credit user in Firestore
       try {
-        // Read current user balance
-        const userDocRes = await axios.get(`${firestoreBase}/users/${waitingUser.userId}?key=${FIREBASE_API_KEY}`, { timeout: 4000 });
-        const currentBalance = userDocRes.data.fields?.balance?.doubleValue || userDocRes.data.fields?.balance?.integerValue || 0;
-        const newBalance = currentBalance + amount;
+        const userDocRef = doc(db, "users", waitingUser.userId);
+        const userDocSnap = await getDoc(userDocRef);
+        const currentBal = userDocSnap.exists() ? (userDocSnap.data()?.balance || 0) : 0;
+        const newBalance = Number(currentBal) + amount;
 
-        // Update balance
-        await axios.patch(`${firestoreBase}/users/${waitingUser.userId}?updateMask.fieldPaths=balance&key=${FIREBASE_API_KEY}`, {
-          fields: {
-            balance: { doubleValue: newBalance }
-          }
-        }, { timeout: 4000 });
+        await setDoc(userDocRef, { balance: newBalance }, { merge: true });
 
         // Create deposit doc
         const depositId = `dep_auto_${cleanUtr}`;
-        await axios.patch(`${firestoreBase}/deposits/${depositId}?key=${FIREBASE_API_KEY}`, {
-          fields: {
-            userId: { stringValue: waitingUser.userId },
-            userEmail: { stringValue: waitingUser.userEmail },
-            amount: { doubleValue: amount },
-            utr: { stringValue: cleanUtr },
-            status: { stringValue: "approved" },
-            paymentMethod: { stringValue: "sms_forwarder_auto" },
-            createdAt: { stringValue: nowIso },
-            verifiedAt: { stringValue: nowIso }
-          }
-        }, { timeout: 4000 });
+        await setDoc(doc(db, "deposits", depositId), {
+          userId: waitingUser.userId,
+          userEmail: waitingUser.userEmail || "",
+          amount,
+          utr: cleanUtr,
+          status: "approved",
+          paymentMethod: "sms_forwarder_auto",
+          createdAt: nowIso,
+          verifiedAt: nowIso
+        });
 
-        // Delete or mark pending_user_utr claimed
-        await axios.delete(`${firestoreBase}/pending_user_utrs/${cleanUtr}?key=${FIREBASE_API_KEY}`, { timeout: 4000 });
-
+        // Delete pending_user_utr entry
+        await deleteDoc(doc(db, "pending_user_utrs", cleanUtr));
         autoCredited = true;
       } catch (creditErr: any) {
-        console.error("[VERCEL-SMS-AUTO-ERR]", creditErr.message);
+        console.error("[SMS-AUTO-CREDIT-ERR]", creditErr.message);
       }
     }
 
     // 3. Save to sms_forwarder_pool in Firestore
-    await axios.patch(`${firestoreBase}/sms_forwarder_pool/${cleanUtr}?key=${FIREBASE_API_KEY}`, {
-      fields: {
-        utr: { stringValue: cleanUtr },
-        amount: { doubleValue: amount },
-        sender: { stringValue: sender },
-        rawSms: { stringValue: smsText },
-        timestamp: { stringValue: nowIso },
-        status: { stringValue: autoCredited ? "claimed" : "available" },
-        claimedBy: { stringValue: autoCredited ? waitingUser?.userId : "" },
-        claimedEmail: { stringValue: autoCredited ? waitingUser?.userEmail : "" }
-      }
-    }, { timeout: 5000 });
+    await setDoc(doc(db, "sms_forwarder_pool", cleanUtr), {
+      utr: cleanUtr,
+      amount,
+      sender,
+      rawSms: smsText,
+      timestamp: nowIso,
+      status: autoCredited ? "claimed" : "available",
+      claimedBy: autoCredited ? (waitingUser?.userId || "") : "",
+      claimedEmail: autoCredited ? (waitingUser?.userEmail || "") : "",
+      claimedAt: autoCredited ? nowIso : null
+    });
 
     return res.status(200).json({
       success: true,
       message: autoCredited
         ? `₹${amount} (UTR: ${cleanUtr}) auto-credited to waiting user!`
-        : `₹${amount} (UTR: ${cleanUtr}) saved to pool and ready for user verification!`,
+        : `₹${amount} (UTR: ${cleanUtr}) saved to pool and ready for instant user verification!`,
       utr: cleanUtr,
       amount,
       autoCredited
     });
   } catch (err: any) {
-    console.error("[VERCEL-SMS-WEBHOOK-ERR]", err.message);
+    console.error("[SMS-WEBHOOK-FATAL]", err.message);
     return res.status(500).json({ success: false, error: err.message });
   }
 }

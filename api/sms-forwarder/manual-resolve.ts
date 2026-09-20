@@ -1,8 +1,5 @@
-import axios from "axios";
-
-const FIREBASE_PROJECT_ID = "gen-lang-client-0629912823";
-const FIREBASE_DATABASE_ID = "ai-studio-f36429fa-50a3-4e58-b960-86b1e1d0141c";
-const FIREBASE_API_KEY = process.env.VITE_FIREBASE_API_KEY || "AIzaSyBW_IUbuocn83oBCfQfbZsGbswo-OcgxRY";
+import { db } from "../_firebase";
+import { doc, getDoc, setDoc, deleteDoc, collection, getDocs } from "firebase/firestore";
 
 export default async function handler(req: any, res: any) {
   res.setHeader("Access-Control-Allow-Credentials", "true");
@@ -21,7 +18,6 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: "Please provide a valid 12-digit UTR" });
     }
 
-    const firestoreBase = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents`;
     const nowIso = new Date().toISOString();
 
     // 1. Check if there's a pending user waiting for this UTR
@@ -30,24 +26,25 @@ export default async function handler(req: any, res: any) {
     let amountToCredit = Number(reqAmount || 0);
 
     try {
-      const pendingRes = await axios.get(`${firestoreBase}/pending_user_utrs/${cleanUtr}?key=${FIREBASE_API_KEY}`, { timeout: 4000 });
-      if (pendingRes.data && pendingRes.data.fields) {
-        const fields = pendingRes.data.fields;
-        if (!targetUserId) targetUserId = fields.userId?.stringValue || "";
-        if (!targetEmail) targetEmail = fields.userEmail?.stringValue || "";
-        if (!amountToCredit) amountToCredit = fields.amount?.doubleValue || fields.amount?.integerValue || 0;
+      const pendingSnap = await getDoc(doc(db, "pending_user_utrs", cleanUtr));
+      if (pendingSnap.exists()) {
+        const fields = pendingSnap.data();
+        if (!targetUserId) targetUserId = fields?.userId || "";
+        if (!targetEmail) targetEmail = fields?.userEmail || "";
+        if (!amountToCredit) amountToCredit = Number(fields?.amount || 0);
       }
     } catch (e) {}
 
     // 2. If targetUserId still unknown, try looking up user by email
     if (!targetUserId && targetEmail) {
       try {
-        const usersRes = await axios.get(`${firestoreBase}/users?pageSize=100&key=${FIREBASE_API_KEY}`, { timeout: 5000 });
-        const docs = usersRes.data.documents || [];
-        const match = docs.find((d: any) => d.fields?.email?.stringValue?.toLowerCase() === targetEmail.toLowerCase());
-        if (match) {
-          targetUserId = match.name.split("/").pop();
-        }
+        const usersSnap = await getDocs(collection(db, "users"));
+        usersSnap.forEach((d) => {
+          const data = d.data();
+          if (data?.email?.toLowerCase() === targetEmail.toLowerCase()) {
+            targetUserId = d.id;
+          }
+        });
       } catch (e) {}
     }
 
@@ -64,46 +61,40 @@ export default async function handler(req: any, res: any) {
     }
 
     // 3. Update user balance
-    const userDocRes = await axios.get(`${firestoreBase}/users/${targetUserId}?key=${FIREBASE_API_KEY}`, { timeout: 4000 });
-    const currentBal = userDocRes.data.fields?.balance?.doubleValue || userDocRes.data.fields?.balance?.integerValue || 0;
-    const newBal = currentBal + amountToCredit;
+    const userDocRef = doc(db, "users", targetUserId);
+    const userSnap = await getDoc(userDocRef);
+    const currentBal = userSnap.exists() ? (userSnap.data()?.balance || 0) : 0;
+    const newBal = Number(currentBal) + amountToCredit;
 
-    await axios.patch(`${firestoreBase}/users/${targetUserId}?updateMask.fieldPaths=balance&key=${FIREBASE_API_KEY}`, {
-      fields: {
-        balance: { doubleValue: newBal }
-      }
-    }, { timeout: 4000 });
+    await setDoc(userDocRef, { balance: newBal }, { merge: true });
 
     // 4. Create approved deposit doc
     const depositId = `dep_man_${cleanUtr}`;
-    await axios.patch(`${firestoreBase}/deposits/${depositId}?key=${FIREBASE_API_KEY}`, {
-      fields: {
-        userId: { stringValue: targetUserId },
-        userEmail: { stringValue: targetEmail || "" },
-        amount: { doubleValue: amountToCredit },
-        utr: { stringValue: cleanUtr },
-        status: { stringValue: "approved" },
-        paymentMethod: { stringValue: "admin_manual_utr" },
-        processedBy: { stringValue: adminEmail || "admin" },
-        createdAt: { stringValue: nowIso },
-        verifiedAt: { stringValue: nowIso }
-      }
-    }, { timeout: 4000 });
+    await setDoc(doc(db, "deposits", depositId), {
+      userId: targetUserId,
+      userEmail: targetEmail || "",
+      amount: amountToCredit,
+      utr: cleanUtr,
+      status: "approved",
+      paymentMethod: "admin_manual_utr",
+      processedBy: adminEmail || "admin",
+      createdAt: nowIso,
+      verifiedAt: nowIso
+    });
 
     // 5. Update pool and pending
     try {
-      await axios.patch(`${firestoreBase}/sms_forwarder_pool/${cleanUtr}?key=${FIREBASE_API_KEY}`, {
-        fields: {
-          utr: { stringValue: cleanUtr },
-          amount: { doubleValue: amountToCredit },
-          status: { stringValue: "claimed" },
-          claimedBy: { stringValue: targetUserId },
-          claimedEmail: { stringValue: targetEmail || "" },
-          timestamp: { stringValue: nowIso },
-          sender: { stringValue: "ADMIN_RESOLVED" }
-        }
-      }, { timeout: 4000 });
-      await axios.delete(`${firestoreBase}/pending_user_utrs/${cleanUtr}?key=${FIREBASE_API_KEY}`, { timeout: 4000 });
+      await setDoc(doc(db, "sms_forwarder_pool", cleanUtr), {
+        utr: cleanUtr,
+        amount: amountToCredit,
+        status: "claimed",
+        claimedBy: targetUserId,
+        claimedEmail: targetEmail || "",
+        timestamp: nowIso,
+        sender: "ADMIN_RESOLVED"
+      }, { merge: true });
+
+      await deleteDoc(doc(db, "pending_user_utrs", cleanUtr));
     } catch (e) {}
 
     return res.status(200).json({

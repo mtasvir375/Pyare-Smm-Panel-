@@ -643,11 +643,40 @@ export default function Admin() {
 
       // Merge with Firestore if needed
       try {
-        const firestorePending = await dbClient.getDocs("pending_user_utrs");
-        if (firestorePending && firestorePending.length > 0) {
+        const [firestoreLogs, firestorePool, firestorePending] = await Promise.allSettled([
+          dbClient.getDocs("sms_forwarder_logs"),
+          dbClient.getDocs("sms_forwarder_pool"),
+          dbClient.getDocs("pending_user_utrs")
+        ]);
+
+        if (firestoreLogs.status === "fulfilled" && firestoreLogs.value && firestoreLogs.value.length > 0) {
+          const logMap = new Map();
+          fetchedLogs.forEach((l: any) => logMap.set(l.id || l.timestamp, l));
+          firestoreLogs.value.forEach((l: any) => {
+            const key = l.id || l.timestamp;
+            if (!logMap.has(key)) {
+              logMap.set(key, l);
+            }
+          });
+          fetchedLogs = Array.from(logMap.values());
+          fetchedLogs.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
+        }
+
+        if (firestorePool.status === "fulfilled" && firestorePool.value && firestorePool.value.length > 0) {
+          const poolMap = new Map();
+          fetchedAvailable.forEach((p: any) => poolMap.set(p.utr, p));
+          firestorePool.value.forEach((p: any) => {
+            if (p.status === "available" && !poolMap.has(p.utr)) {
+              poolMap.set(p.utr, p);
+            }
+          });
+          fetchedAvailable = Array.from(poolMap.values());
+        }
+
+        if (firestorePending.status === "fulfilled" && firestorePending.value && firestorePending.value.length > 0) {
           const pendingMap = new Map();
           fetchedPending.forEach((p: any) => pendingMap.set(p.utr, p));
-          firestorePending.forEach((doc: any) => {
+          firestorePending.value.forEach((doc: any) => {
             if (!pendingMap.has(doc.utr || doc.id)) {
               pendingMap.set(doc.utr || doc.id, {
                 utr: doc.utr || doc.id,
@@ -3417,10 +3446,13 @@ export default function Admin() {
                             Add Rule &gt; Destination: <b>Webhook URL (POST)</b> me upar wala URL paste karein.
                           </div>
                           <div className="bg-white/80 p-3 rounded-xl border border-indigo-100">
-                            <b className="text-indigo-600 block mb-1">3. JSON Template</b>
-                            Body me: <code className="text-[11px] font-mono block bg-gray-50 p-1 rounded mt-1 border">{'{"sender":"%from","message":"%text"} '}</code>
+                            <b className="text-indigo-600 block mb-1">3. Template / Body</b>
+                            App me: Template <b>{'{"from":"%from%","text":"%text%"}'}</b> likhein (dono side % lagayein), ya Template ko <b>Khali / Default</b> chhod dein!
                           </div>
                         </div>
+                        <p className="text-[11px] text-amber-800 bg-amber-50 p-2.5 rounded-xl border border-amber-200">
+                          💡 <b>Zaroori baat:</b> App me jo "Test" button hota hai, wo real SMS nahi bhejta (wo sirf <code>"%text"</code> bhejta hai). Real test karne ke liye kisi dusre phone se <b>₹1 ka actual UPI payment</b> apne QR code par bhejein taaki real bank SMS website par forward ho sake!
+                        </p>
                       </div>
 
                       {/* Live SMS Parser Tester & Simulator */}
@@ -3587,10 +3619,12 @@ export default function Admin() {
                                       "px-2 py-0.5 text-[10px] font-black uppercase rounded-full",
                                       log.status === "available" && "bg-blue-100 text-blue-700",
                                       (log.status === "claimed" || log.status === "claimed_auto") && "bg-emerald-100 text-emerald-700",
+                                      (log.status === "invalid" || log.status === "invalid_format") && "bg-amber-100 text-amber-800",
                                       log.status?.startsWith("ignored") && "bg-gray-100 text-gray-500"
                                     )}>
                                       {log.status === "available" ? "Ready for user" : 
                                        log.status?.startsWith("claimed") ? `Claimed (${log.claimedEmail || log.claimedBy || "User"})` : 
+                                       (log.status === "invalid" || log.status === "invalid_format") ? "No UTR/Amount detected" :
                                        "Ignored"}
                                     </span>
                                     <span className="text-[10px] text-gray-400">
@@ -3598,9 +3632,14 @@ export default function Admin() {
                                     </span>
                                   </div>
                                 </div>
-                                <p className="text-[11px] text-gray-500 font-mono truncate">
+                                <p className="text-[11px] text-gray-500 font-mono break-all">
                                   {log.rawText}
                                 </p>
+                                {log.rawText?.includes("%text") && (
+                                  <p className="text-[10px] text-amber-700 bg-amber-50 p-1.5 rounded border border-amber-200">
+                                    ⚠️ <b>Notice:</b> App sent literal <code>"%text"</code> instead of real SMS text. In app settings use <code>%text%</code> or select Default JSON format.
+                                  </p>
+                                )}
                               </div>
                             ))}
                           </div>
