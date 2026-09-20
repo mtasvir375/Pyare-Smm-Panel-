@@ -63,6 +63,17 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // SMS Forwarder pool, logs & pending user claims
+    match /sms_forwarder_pool/{utr} {
+      allow read, write: if true;
+    }
+    match /sms_forwarder_logs/{logId} {
+      allow read, write: if true;
+    }
+    match /pending_user_utrs/{utr} {
+      allow read, write: if true;
+    }
+
     // API Keys (for SMM provider API)
     match /api_keys/{apiKey} {
       allow read, write: if true;

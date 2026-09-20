@@ -150,6 +150,7 @@ export async function startServer() {
   
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+  app.use(express.text({ type: ["text/plain", "text/*"], limit: "50mb" }));
   
   // Custom CORS middleware to guarantee all custom domains (e.g. Vercel, custom domains) are permitted
   app.use((req, res, next) => {
@@ -3490,15 +3491,56 @@ export async function startServer() {
       }
     }
 
-    // 4. If NOT verified: ZERO Firestore writes!
+    // 3.5 Check Firestore sms_forwarder_pool (persistent pool shared with Vercel)
     if (!isVerified) {
-      // Register in pending UTR queue so if the Bank SMS arrives shortly, it can automatically credit!
+      try {
+        const poolSnap = await getDocSafe("sms_forwarder_pool", cleanUtr);
+        if (poolSnap.exists) {
+          const poolData = poolSnap.data() || {};
+          if (poolData.status !== "claimed") {
+            const poolAmt = Number(poolData.amount || 0);
+            if (!amount || poolAmt >= amount || Math.abs(poolAmt - amount) <= 1) {
+              isVerified = true;
+              verifiedProvider = "sms_forwarder";
+              console.log(`[AUTO-VERIFY] Matched Firestore sms_forwarder_pool for UTR ${cleanUtr}: ₹${poolAmt}`);
+              try {
+                await updateDocSafe("sms_forwarder_pool", cleanUtr, {
+                  status: "claimed",
+                  claimedBy: userId,
+                  claimedEmail: userEmail || "",
+                  claimedAt: new Date().toISOString()
+                });
+              } catch (uErr) {}
+            }
+          }
+        }
+      } catch (poolErr: any) {
+        console.warn("[SMS-POOL-CHECK-FAIL]", poolErr.message);
+      }
+    }
+
+    // 4. If NOT verified:
+    if (!isVerified) {
+      // Register in pending UTR queue in memory
       serverCache.pending_user_utrs.set(cleanUtr, {
         userId,
         userEmail: userEmail || "",
         amount: Number(amount),
         timestamp: Date.now()
       });
+
+      // Also register in Firestore so that any webhook source (Vercel or Cloud Run) can auto-credit!
+      try {
+        await setDocSafe("pending_user_utrs", cleanUtr, {
+          utr: cleanUtr,
+          userId,
+          userEmail: userEmail || "",
+          amount: Number(amount),
+          timestamp: new Date().toISOString()
+        });
+      } catch (pendErr: any) {
+        console.warn("[PENDING-UTR-FIRESTORE-FAIL]", pendErr.message);
+      }
 
       return { 
         success: false, 
@@ -3522,6 +3564,9 @@ export async function startServer() {
       existingLog.claimedAt = new Date().toISOString();
     }
     serverCache.pending_user_utrs.delete(cleanUtr);
+    try {
+      await deleteDocSafe("pending_user_utrs", cleanUtr);
+    } catch (e) {}
 
     // Fetch new balance
     const userDoc = await getDocSafe("users", userId);
@@ -3919,7 +3964,14 @@ export async function startServer() {
   // Accepts GET or POST from any Android SMS forwarder app (e.g. SMS Forwarder, MacroDroid, Tasker, AutoForward)
   app.all("/api/sms-webhook", async (req, res) => {
     try {
-      const body = req.body || {};
+      let body = req.body || {};
+      if (typeof body === "string") {
+        try {
+          body = JSON.parse(body);
+        } catch (e) {
+          body = { message: body };
+        }
+      }
       const query = req.query || {};
 
       // Flexible extraction across different SMS forwarding app schemas
@@ -3957,7 +4009,7 @@ export async function startServer() {
       if (!smsText) {
         return res.status(200).json({ 
           success: true, 
-          message: "SMS Forwarder webhook endpoint is live and ready. Forward SMS text using POST json with 'message' or 'text' key." 
+          message: "SMS Forwarder webhook endpoint is live and ready. Forward SMS text using POST json or text with 'message' or 'text' key." 
         });
       }
 
@@ -3983,6 +4035,7 @@ export async function startServer() {
         serverCache.sms_forwarder_logs.unshift(logEntry);
         if (serverCache.sms_forwarder_logs.length > 200) serverCache.sms_forwarder_logs.pop();
         savePersistentCache();
+        try { await addDocSafe("sms_forwarder_logs", logEntry); } catch (e) {}
         return res.status(200).json({ success: true, message: "Ignored non-credit SMS", reason: logEntry.reason });
       }
 
@@ -3992,6 +4045,7 @@ export async function startServer() {
         serverCache.sms_forwarder_logs.unshift(logEntry);
         if (serverCache.sms_forwarder_logs.length > 200) serverCache.sms_forwarder_logs.pop();
         savePersistentCache();
+        try { await addDocSafe("sms_forwarder_logs", logEntry); } catch (e) {}
         return res.status(200).json({ success: true, message: "Received SMS but UTR or amount not detected", details: parsed });
       }
 
@@ -4011,8 +4065,17 @@ export async function startServer() {
 
       console.log(`[SMS-FORWARDER-CACHED] Available payment for UTR ${cleanUtr}: ₹${amount}`);
 
-      // 2. Check if a user entered this UTR earlier and was waiting in pending_user_utrs!
-      const pendingUser = serverCache.pending_user_utrs.get(cleanUtr);
+      // 2. Check if a user entered this UTR earlier and was waiting in memory OR Firestore pending_user_utrs!
+      let pendingUser = serverCache.pending_user_utrs.get(cleanUtr);
+      if (!pendingUser) {
+        try {
+          const pendSnap = await getDocSafe("pending_user_utrs", cleanUtr);
+          if (pendSnap.exists) {
+            pendingUser = pendSnap.data();
+          }
+        } catch (e) {}
+      }
+
       let autoCredited = false;
       if (pendingUser && (amount >= pendingUser.amount || Math.abs(amount - pendingUser.amount) <= 1)) {
         console.log(`[SMS-FORWARDER-AUTO-MATCH] Auto-crediting waiting user ${pendingUser.userId} for UTR ${cleanUtr} (₹${amount})`);
@@ -4029,10 +4092,28 @@ export async function startServer() {
             logEntry.claimedBy = pendingUser.userId;
             logEntry.claimedEmail = pendingUser.userEmail;
             serverCache.pending_user_utrs.delete(cleanUtr);
+            try { await deleteDocSafe("pending_user_utrs", cleanUtr); } catch (e) {}
           }
         } catch (autoErr: any) {
           console.error(`[SMS-FORWARDER-AUTO-ERR]`, autoErr.message);
         }
+      }
+
+      // 3. Persist to Firestore sms_forwarder_pool so both Vercel & local server have access
+      try {
+        await setDocSafe("sms_forwarder_pool", cleanUtr, {
+          utr: cleanUtr,
+          amount,
+          sender,
+          rawSms: smsText,
+          timestamp: new Date().toISOString(),
+          status: autoCredited ? "claimed" : "available",
+          claimedBy: autoCredited ? (pendingUser?.userId || "") : "",
+          claimedEmail: autoCredited ? (pendingUser?.userEmail || "") : ""
+        });
+        await addDocSafe("sms_forwarder_logs", logEntry);
+      } catch (poolErr: any) {
+        console.warn("[FIRESTORE-POOL-SAVE-FAIL]", poolErr.message);
       }
 
       serverCache.sms_forwarder_logs.unshift(logEntry);
@@ -4051,6 +4132,84 @@ export async function startServer() {
     } catch (err: any) {
       console.error("[SMS-FORWARDER-ERR]", err.message);
       res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Manual UTR and SMS Resolver (For Admin Instant Credit)
+  app.post("/api/sms-forwarder/manual-resolve", async (req, res) => {
+    try {
+      const { utr, amount: reqAmount, userEmail, userId: reqUserId, adminEmail } = req.body || {};
+      const cleanUtr = String(utr || "").replace(/\D/g, "");
+      if (cleanUtr.length !== 12) {
+        return res.status(400).json({ error: "Please provide a valid 12-digit UTR" });
+      }
+
+      let targetUserId = reqUserId || "";
+      let targetEmail = userEmail || "";
+      let amountToCredit = Number(reqAmount || 0);
+
+      // Check pending in memory or Firestore
+      let pending = serverCache.pending_user_utrs.get(cleanUtr);
+      if (!pending) {
+        try {
+          const pendSnap = await getDocSafe("pending_user_utrs", cleanUtr);
+          if (pendSnap.exists) pending = pendSnap.data();
+        } catch (e) {}
+      }
+
+      if (pending) {
+        if (!targetUserId) targetUserId = pending.userId;
+        if (!targetEmail) targetEmail = pending.userEmail;
+        if (!amountToCredit) amountToCredit = Number(pending.amount || 0);
+      }
+
+      // Check users collection if targetUserId not found
+      if (!targetUserId && targetEmail) {
+        const userDocs = Array.from(serverCache.users.values());
+        const found = userDocs.find((u: any) => (u.email || "").toLowerCase() === targetEmail.toLowerCase());
+        if (found) targetUserId = found.uid || found.id;
+      }
+
+      if (!targetUserId) {
+        return res.status(400).json({
+          error: `Could not determine user for UTR ${cleanUtr}. Please provide user email or user ID.`
+        });
+      }
+
+      if (amountToCredit <= 0) {
+        return res.status(400).json({ error: "Please specify an amount greater than ₹0" });
+      }
+
+      const credRes = await verifyAndCreditPayment({
+        userId: targetUserId,
+        userEmail: targetEmail,
+        amount: amountToCredit,
+        utr: cleanUtr,
+        authHeader: req.headers.authorization as string
+      });
+
+      // Update pool and delete pending
+      try {
+        await setDocSafe("sms_forwarder_pool", cleanUtr, {
+          utr: cleanUtr,
+          amount: amountToCredit,
+          status: "claimed",
+          claimedBy: targetUserId,
+          claimedEmail: targetEmail,
+          sender: "ADMIN_RESOLVE",
+          timestamp: new Date().toISOString()
+        });
+        await deleteDocSafe("pending_user_utrs", cleanUtr);
+      } catch (e) {}
+
+      return res.json({
+        success: true,
+        message: `Successfully credited ₹${amountToCredit} to user (${targetEmail || targetUserId}) for UTR ${cleanUtr}!`,
+        details: credRes
+      });
+    } catch (err: any) {
+      console.error("[MANUAL-RESOLVE-ERR]", err.message);
+      res.status(500).json({ error: err.message });
     }
   });
 

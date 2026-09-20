@@ -702,6 +702,7 @@
       "user_pending_test",
       {
         "data": {
+          "id": "user_pending_test",
           "uid": "user_pending_test",
           "role": "student",
           "createdAt": "2026-09-20T17:06:51.119Z",
@@ -709,6 +710,19 @@
           "updatedAt": "2026-09-20T17:06:51.119Z"
         },
         "time": 1789924011119
+      }
+    ],
+    [
+      "test_user_1",
+      {
+        "data": {
+          "uid": "test_user_1",
+          "role": "student",
+          "createdAt": "2026-09-20T20:01:11.970Z",
+          "balance": 150,
+          "updatedAt": "2026-09-20T20:01:11.970Z"
+        },
+        "time": 1789934471970
       }
     ]
   ],
@@ -785,6 +799,43 @@
           "createdAt": "2026-09-20T17:06:51.183Z"
         },
         "time": 1789924011241
+      }
+    ],
+    [
+      "dep_1789934472085_b50k8",
+      {
+        "data": {
+          "id": "dep_auto_378642269354_1789934472085",
+          "userId": "test_user_1",
+          "userEmail": "test@example.com",
+          "amount": 150,
+          "utr": "378642269354",
+          "status": "approved",
+          "type": "auto_gateway_verify",
+          "provider": "sms_forwarder",
+          "verifiedAt": "2026-09-20T20:01:12.085Z",
+          "createdAt": "2026-09-20T20:01:12.085Z",
+          "updatedAt": "2026-09-20T20:01:12.085Z"
+        },
+        "time": 1789934472085
+      }
+    ],
+    [
+      "dep_auto_378642269354_1789934472085",
+      {
+        "data": {
+          "id": "dep_auto_378642269354_1789934472085",
+          "userId": "test_user_1",
+          "userEmail": "test@example.com",
+          "amount": 150,
+          "utr": "378642269354",
+          "status": "approved",
+          "type": "auto_gateway_verify",
+          "provider": "sms_forwarder",
+          "verifiedAt": "2026-09-20T20:01:12.085Z",
+          "createdAt": "2026-09-20T20:01:12.085Z"
+        },
+        "time": 1789934472118
       }
     ]
   ],
@@ -1867,6 +1918,29 @@
       }
     ]
   ],
-  "received_gateway_payments": [],
+  "received_gateway_payments": [
+    [
+      "112233445566",
+      {
+        "amount": 100,
+        "provider": "sms_forwarder",
+        "sender": "SMS_APP",
+        "time": 1789934461126,
+        "rawSms": "Payment of Rs. 100 received from User. UPI Ref 112233445566",
+        "status": "available"
+      }
+    ],
+    [
+      "998877665544",
+      {
+        "amount": 250,
+        "provider": "sms_forwarder",
+        "sender": "SMS_APP",
+        "time": 1789934463902,
+        "rawSms": "Payment of Rs. 250 received via UPI Ref 998877665544",
+        "status": "available"
+      }
+    ]
+  ],
   "sms_forwarder_logs": []
 }

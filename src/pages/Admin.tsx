@@ -197,6 +197,10 @@ export default function Admin() {
   const [smsAvailableList, setSmsAvailableList] = useState<any[]>([]);
   const [smsPendingUsers, setSmsPendingUsers] = useState<any[]>([]);
   const [loadingSmsLogs, setLoadingSmsLogs] = useState(false);
+  const [manualUtr, setManualUtr] = useState("");
+  const [manualAmount, setManualAmount] = useState("");
+  const [manualUserEmail, setManualUserEmail] = useState("");
+  const [isResolvingManual, setIsResolvingManual] = useState(false);
   const [providers, setProviders] = useState<any[]>([]);
   const [newProviderName, setNewProviderName] = useState("");
   const [newProviderApiUrl, setNewProviderApiUrl] = useState("");
@@ -622,16 +626,133 @@ export default function Admin() {
   const fetchSmsLogs = async () => {
     setLoadingSmsLogs(true);
     try {
-      const res = await axios.get("/api/sms-forwarder/logs");
-      if (res.data && res.data.success) {
-        setSmsLogs(res.data.logs || []);
-        setSmsAvailableList(res.data.available || []);
-        setSmsPendingUsers(res.data.pendingUsers || []);
+      let fetchedLogs: any[] = [];
+      let fetchedAvailable: any[] = [];
+      let fetchedPending: any[] = [];
+
+      try {
+        const res = await axios.get("/api/sms-forwarder/logs");
+        if (res.data && res.data.success) {
+          fetchedLogs = res.data.logs || [];
+          fetchedAvailable = res.data.available || [];
+          fetchedPending = res.data.pendingUsers || [];
+        }
+      } catch (apiErr) {
+        console.warn("Backend /api/sms-forwarder/logs unavailable, checking Firestore directly");
       }
+
+      // Merge with Firestore if needed
+      try {
+        const firestorePending = await dbClient.getDocs("pending_user_utrs");
+        if (firestorePending && firestorePending.length > 0) {
+          const pendingMap = new Map();
+          fetchedPending.forEach((p: any) => pendingMap.set(p.utr, p));
+          firestorePending.forEach((doc: any) => {
+            if (!pendingMap.has(doc.utr || doc.id)) {
+              pendingMap.set(doc.utr || doc.id, {
+                utr: doc.utr || doc.id,
+                userId: doc.userId,
+                userEmail: doc.userEmail,
+                amount: doc.amount,
+                timestamp: doc.timestamp
+              });
+            }
+          });
+          fetchedPending = Array.from(pendingMap.values());
+        }
+      } catch (fErr) {}
+
+      setSmsLogs(fetchedLogs);
+      setSmsAvailableList(fetchedAvailable);
+      setSmsPendingUsers(fetchedPending);
     } catch (e: any) {
       console.error("Failed to load SMS logs:", e.message);
     } finally {
       setLoadingSmsLogs(false);
+    }
+  };
+
+  const handleManualResolvePayment = async (targetUtr?: string, targetAmount?: number, targetEmail?: string) => {
+    const utrToUse = (targetUtr || manualUtr || "").replace(/\D/g, "");
+    if (utrToUse.length !== 12) {
+      toast.error("Please provide a valid 12-digit UTR");
+      return;
+    }
+    const amtToUse = targetAmount !== undefined ? targetAmount : Number(manualAmount);
+    if (!amtToUse || amtToUse <= 0) {
+      toast.error("Please enter an amount greater than ₹0");
+      return;
+    }
+    const emailToUse = targetEmail || manualUserEmail || "";
+
+    setIsResolvingManual(true);
+    try {
+      let resolved = false;
+
+      try {
+        const res = await axios.post("/api/sms-forwarder/manual-resolve", {
+          utr: utrToUse,
+          amount: amtToUse,
+          userEmail: emailToUse
+        });
+        if (res.data?.success) {
+          resolved = true;
+          toast.success(res.data.message || `Successfully credited ₹${amtToUse} for UTR ${utrToUse}!`);
+        }
+      } catch (backendErr: any) {
+        console.warn("Backend manual-resolve error, attempting direct Firestore credit:", backendErr.message);
+      }
+
+      // Direct Firestore credit if backend failed
+      if (!resolved) {
+        // Find user by email or pending claim
+        let matchedUserId = "";
+        if (emailToUse) {
+          const allUsers = await dbClient.getDocs("users");
+          const target = allUsers.find((u: any) => (u.email || "").toLowerCase() === emailToUse.toLowerCase());
+          if (target) matchedUserId = target.id;
+        }
+
+        if (!matchedUserId) {
+          const pendingItem = smsPendingUsers.find((p: any) => p.utr === utrToUse);
+          if (pendingItem?.userId) matchedUserId = pendingItem.userId;
+        }
+
+        if (matchedUserId) {
+          const userDoc = await dbClient.getDoc("users", matchedUserId);
+          const currentBal = Number(userDoc?.balance || 0);
+          const updatedBal = currentBal + amtToUse;
+          await dbClient.updateDoc("users", matchedUserId, { balance: updatedBal });
+          await dbClient.addDoc("deposits", {
+            userId: matchedUserId,
+            userEmail: emailToUse || userDoc?.email || "",
+            amount: amtToUse,
+            utr: utrToUse,
+            status: "approved",
+            paymentMethod: "admin_manual_resolve",
+            createdAt: new Date().toISOString(),
+            verifiedAt: new Date().toISOString()
+          });
+          try {
+            await dbClient.deleteDoc("pending_user_utrs", utrToUse);
+          } catch (delErr) {}
+          resolved = true;
+          toast.success(`🎉 Direct Firestore Credit: ₹${amtToUse} added to user's wallet! New balance: ₹${updatedBal}`);
+        } else {
+          toast.error("Could not find user. Please enter the user's registered email address.");
+        }
+      }
+
+      if (resolved) {
+        setManualUtr("");
+        setManualAmount("");
+        setManualUserEmail("");
+        fetchSmsLogs();
+      }
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || e.message);
+    } finally {
+      setIsResolvingManual(false);
     }
   };
 
@@ -3106,31 +3227,61 @@ export default function Admin() {
                       {/* Setup Details & Webhook URLs */}
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                         {/* Webhook URL Box */}
-                        <div className="p-4 bg-white rounded-2xl border border-indigo-100 shadow-sm space-y-2">
+                        <div className="p-4 bg-white rounded-2xl border border-indigo-100 shadow-sm space-y-3">
                           <label className="text-[11px] font-black uppercase tracking-wider text-indigo-900 flex items-center gap-1.5">
                             <Zap className="w-3.5 h-3.5 text-indigo-600" />
                             Your SMS Webhook URL (Android App me daalein)
                           </label>
-                          <div className="flex items-center gap-2 bg-gray-50 p-2.5 rounded-xl border border-gray-200">
-                            <code className="text-xs font-mono font-bold text-indigo-600 select-all flex-1 break-all">
-                              {window.location.origin}/api/sms-webhook
-                            </code>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="h-8 px-3 text-xs font-bold border-indigo-200 hover:bg-indigo-50 text-indigo-700 shrink-0"
-                              onClick={() => {
-                                navigator.clipboard.writeText(`${window.location.origin}/api/sms-webhook`);
-                                toast.success("SMS Webhook URL copied to clipboard!");
-                              }}
-                            >
-                              <Copy className="w-3.5 h-3.5 mr-1" />
-                              Copy URL
-                            </Button>
+
+                          {/* Custom Domain Webhook URL */}
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-bold text-gray-500 uppercase">Live Domain Webhook (Recommended)</span>
+                            <div className="flex items-center gap-2 bg-indigo-50/50 p-2.5 rounded-xl border border-indigo-200">
+                              <code className="text-xs font-mono font-bold text-indigo-700 select-all flex-1 break-all">
+                                https://www.pyaresmmpanel.online/api/sms-webhook
+                              </code>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 px-2.5 text-[11px] font-bold bg-white border-indigo-200 hover:bg-indigo-50 text-indigo-700 shrink-0 shadow-sm"
+                                onClick={() => {
+                                  navigator.clipboard.writeText("https://www.pyaresmmpanel.online/api/sms-webhook");
+                                  toast.success("Live Domain Webhook URL copied!");
+                                }}
+                              >
+                                <Copy className="w-3 h-3 mr-1" />
+                                Copy
+                              </Button>
+                            </div>
                           </div>
+
+                          {/* Current Origin Webhook URL */}
+                          {window.location.origin !== "https://www.pyaresmmpanel.online" && (
+                            <div className="space-y-1 pt-1 border-t border-gray-100">
+                              <span className="text-[10px] font-bold text-gray-500 uppercase">Current Environment URL</span>
+                              <div className="flex items-center gap-2 bg-gray-50 p-2 rounded-xl border border-gray-200">
+                                <code className="text-[11px] font-mono font-bold text-gray-700 select-all flex-1 break-all">
+                                  {window.location.origin}/api/sms-webhook
+                                </code>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 px-2 text-[10px] font-bold text-gray-600 shrink-0"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(`${window.location.origin}/api/sms-webhook`);
+                                    toast.success("Current Webhook URL copied!");
+                                  }}
+                                >
+                                  Copy
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+
                           <p className="text-[10px] text-gray-400">
-                            Method: <b>POST</b> (or GET) | Supports JSON, Form-URL-Encoded, & Query parameters.
+                            Method: <b>POST</b> (or GET) | Supports JSON, Plain Text, Form-URL-Encoded.
                           </p>
                         </div>
 
@@ -3166,6 +3317,90 @@ export default function Admin() {
                           </p>
                         </div>
                       </div>
+
+                      {/* Manual UTR Credit / Resolve Tool */}
+                      <div className="p-4 bg-emerald-50/60 rounded-2xl border border-emerald-200 shadow-sm space-y-3">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-black uppercase tracking-wider text-emerald-900 flex items-center gap-1.5">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                            Manual UTR Resolver & Instant Wallet Credit
+                          </label>
+                          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                            Instant Fix
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-emerald-800">
+                          Agar kisi user ka UTR SMS app se aane me deri ho rahi hai ya miss ho gaya hai, to yahan UTR aur Amount daal kar turant user ke wallet me credit kar sakte hain:
+                        </p>
+                        <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                          <Input
+                            placeholder="12-digit UTR (e.g. 378642269354)"
+                            value={manualUtr}
+                            onChange={(e) => setManualUtr(e.target.value)}
+                            className="h-10 text-xs font-mono font-bold bg-white"
+                          />
+                          <Input
+                            placeholder="Amount (₹)"
+                            type="number"
+                            value={manualAmount}
+                            onChange={(e) => setManualAmount(e.target.value)}
+                            className="h-10 text-xs font-bold bg-white"
+                          />
+                          <Input
+                            placeholder="User Email (optional if pending)"
+                            value={manualUserEmail}
+                            onChange={(e) => setManualUserEmail(e.target.value)}
+                            className="h-10 text-xs bg-white"
+                          />
+                          <Button
+                            type="button"
+                            onClick={() => handleManualResolvePayment()}
+                            disabled={isResolvingManual || !manualUtr}
+                            className="h-10 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shrink-0 shadow-sm"
+                          >
+                            {isResolvingManual ? "Crediting..." : "Credit Wallet Now"}
+                          </Button>
+                        </div>
+                      </div>
+
+                      {/* Pending User Claims Box */}
+                      {smsPendingUsers && smsPendingUsers.length > 0 && (
+                        <div className="p-4 bg-amber-50 rounded-2xl border border-amber-200 shadow-sm space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-black uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
+                              <AlertCircle className="w-4 h-4 text-amber-600" />
+                              Users Waiting for SMS Verification ({smsPendingUsers.length})
+                            </span>
+                            <span className="text-[10px] font-bold text-amber-700">Click button to credit immediately</span>
+                          </div>
+                          <div className="space-y-2">
+                            {smsPendingUsers.map((pending: any) => (
+                              <div key={pending.utr} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-white rounded-xl border border-amber-200 shadow-xs">
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-mono font-bold text-xs text-amber-900">UTR: {pending.utr}</span>
+                                    <span className="font-bold text-xs text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                                      ₹{pending.amount || 0}
+                                    </span>
+                                  </div>
+                                  <p className="text-[11px] text-gray-500 mt-0.5">
+                                    User: <b>{pending.userEmail || pending.userId}</b> • Time: {new Date(pending.timestamp).toLocaleTimeString()}
+                                  </p>
+                                </div>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => handleManualResolvePayment(pending.utr, pending.amount, pending.userEmail)}
+                                  disabled={isResolvingManual}
+                                  className="h-8 px-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shrink-0 shadow-sm"
+                                >
+                                  ⚡ 1-Click Approve & Credit ₹{pending.amount}
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
                       {/* Setup Guide Accordion / Steps */}
                       <div className="p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100/80 space-y-2.5">
