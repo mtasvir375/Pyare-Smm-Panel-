@@ -4301,9 +4301,33 @@ export async function startServer() {
         .map(([utr, item]) => ({ utr, ...item }))
         .filter(item => item.provider?.startsWith("sms_forwarder"));
 
+      let mergedLogs = [...(serverCache.sms_forwarder_logs || [])];
+
+      try {
+        const queryRes = await runQueryREST({
+          structuredQuery: {
+            from: [{ collectionId: "sms_forwarder_logs" }],
+            limit: 50
+          }
+        });
+        if (queryRes && Array.isArray(queryRes)) {
+          const logMap = new Map();
+          mergedLogs.forEach((l: any) => logMap.set(l.id || l.timestamp, l));
+          queryRes.forEach((doc: any) => {
+            const data = doc.data();
+            const key = doc.id || data.timestamp;
+            if (!logMap.has(key)) {
+              logMap.set(key, { id: doc.id, ...data });
+            }
+          });
+          mergedLogs = Array.from(logMap.values());
+          mergedLogs.sort((a: any, b: any) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
+        }
+      } catch (dbErr) {}
+
       res.json({
         success: true,
-        logs: (serverCache.sms_forwarder_logs || []).slice(0, 50),
+        logs: mergedLogs.slice(0, 50),
         available: availableList.slice(0, 50),
         pendingUsers: Array.from(serverCache.pending_user_utrs.entries()).map(([utr, u]) => ({ utr, ...u }))
       });

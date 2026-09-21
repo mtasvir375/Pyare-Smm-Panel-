@@ -1,5 +1,4 @@
-import { db } from "../_firebase";
-import { collection, getDocs } from "firebase/firestore";
+import { listRestDocs } from "../_firestoreRest";
 
 export default async function handler(req: any, res: any) {
   res.setHeader("Access-Control-Allow-Credentials", "true");
@@ -12,37 +11,17 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const [logsSnap, poolSnap, pendingSnap] = await Promise.allSettled([
-      getDocs(collection(db, "sms_forwarder_logs")),
-      getDocs(collection(db, "sms_forwarder_pool")),
-      getDocs(collection(db, "pending_user_utrs"))
+    const [allLogs, allPool, allPending] = await Promise.all([
+      listRestDocs("sms_forwarder_logs", 100),
+      listRestDocs("sms_forwarder_pool", 100),
+      listRestDocs("pending_user_utrs", 100)
     ]);
 
-    const logs: any[] = [];
-    if (logsSnap.status === "fulfilled") {
-      logsSnap.value.forEach((d) => {
-        logs.push({ id: d.id, ...d.data() });
-      });
-      logs.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
-    }
+    const logs = allLogs.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
+    const available = allPool.filter((item: any) => item.status === "available");
+    const pendingUsers = allPending;
 
-    const available: any[] = [];
-    if (poolSnap.status === "fulfilled") {
-      poolSnap.value.forEach((d) => {
-        const item: any = d.data();
-        if (item.status === "available") {
-          available.push(item);
-        }
-      });
-    }
-
-    const pendingUsers: any[] = [];
-    if (pendingSnap.status === "fulfilled") {
-      pendingSnap.value.forEach((d) => {
-        pendingUsers.push(d.data());
-      });
-    }
-
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     return res.status(200).json({
       success: true,
       logs: logs.slice(0, 100),

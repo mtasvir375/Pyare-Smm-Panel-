@@ -42,7 +42,7 @@
       "paytmEnv": "sandbox",
       "guideVideoUrl": ""
     },
-    "time": 1789923419909
+    "time": 1789965641874
   },
   "providers": [
     [
@@ -646,20 +646,19 @@
       "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
       {
         "data": {
-          "id": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-          "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIVDCPXKVjVCP0jqcCpWx5c759WFIsH20U7smDKXtVCJQmldT5A=s96-c",
-          "last_ordered_at": "2026-07-12T20:24:51.921Z",
-          "balance": 5152.82,
-          "email": "mtasvir375@gmail.com",
-          "lastOrderedAt": "2026-09-15T21:25:04.895Z",
-          "displayName": "Md Saad Alam",
-          "lastActive": "2026-06-17T09:24:31.827Z",
           "role": "student",
           "createdAt": "2026-09-14T13:39:37.418Z",
-          "updatedAt": "2026-09-15T21:25:08.523Z"
+          "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "displayName": "Md Saad Alam",
+          "updatedAt": "2026-09-21T05:31:05.787Z",
+          "last_ordered_at": "2026-07-12T20:24:51.921Z",
+          "email": "mtasvir375@gmail.com",
+          "lastOrderedAt": "2026-09-21T04:57:56.511Z",
+          "lastActive": "2026-06-17T09:24:31.827Z",
+          "balance": 55804.26,
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIVDCPXKVjVCP0jqcCpWx5c759WFIsH20U7smDKXtVCJQmldT5A=s96-c"
         },
-        "time": 1789507986022
+        "time": 1789968941119
       }
     ],
     [
@@ -716,6 +715,7 @@
       "test_user_1",
       {
         "data": {
+          "id": "test_user_1",
           "uid": "test_user_1",
           "role": "student",
           "createdAt": "2026-09-20T20:01:11.970Z",
@@ -1940,7 +1940,52 @@
         "rawSms": "Payment of Rs. 250 received via UPI Ref 998877665544",
         "status": "available"
       }
+    ],
+    [
+      "123456789012",
+      {
+        "amount": 10,
+        "provider": "sms_forwarder",
+        "sender": "SMS_APP",
+        "time": 1789968824674,
+        "rawSms": "Payment of Rs 10 received UPI Ref 123456789012",
+        "status": "available"
+      }
+    ],
+    [
+      "987654321098",
+      {
+        "amount": 50,
+        "provider": "sms_forwarder",
+        "sender": "SMS_APP",
+        "time": 1789969108064,
+        "rawSms": "Payment of Rs 50 received from Customer UPI Ref 987654321098",
+        "status": "available"
+      }
     ]
   ],
-  "sms_forwarder_logs": []
+  "sms_forwarder_logs": [
+    {
+      "id": "sms_1789969108064_yd79",
+      "timestamp": "2026-09-21T05:38:28.064Z",
+      "sender": "SMS_APP",
+      "rawText": "Payment of Rs 50 received from Customer UPI Ref 987654321098",
+      "isCredit": true,
+      "amount": 50,
+      "utr": "987654321098",
+      "valid": true,
+      "status": "available"
+    },
+    {
+      "id": "sms_1789968824674_wn28",
+      "timestamp": "2026-09-21T05:33:44.674Z",
+      "sender": "SMS_APP",
+      "rawText": "Payment of Rs 10 received UPI Ref 123456789012",
+      "isCredit": true,
+      "amount": 10,
+      "utr": "123456789012",
+      "valid": true,
+      "status": "available"
+    }
+  ]
 }

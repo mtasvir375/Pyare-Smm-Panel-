@@ -1,5 +1,4 @@
-import { db } from "../_firebase";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { getRestDoc, setRestDoc } from "../_firestoreRest";
 
 export default async function handler(req: any, res: any) {
   res.setHeader("Access-Control-Allow-Credentials", "true");
@@ -25,11 +24,9 @@ export default async function handler(req: any, res: any) {
     const nowIso = new Date().toISOString();
 
     // 1. Check if UTR exists in sms_forwarder_pool
-    const poolDocRef = doc(db, "sms_forwarder_pool", cleanUtr);
-    const poolSnap = await getDoc(poolDocRef);
+    const poolData = await getRestDoc("sms_forwarder_pool", cleanUtr);
 
-    if (poolSnap.exists()) {
-      const poolData = poolSnap.data();
+    if (poolData) {
       const status = poolData?.status || "available";
       const poolAmount = Number(poolData?.amount || reqAmount || 0);
 
@@ -50,15 +47,12 @@ export default async function handler(req: any, res: any) {
       }
 
       // Claim payment!
-      // Update user balance in Firestore
       let newBalance = poolAmount;
       try {
-        const userDocRef = doc(db, "users", userId);
-        const userSnap = await getDoc(userDocRef);
-        const currentBal = userSnap.exists() ? (userSnap.data()?.balance || 0) : 0;
+        const userDoc = await getRestDoc("users", userId);
+        const currentBal = userDoc?.balance || 0;
         newBalance = Number(currentBal) + poolAmount;
-
-        await setDoc(userDocRef, { balance: newBalance }, { merge: true });
+        await setRestDoc("users", userId, { balance: newBalance });
       } catch (userErr: any) {
         console.error("[USER-BAL-UPDATE-FAIL]", userErr.message);
       }
@@ -66,7 +60,7 @@ export default async function handler(req: any, res: any) {
       // Create deposit doc in Firestore
       const depositId = `dep_${Date.now()}_${cleanUtr.slice(-4)}`;
       try {
-        await setDoc(doc(db, "deposits", depositId), {
+        await setRestDoc("deposits", depositId, {
           userId,
           userEmail: userEmail || "",
           amount: poolAmount,
@@ -81,12 +75,12 @@ export default async function handler(req: any, res: any) {
       }
 
       // Mark pool as claimed
-      await setDoc(poolDocRef, {
+      await setRestDoc("sms_forwarder_pool", cleanUtr, {
         status: "claimed",
         claimedBy: userId,
         claimedEmail: userEmail || "",
         claimedAt: nowIso
-      }, { merge: true });
+      });
 
       return res.status(200).json({
         success: true,
@@ -99,7 +93,7 @@ export default async function handler(req: any, res: any) {
 
     // 2. Not in pool yet - Save to pending_user_utrs so as soon as SMS lands, it auto-credits!
     try {
-      await setDoc(doc(db, "pending_user_utrs", cleanUtr), {
+      await setRestDoc("pending_user_utrs", cleanUtr, {
         utr: cleanUtr,
         userId,
         userEmail: userEmail || "",

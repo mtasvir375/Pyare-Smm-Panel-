@@ -1,5 +1,4 @@
-import { db } from "../_firebase";
-import { doc, getDoc, setDoc, deleteDoc, collection, getDocs } from "firebase/firestore";
+import { getRestDoc, setRestDoc, deleteRestDoc, listRestDocs } from "../_firestoreRest";
 
 export default async function handler(req: any, res: any) {
   res.setHeader("Access-Control-Allow-Credentials", "true");
@@ -26,25 +25,22 @@ export default async function handler(req: any, res: any) {
     let amountToCredit = Number(reqAmount || 0);
 
     try {
-      const pendingSnap = await getDoc(doc(db, "pending_user_utrs", cleanUtr));
-      if (pendingSnap.exists()) {
-        const fields = pendingSnap.data();
-        if (!targetUserId) targetUserId = fields?.userId || "";
-        if (!targetEmail) targetEmail = fields?.userEmail || "";
-        if (!amountToCredit) amountToCredit = Number(fields?.amount || 0);
+      const pendingData = await getRestDoc("pending_user_utrs", cleanUtr);
+      if (pendingData) {
+        if (!targetUserId) targetUserId = pendingData?.userId || "";
+        if (!targetEmail) targetEmail = pendingData?.userEmail || "";
+        if (!amountToCredit) amountToCredit = Number(pendingData?.amount || 0);
       }
     } catch (e) {}
 
     // 2. If targetUserId still unknown, try looking up user by email
     if (!targetUserId && targetEmail) {
       try {
-        const usersSnap = await getDocs(collection(db, "users"));
-        usersSnap.forEach((d) => {
-          const data = d.data();
-          if (data?.email?.toLowerCase() === targetEmail.toLowerCase()) {
-            targetUserId = d.id;
-          }
-        });
+        const users = await listRestDocs("users", 100);
+        const matched = users.find((u: any) => u.email?.toLowerCase() === targetEmail.toLowerCase());
+        if (matched) {
+          targetUserId = matched.id;
+        }
       } catch (e) {}
     }
 
@@ -61,16 +57,15 @@ export default async function handler(req: any, res: any) {
     }
 
     // 3. Update user balance
-    const userDocRef = doc(db, "users", targetUserId);
-    const userSnap = await getDoc(userDocRef);
-    const currentBal = userSnap.exists() ? (userSnap.data()?.balance || 0) : 0;
+    const userDoc = await getRestDoc("users", targetUserId);
+    const currentBal = userDoc?.balance || 0;
     const newBal = Number(currentBal) + amountToCredit;
 
-    await setDoc(userDocRef, { balance: newBal }, { merge: true });
+    await setRestDoc("users", targetUserId, { balance: newBal });
 
     // 4. Create approved deposit doc
     const depositId = `dep_man_${cleanUtr}`;
-    await setDoc(doc(db, "deposits", depositId), {
+    await setRestDoc("deposits", depositId, {
       userId: targetUserId,
       userEmail: targetEmail || "",
       amount: amountToCredit,
@@ -84,7 +79,7 @@ export default async function handler(req: any, res: any) {
 
     // 5. Update pool and pending
     try {
-      await setDoc(doc(db, "sms_forwarder_pool", cleanUtr), {
+      await setRestDoc("sms_forwarder_pool", cleanUtr, {
         utr: cleanUtr,
         amount: amountToCredit,
         status: "claimed",
@@ -92,9 +87,9 @@ export default async function handler(req: any, res: any) {
         claimedEmail: targetEmail || "",
         timestamp: nowIso,
         sender: "ADMIN_RESOLVED"
-      }, { merge: true });
+      });
 
-      await deleteDoc(doc(db, "pending_user_utrs", cleanUtr));
+      await deleteRestDoc("pending_user_utrs", cleanUtr);
     } catch (e) {}
 
     return res.status(200).json({

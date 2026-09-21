@@ -1,5 +1,4 @@
-import { db } from "./_firebase";
-import { doc, getDoc, setDoc, deleteDoc } from "firebase/firestore";
+import { getRestDoc, setRestDoc, deleteRestDoc } from "./_firestoreRest";
 
 function parseBankSms(smsText: string) {
   if (!smsText || typeof smsText !== "string") return null;
@@ -156,9 +155,9 @@ export default async function handler(req: any, res: any) {
     const nowIso = new Date().toISOString();
     const logId = `sms_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
 
-    // 1. Save log to Firestore using SDK
+    // 1. Save log to Firestore using REST
     try {
-      await setDoc(doc(db, "sms_forwarder_logs", logId), {
+      await setRestDoc("sms_forwarder_logs", logId, {
         id: logId,
         timestamp: nowIso,
         sender,
@@ -189,10 +188,7 @@ export default async function handler(req: any, res: any) {
     let waitingUser: any = null;
 
     try {
-      const pendingSnap = await getDoc(doc(db, "pending_user_utrs", cleanUtr));
-      if (pendingSnap.exists()) {
-        waitingUser = pendingSnap.data();
-      }
+      waitingUser = await getRestDoc("pending_user_utrs", cleanUtr);
     } catch (e: any) {
       console.warn("[CHECK-PENDING-ERR]", e.message);
     }
@@ -200,16 +196,15 @@ export default async function handler(req: any, res: any) {
     if (waitingUser && waitingUser.userId) {
       // Auto-credit user in Firestore
       try {
-        const userDocRef = doc(db, "users", waitingUser.userId);
-        const userDocSnap = await getDoc(userDocRef);
-        const currentBal = userDocSnap.exists() ? (userDocSnap.data()?.balance || 0) : 0;
+        const userDoc = await getRestDoc("users", waitingUser.userId);
+        const currentBal = userDoc?.balance || 0;
         const newBalance = Number(currentBal) + amount;
 
-        await setDoc(userDocRef, { balance: newBalance }, { merge: true });
+        await setRestDoc("users", waitingUser.userId, { balance: newBalance });
 
         // Create deposit doc
         const depositId = `dep_auto_${cleanUtr}`;
-        await setDoc(doc(db, "deposits", depositId), {
+        await setRestDoc("deposits", depositId, {
           userId: waitingUser.userId,
           userEmail: waitingUser.userEmail || "",
           amount,
@@ -221,7 +216,7 @@ export default async function handler(req: any, res: any) {
         });
 
         // Delete pending_user_utr entry
-        await deleteDoc(doc(db, "pending_user_utrs", cleanUtr));
+        await deleteRestDoc("pending_user_utrs", cleanUtr);
         autoCredited = true;
       } catch (creditErr: any) {
         console.error("[SMS-AUTO-CREDIT-ERR]", creditErr.message);
@@ -229,7 +224,7 @@ export default async function handler(req: any, res: any) {
     }
 
     // 3. Save to sms_forwarder_pool in Firestore
-    await setDoc(doc(db, "sms_forwarder_pool", cleanUtr), {
+    await setRestDoc("sms_forwarder_pool", cleanUtr, {
       utr: cleanUtr,
       amount,
       sender,
