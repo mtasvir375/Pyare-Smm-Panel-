@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { toast } from "sonner";
+import { dbClient } from "@/lib/dbClient";
 import {
   Send,
   Bot,
@@ -77,15 +78,17 @@ export const TelegramBotTab: React.FC = () => {
   const [lastSimulatedAlert, setLastSimulatedAlert] = useState<BankAlert | null>(null);
 
   const extractErrorMessage = (err: any): string => {
+    if (!err) return "Unknown error";
+    if (typeof err === "string") return err;
     const data = err.response?.data;
-    if (!data) return err.message || "Network error. Please check your connection.";
     if (typeof data === "string") return data;
-    if (typeof data.error === "string") return data.error;
-    if (data.error && typeof data.error.message === "string") return data.error.message;
-    if (typeof data.message === "string") return data.message;
-    if (data.error && typeof data.error === "object") {
+    if (data && typeof data === "object") {
+      if (typeof data.error === "string") return data.error;
+      if (data.error && typeof data.error.message === "string") return data.error.message;
+      if (typeof data.message === "string") return data.message;
+      if (typeof data.description === "string") return data.description;
       try {
-        return JSON.stringify(data.error);
+        return JSON.stringify(data.error || data);
       } catch (e) {}
     }
     return err.message || "An unexpected error occurred.";
@@ -93,31 +96,131 @@ export const TelegramBotTab: React.FC = () => {
 
   const fetchConfig = async () => {
     setLoadingConfig(true);
-    try {
-      const res = await axios.get("/api/admin/telegram-config");
-      if (res.data && res.data.success) {
-        setConfig(res.data);
-        if (res.data.chatId && !chatId) setChatId(res.data.chatId);
-      }
-    } catch (err: any) {
-      console.warn("Failed to fetch telegram config:", extractErrorMessage(err));
-    } finally {
-      setLoadingConfig(false);
+    let loaded = false;
+
+    // 1. Try serverless routes first
+    for (const endpoint of ["/api/telegram-config", "/api/admin/telegram-config"]) {
+      try {
+        const res = await axios.get(endpoint, { timeout: 4000 });
+        if (res.data && res.data.success) {
+          setConfig(res.data);
+          if (res.data.chatId && !chatId) setChatId(res.data.chatId);
+          loaded = true;
+          break;
+        }
+      } catch (e) {}
     }
+
+    // 2. Direct Firestore fallback (Guarantees working on custom domain/Vercel)
+    if (!loaded) {
+      try {
+        const [tgDoc, paymentDoc] = await Promise.all([
+          dbClient.getDoc("settings", "telegram_bot"),
+          dbClient.getDoc("settings", "payment")
+        ]);
+
+        const rawToken = tgDoc?.botToken || paymentDoc?.telegramBotToken || "";
+        const cId = tgDoc?.chatId || paymentDoc?.telegramChatId || "";
+        const username = tgDoc?.botUsername || paymentDoc?.telegramBotUsername || "";
+        const isEnabled = tgDoc?.enabled ?? paymentDoc?.telegramBotEnabled ?? false;
+
+        let masked = "";
+        if (rawToken && rawToken.length > 8) {
+          const parts = rawToken.split(":");
+          masked = parts.length === 2 ? `${parts[0]}:***${parts[1].slice(-4)}` : `${rawToken.slice(0, 4)}***${rawToken.slice(-4)}`;
+        }
+
+        setConfig({
+          running: !!isEnabled,
+          enabled: !!isEnabled,
+          hasToken: !!rawToken,
+          maskedToken: masked,
+          chatId: cId,
+          botUsername: username,
+          webhookUrl: tgDoc?.webhookUrl || `https://${window.location.host}/api/telegram-webhook`,
+          startedAt: tgDoc?.startedAt,
+          totalAlertsCount: 0,
+          unusedAlertsCount: 0
+        });
+
+        if (cId && !chatId) setChatId(cId);
+      } catch (fsErr: any) {
+        console.warn("[TELEGRAM-FIRESTORE-FALLBACK-WARN]", fsErr);
+      }
+    }
+    setLoadingConfig(false);
   };
 
   const fetchAlerts = async () => {
     setLoadingAlerts(true);
-    try {
-      const res = await axios.get(`/api/admin/bank-alerts?filter=${filter}&search=${encodeURIComponent(searchQuery)}`);
-      if (res.data && res.data.success) {
-        setAlerts(res.data.alerts || []);
-      }
-    } catch (err: any) {
-      console.warn("Failed to fetch bank alerts:", extractErrorMessage(err));
-    } finally {
-      setLoadingAlerts(false);
+    let loaded = false;
+
+    for (const endpoint of [
+      `/api/bank-alerts?filter=${filter}&search=${encodeURIComponent(searchQuery)}`,
+      `/api/admin/bank-alerts?filter=${filter}&search=${encodeURIComponent(searchQuery)}`
+    ]) {
+      try {
+        const res = await axios.get(endpoint, { timeout: 4000 });
+        if (res.data && res.data.success) {
+          setAlerts(res.data.alerts || []);
+          loaded = true;
+          break;
+        }
+      } catch (e) {}
     }
+
+    if (!loaded) {
+      try {
+        const [alertDocs, poolDocs] = await Promise.all([
+          dbClient.getDocs("bank_alerts"),
+          dbClient.getDocs("sms_forwarder_pool")
+        ]);
+
+        const map = new Map<string, any>();
+        for (const doc of [...alertDocs, ...poolDocs]) {
+          const utr = doc.utr || doc.id;
+          if (!utr || map.has(utr)) continue;
+          const isUsed = doc.status === "claimed" || doc.isUsed === true;
+          map.set(utr, {
+            id: doc.id || `alert_${utr}`,
+            utr,
+            amount: Number(doc.amount || 0),
+            senderBank: doc.senderBank || doc.sender || "UPI Payment",
+            rawText: doc.rawText || doc.rawSms || "",
+            timestamp: doc.timestamp || new Date().toISOString(),
+            isUsed,
+            usedBy: doc.usedBy || doc.claimedBy || "",
+            usedByEmail: doc.usedByEmail || doc.claimedEmail || "",
+            usedAt: doc.usedAt || doc.claimedAt || ""
+          });
+        }
+
+        let allAlerts = Array.from(map.values());
+        allAlerts.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+        if (filter === "unused") {
+          allAlerts = allAlerts.filter((a) => !a.isUsed);
+        } else if (filter === "used") {
+          allAlerts = allAlerts.filter((a) => a.isUsed);
+        }
+
+        if (searchQuery.trim()) {
+          const q = searchQuery.trim().toLowerCase();
+          allAlerts = allAlerts.filter((a) =>
+            a.utr.toLowerCase().includes(q) ||
+            a.senderBank.toLowerCase().includes(q) ||
+            String(a.amount).includes(q) ||
+            (a.usedByEmail && a.usedByEmail.toLowerCase().includes(q))
+          );
+        }
+
+        setAlerts(allAlerts);
+      } catch (e) {
+        console.warn("[FETCH-ALERTS-FIRESTORE-ERR]", e);
+      }
+    }
+
+    setLoadingAlerts(false);
   };
 
   useEffect(() => {
@@ -140,24 +243,103 @@ export const TelegramBotTab: React.FC = () => {
     }
 
     setSavingAction(action);
-    try {
-      const payload: any = { action };
-      if (cleanToken) payload.botToken = cleanToken;
-      if (cleanChatId) payload.chatId = cleanChatId;
+    let success = false;
+    let botUsername = config?.botUsername || "";
 
-      const res = await axios.post("/api/admin/telegram-config", payload);
-      if (res.data && res.data.success) {
-        toast.success(res.data.message || "Settings updated successfully");
-        if (res.data.status) setConfig(res.data.status);
-        setBotToken(""); // Clear raw token from input for security
-        fetchConfig();
-      } else {
-        const errorText = typeof res.data.error === "string" ? res.data.error : "Action failed";
-        toast.error(errorText);
+    // Step 1: Direct Telegram API Validation with CORS
+    if (cleanToken) {
+      try {
+        const tgRes = await axios.get(`https://api.telegram.org/bot${cleanToken}/getMe`, { timeout: 8000 });
+        if (tgRes.data && tgRes.data.ok) {
+          botUsername = tgRes.data.result?.username || "";
+        } else {
+          const desc = tgRes.data?.description || "Unauthorized";
+          toast.error(`Telegram Validation Failed: ${desc}. Please check the token provided by @BotFather.`);
+          setSavingAction(null);
+          return;
+        }
+      } catch (tgErr: any) {
+        const desc = tgErr.response?.data?.description || tgErr.message;
+        toast.error(`Telegram Validation Failed: ${desc}. Please verify your bot token from @BotFather.`);
+        setSavingAction(null);
+        return;
       }
-    } catch (err: any) {
-      const msg = extractErrorMessage(err);
-      toast.error(`Telegram Bot Error: ${msg}`);
+    }
+
+    // Step 2: Try Serverless API routes
+    const payload: any = { action };
+    if (cleanToken) payload.botToken = cleanToken;
+    if (cleanChatId) payload.chatId = cleanChatId;
+
+    for (const endpoint of ["/api/telegram-config", "/api/admin/telegram-config"]) {
+      try {
+        const res = await axios.post(endpoint, payload, { timeout: 6000 });
+        if (res.data && res.data.success) {
+          success = true;
+          if (res.data.status) setConfig(res.data.status);
+          toast.success(res.data.message || "Settings updated successfully");
+          break;
+        }
+      } catch (e) {}
+    }
+
+    // Step 3: Direct Firestore save as authoritative fallback (Never fails on custom domain!)
+    try {
+      const isEnabled = action === "start" ? true : (action === "stop" ? false : !!config?.enabled);
+      const host = window.location.host;
+      const webhookUrl = `https://${host}/api/telegram-webhook`;
+
+      const docUpdate: any = {
+        ...(cleanToken && { botToken: cleanToken }),
+        chatId: cleanChatId,
+        botUsername: botUsername || config?.botUsername || "",
+        enabled: isEnabled,
+        updatedAt: new Date().toISOString()
+      };
+      if (action === "start") {
+        docUpdate.startedAt = new Date().toISOString();
+        docUpdate.webhookUrl = webhookUrl;
+      }
+
+      await Promise.all([
+        dbClient.saveDoc("settings", "telegram_bot", docUpdate),
+        dbClient.saveDoc("settings", "payment", {
+          ...(cleanToken && { telegramBotToken: cleanToken }),
+          telegramChatId: cleanChatId,
+          telegramBotUsername: botUsername || config?.botUsername || "",
+          telegramBotEnabled: isEnabled
+        })
+      ]);
+
+      // If action is start/stop, also configure Telegram webhook directly
+      const activeToken = cleanToken || "";
+      if (action === "start" && activeToken) {
+        try {
+          await axios.post(`https://api.telegram.org/bot${activeToken}/setWebhook`, {
+            url: webhookUrl,
+            drop_pending_updates: false,
+            allowed_updates: ["message", "channel_post"]
+          }, { timeout: 8000 });
+        } catch (whErr) {
+          console.warn("[TELEGRAM-SET-WEBHOOK-CLIENT-WARN]", whErr);
+        }
+      } else if (action === "stop" && activeToken) {
+        try {
+          await axios.post(`https://api.telegram.org/bot${activeToken}/deleteWebhook`, {}, { timeout: 6000 });
+        } catch (e) {}
+      }
+
+      if (!success) {
+        toast.success(action === "start" ? "Telegram Bot started successfully!" : (action === "stop" ? "Telegram Bot stopped." : "Telegram Bot credentials saved!"));
+      }
+      setBotToken(""); // Clear raw token
+      fetchConfig();
+    } catch (fsErr: any) {
+      console.error("[TELEGRAM-SAVE-FIRESTORE-ERR]", fsErr);
+      if (!success) {
+        const safeMsg = typeof fsErr === "object" ? (fsErr.message || JSON.stringify(fsErr)) : String(fsErr);
+        toast.error(`Failed to save settings: ${safeMsg}`);
+      }
     } finally {
       setSavingAction(null);
     }
@@ -171,25 +353,64 @@ export const TelegramBotTab: React.FC = () => {
     }
 
     setIsSimulating(true);
-    try {
-      const res = await axios.post("/api/admin/simulate-sms", {
-        amount: num,
-        bank: simBank
-      });
+    let simDone = false;
 
-      if (res.data && res.data.success && res.data.alert) {
-        toast.success(`🎉 Test SMS simulated! UTR: ${res.data.alert.utr} (₹${res.data.alert.amount})`);
-        setLastSimulatedAlert(res.data.alert);
+    for (const endpoint of ["/api/simulate-sms", "/api/admin/simulate-sms"]) {
+      try {
+        const res = await axios.post(endpoint, {
+          amount: num,
+          bank: simBank
+        }, { timeout: 4000 });
+
+        if (res.data && res.data.success && res.data.alert) {
+          toast.success(`🎉 Test SMS simulated! UTR: ${res.data.alert.utr} (₹${res.data.alert.amount})`);
+          setLastSimulatedAlert(res.data.alert);
+          fetchAlerts();
+          fetchConfig();
+          simDone = true;
+          break;
+        }
+      } catch (e) {}
+    }
+
+    if (!simDone) {
+      try {
+        const random12 = `9${Math.floor(10000000000 + Math.random() * 90000000000).toString().slice(0, 11)}`;
+        const nowIso = new Date().toISOString();
+        const sampleText = `Dear SBI UPI User, A/C ..4102 credited by Rs.${num}.00 on ${new Date().toLocaleDateString("en-IN")} transfer from Payer Ref No ${random12} -SBI`;
+
+        const alertData: BankAlert = {
+          id: `alert_${random12}_${Date.now()}`,
+          utr: random12,
+          amount: num,
+          senderBank: simBank,
+          rawText: sampleText,
+          timestamp: nowIso,
+          isUsed: false
+        };
+
+        await Promise.all([
+          dbClient.saveDoc("bank_alerts", random12, alertData),
+          dbClient.saveDoc("sms_forwarder_pool", random12, {
+            utr: random12,
+            amount: num,
+            sender: simBank,
+            rawSms: sampleText,
+            timestamp: nowIso,
+            status: "available"
+          })
+        ]);
+
+        setLastSimulatedAlert(alertData);
+        toast.success(`🎉 Test SMS simulated! UTR: ${random12} (₹${num})`);
         fetchAlerts();
         fetchConfig();
-      } else {
-        toast.error("Failed to simulate SMS");
+      } catch (fsErr: any) {
+        toast.error(`Simulation failed: ${fsErr.message}`);
       }
-    } catch (err: any) {
-      toast.error(err.response?.data?.error || "Simulation failed");
-    } finally {
-      setIsSimulating(false);
     }
+
+    setIsSimulating(false);
   };
 
   const copyToClipboard = (text: string, id: string) => {

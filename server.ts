@@ -2482,7 +2482,7 @@ export async function startServer() {
   // ==========================================
 
   // 1. Get Telegram Bot Config & Status
-  app.get("/api/admin/telegram-config", (req, res) => {
+  app.get(["/api/admin/telegram-config", "/api/telegram-config"], (req, res) => {
     try {
       const status = getTelegramStatus();
       return res.json({ success: true, ...status });
@@ -2493,7 +2493,7 @@ export async function startServer() {
   });
 
   // 2. Save Telegram Bot Config & Start/Stop Polling
-  app.post("/api/admin/telegram-config", async (req, res) => {
+  app.post(["/api/admin/telegram-config", "/api/telegram-config"], async (req, res) => {
     try {
       const { botToken, chatId, action } = req.body || {};
 
@@ -2527,7 +2527,7 @@ export async function startServer() {
   });
 
   // 3. Get Received Bank Alerts (Filterable & Searchable)
-  app.get("/api/admin/bank-alerts", (req, res) => {
+  app.get(["/api/admin/bank-alerts", "/api/bank-alerts"], (req, res) => {
     try {
       const alerts = getBankAlerts();
       const filter = String(req.query.filter || "all"); // all, unused, used
@@ -2563,7 +2563,7 @@ export async function startServer() {
   });
 
   // 4. Simulate Test Bank SMS (For instant zero-cost testing)
-  app.post("/api/admin/simulate-sms", (req, res) => {
+  app.post(["/api/admin/simulate-sms", "/api/simulate-sms"], (req, res) => {
     try {
       const { amount, utr, bank, text } = req.body || {};
       const sim = simulateBankSms({
@@ -2584,7 +2584,7 @@ export async function startServer() {
   });
 
   // 5. User-Facing UTR Verification & Instant Add Funds
-  app.post("/api/wallet/verify-utr", async (req, res) => {
+  app.post(["/api/wallet/verify-utr", "/api/verify-utr"], async (req, res) => {
     try {
       const { userId, utr, amount, userEmail } = req.body || {};
       const cleanUtr = String(utr || "").replace(/\D/g, "").trim();

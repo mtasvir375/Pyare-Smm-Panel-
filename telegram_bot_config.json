@@ -1,7 +1,7 @@
 {
   "botToken": "8268916986 : AAGn5qnLukLpZGw9h9y1kc",
-  "chatId": "",
+  "chatId": "12345678",
   "enabled": false,
   "lastUpdateId": 0,
-  "lastError": "Not Found"
+  "lastError": "Telegram Error: Unauthorized. Please verify your token from @BotFather."
 }
