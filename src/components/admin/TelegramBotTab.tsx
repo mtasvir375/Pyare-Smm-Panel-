@@ -46,6 +46,8 @@ interface TelegramConfigStatus {
   hasToken: boolean;
   maskedToken: string;
   chatId: string;
+  botUsername?: string;
+  webhookUrl?: string;
   startedAt?: string;
   lastPolledAt?: string;
   lastError?: string;
@@ -74,16 +76,31 @@ export const TelegramBotTab: React.FC = () => {
   const [isSimulating, setIsSimulating] = useState(false);
   const [lastSimulatedAlert, setLastSimulatedAlert] = useState<BankAlert | null>(null);
 
+  const extractErrorMessage = (err: any): string => {
+    const data = err.response?.data;
+    if (!data) return err.message || "Network error. Please check your connection.";
+    if (typeof data === "string") return data;
+    if (typeof data.error === "string") return data.error;
+    if (data.error && typeof data.error.message === "string") return data.error.message;
+    if (typeof data.message === "string") return data.message;
+    if (data.error && typeof data.error === "object") {
+      try {
+        return JSON.stringify(data.error);
+      } catch (e) {}
+    }
+    return err.message || "An unexpected error occurred.";
+  };
+
   const fetchConfig = async () => {
     setLoadingConfig(true);
     try {
       const res = await axios.get("/api/admin/telegram-config");
       if (res.data && res.data.success) {
         setConfig(res.data);
-        if (res.data.chatId) setChatId(res.data.chatId);
+        if (res.data.chatId && !chatId) setChatId(res.data.chatId);
       }
     } catch (err: any) {
-      console.warn("Failed to fetch telegram config:", err.message);
+      console.warn("Failed to fetch telegram config:", extractErrorMessage(err));
     } finally {
       setLoadingConfig(false);
     }
@@ -97,7 +114,7 @@ export const TelegramBotTab: React.FC = () => {
         setAlerts(res.data.alerts || []);
       }
     } catch (err: any) {
-      console.warn("Failed to fetch bank alerts:", err.message);
+      console.warn("Failed to fetch bank alerts:", extractErrorMessage(err));
     } finally {
       setLoadingAlerts(false);
     }
@@ -109,11 +126,24 @@ export const TelegramBotTab: React.FC = () => {
   }, [filter]);
 
   const handleConfigAction = async (action: "start" | "stop" | "save") => {
+    const cleanToken = botToken.replace(/\s+/g, "").trim();
+    const cleanChatId = chatId.trim();
+
+    if (action === "start" && !cleanToken && !config?.hasToken) {
+      toast.error("Please enter your Telegram Bot Token from @BotFather before starting.");
+      return;
+    }
+
+    if (cleanToken && (!cleanToken.includes(":") || cleanToken.length < 30)) {
+      toast.error("The token looks incomplete or malformed. Standard Telegram Bot Tokens look like 123456789:ABC... (~45 characters). Please copy the full token from @BotFather.");
+      return;
+    }
+
     setSavingAction(action);
     try {
       const payload: any = { action };
-      if (botToken.trim()) payload.botToken = botToken.trim();
-      if (chatId.trim()) payload.chatId = chatId.trim();
+      if (cleanToken) payload.botToken = cleanToken;
+      if (cleanChatId) payload.chatId = cleanChatId;
 
       const res = await axios.post("/api/admin/telegram-config", payload);
       if (res.data && res.data.success) {
@@ -122,10 +152,11 @@ export const TelegramBotTab: React.FC = () => {
         setBotToken(""); // Clear raw token from input for security
         fetchConfig();
       } else {
-        toast.error(res.data.error || "Action failed");
+        const errorText = typeof res.data.error === "string" ? res.data.error : "Action failed";
+        toast.error(errorText);
       }
     } catch (err: any) {
-      const msg = err.response?.data?.error || err.response?.data?.message || err.message;
+      const msg = extractErrorMessage(err);
       toast.error(`Telegram Bot Error: ${msg}`);
     } finally {
       setSavingAction(null);
@@ -308,7 +339,7 @@ export const TelegramBotTab: React.FC = () => {
                     type={showToken ? "text" : "password"}
                     placeholder={config?.hasToken ? "Enter new token to replace (or leave blank)" : "e.g. 7123456789:AAHkLp-Z... from @BotFather"}
                     value={botToken}
-                    onChange={(e) => setBotToken(e.target.value)}
+                    onChange={(e) => setBotToken(e.target.value.replace(/\s+/g, ""))}
                     className="rounded-2xl h-12 pr-10 text-xs font-mono border-gray-200 focus:border-blue-500"
                   />
                   <button
@@ -319,10 +350,40 @@ export const TelegramBotTab: React.FC = () => {
                     {showToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
-                <p className="text-[11px] text-gray-400">
-                  Get your free token by opening Telegram, sending <code className="text-blue-600 font-bold">/newbot</code> to <strong>@BotFather</strong>.
-                </p>
+                {botToken ? (
+                  <div className="text-[11px] flex items-center justify-between pt-0.5">
+                    <span className="text-gray-400 font-mono">{botToken.length} characters</span>
+                    {!botToken.includes(":") ? (
+                      <span className="text-amber-600 font-semibold">⚠️ Colon ':' missing in token</span>
+                    ) : botToken.length < 35 ? (
+                      <span className="text-amber-600 font-semibold">⚠️ Token might be incomplete (usually ~45 chars)</span>
+                    ) : (
+                      <span className="text-emerald-600 font-semibold">✓ Format looks good</span>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-gray-400">
+                    Get your free token by opening Telegram, sending <code className="text-blue-600 font-bold">/newbot</code> to <strong>@BotFather</strong>.
+                  </p>
+                )}
               </div>
+
+              {config?.botUsername && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between text-xs text-emerald-900">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span>Connected Bot: <strong>@{config.botUsername}</strong></span>
+                  </div>
+                  <a
+                    href={`https://t.me/${config.botUsername}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-emerald-700 underline font-semibold hover:text-emerald-800"
+                  >
+                    Open in Telegram &rarr;
+                  </a>
+                </div>
+              )}
 
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center justify-between">

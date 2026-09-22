@@ -1,6 +1,7 @@
 {
-  "botToken": "",
+  "botToken": "8268916986 : AAGn5qnLukLpZGw9h9y1kc",
   "chatId": "",
   "enabled": false,
-  "lastUpdateId": 0
+  "lastUpdateId": 0,
+  "lastError": "Not Found"
 }

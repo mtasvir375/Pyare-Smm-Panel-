@@ -2499,7 +2499,7 @@ export async function startServer() {
 
       if (botToken !== undefined || chatId !== undefined) {
         saveTelegramConfig({
-          ...(botToken !== undefined && { botToken: String(botToken).trim() }),
+          ...(botToken !== undefined && { botToken: String(botToken).replace(/\s+/g, "").trim() }),
           ...(chatId !== undefined && { chatId: String(chatId).trim() })
         });
       }

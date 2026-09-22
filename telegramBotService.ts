@@ -93,7 +93,11 @@ export function getTelegramConfig(): TelegramBotConfig {
 }
 
 export function saveTelegramConfig(cfg: Partial<TelegramBotConfig>): TelegramBotConfig {
-  memoryConfig = { ...memoryConfig, ...cfg };
+  const cleanedCfg = { ...cfg };
+  if (cleanedCfg.botToken !== undefined) {
+    cleanedCfg.botToken = String(cleanedCfg.botToken).replace(/\s+/g, "").trim();
+  }
+  memoryConfig = { ...memoryConfig, ...cleanedCfg };
   try {
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(memoryConfig, null, 2), "utf-8");
   } catch (err: any) {
@@ -319,7 +323,7 @@ export async function startTelegramPolling(): Promise<{ success: boolean; messag
     return { success: true, message: "Telegram bot is already running." };
   }
 
-  const token = memoryConfig.botToken.trim();
+  const token = memoryConfig.botToken.replace(/\s+/g, "").trim();
   if (!token) {
     return { success: false, message: "Bot token is missing. Please provide a valid Telegram Bot Token from @BotFather." };
   }
@@ -330,11 +334,14 @@ export async function startTelegramPolling(): Promise<{ success: boolean; messag
     if (!meRes.data || !meRes.data.ok) {
       const errMsg = meRes.data?.description || "Invalid Telegram Bot Token";
       saveTelegramConfig({ lastError: errMsg });
-      return { success: false, message: errMsg };
+      return { success: false, message: `Telegram Error: ${errMsg}. Please verify your bot token with @BotFather.` };
     }
     console.log(`[TELEGRAM-SERVICE] Bot authenticated successfully as @${meRes.data.result.username}`);
   } catch (netErr: any) {
-    const msg = netErr.response?.data?.description || netErr.message || "Failed to reach Telegram API";
+    const desc = netErr.response?.data?.description;
+    const msg = desc 
+      ? `Telegram Error: ${desc}. Please verify your token from @BotFather.`
+      : (netErr.message || "Failed to reach Telegram API");
     saveTelegramConfig({ lastError: msg });
     return { success: false, message: msg };
   }
