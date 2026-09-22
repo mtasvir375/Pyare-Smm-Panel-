@@ -13,6 +13,16 @@ import http from "http";
 
 import admin from "firebase-admin";
 import { getFirestore } from "firebase-admin/firestore";
+import {
+  initTelegramBotService,
+  getBankAlerts,
+  getTelegramStatus,
+  startTelegramPolling,
+  stopTelegramPolling,
+  saveTelegramConfig,
+  simulateBankSms,
+  verifyAndClaimAlert
+} from "./telegramBotService";
 
 dotenv.config();
 
@@ -587,6 +597,12 @@ export async function startServer() {
 
   // Run the disk cache loader right away
   loadPersistentCache();
+  // Initialize Telegram Bot & local bank alerts service (0 Firestore reads/writes)
+  try {
+    initTelegramBotService();
+  } catch (tErr: any) {
+    console.warn("[TELEGRAM-INIT-FAIL]", tErr.message);
+  }
 
   // Keep track of which users have had their orders synced from DB to memory (prevents double reading)
   const checkedUserOrders = new Set<string>();
@@ -2460,6 +2476,197 @@ export async function startServer() {
     }
   });
 
+  // ==========================================
+  // TELEGRAM BOT & LOCAL BANK ALERTS ENDPOINTS
+  // (0 Firestore Reads - Local Disk Persistence)
+  // ==========================================
+
+  // 1. Get Telegram Bot Config & Status
+  app.get("/api/admin/telegram-config", (req, res) => {
+    try {
+      const status = getTelegramStatus();
+      return res.json({ success: true, ...status });
+    } catch (err: any) {
+      console.error("[GET-TELEGRAM-CONFIG-ERR]", err.message);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 2. Save Telegram Bot Config & Start/Stop Polling
+  app.post("/api/admin/telegram-config", async (req, res) => {
+    try {
+      const { botToken, chatId, action } = req.body || {};
+
+      if (botToken !== undefined || chatId !== undefined) {
+        saveTelegramConfig({
+          ...(botToken !== undefined && { botToken: String(botToken).trim() }),
+          ...(chatId !== undefined && { chatId: String(chatId).trim() })
+        });
+      }
+
+      if (action === "start") {
+        const startRes = await startTelegramPolling();
+        if (!startRes.success) {
+          return res.status(400).json({ success: false, error: startRes.message, status: getTelegramStatus() });
+        }
+        return res.json({ success: true, message: startRes.message, status: getTelegramStatus() });
+      } else if (action === "stop") {
+        const stopRes = stopTelegramPolling();
+        return res.json({ success: true, message: stopRes.message, status: getTelegramStatus() });
+      }
+
+      return res.json({
+        success: true,
+        message: "Telegram configuration saved.",
+        status: getTelegramStatus()
+      });
+    } catch (err: any) {
+      console.error("[POST-TELEGRAM-CONFIG-ERR]", err.message);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 3. Get Received Bank Alerts (Filterable & Searchable)
+  app.get("/api/admin/bank-alerts", (req, res) => {
+    try {
+      const alerts = getBankAlerts();
+      const filter = String(req.query.filter || "all"); // all, unused, used
+      const search = String(req.query.search || "").toLowerCase().trim();
+
+      let filtered = alerts;
+      if (filter === "unused") {
+        filtered = filtered.filter((a) => !a.isUsed);
+      } else if (filter === "used") {
+        filtered = filtered.filter((a) => a.isUsed);
+      }
+
+      if (search) {
+        filtered = filtered.filter((a) =>
+          a.utr.includes(search) ||
+          a.senderBank.toLowerCase().includes(search) ||
+          a.amount.toString().includes(search) ||
+          (a.usedByEmail && a.usedByEmail.toLowerCase().includes(search))
+        );
+      }
+
+      return res.json({
+        success: true,
+        alerts: filtered.slice(0, 200),
+        totalCount: alerts.length,
+        unusedCount: alerts.filter((a) => !a.isUsed).length,
+        usedCount: alerts.filter((a) => a.isUsed).length
+      });
+    } catch (err: any) {
+      console.error("[GET-BANK-ALERTS-ERR]", err.message);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 4. Simulate Test Bank SMS (For instant zero-cost testing)
+  app.post("/api/admin/simulate-sms", (req, res) => {
+    try {
+      const { amount, utr, bank, text } = req.body || {};
+      const sim = simulateBankSms({
+        amount: amount ? Number(amount) : undefined,
+        utr: utr ? String(utr).trim() : undefined,
+        bank: bank ? String(bank).trim() : undefined,
+        text: text ? String(text).trim() : undefined
+      });
+      return res.json({
+        success: true,
+        message: `Simulated bank alert created for ₹${sim.alert.amount} (UTR: ${sim.alert.utr})`,
+        alert: sim.alert
+      });
+    } catch (err: any) {
+      console.error("[SIMULATE-SMS-ERR]", err.message);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 5. User-Facing UTR Verification & Instant Add Funds
+  app.post("/api/wallet/verify-utr", async (req, res) => {
+    try {
+      const { userId, utr, amount, userEmail } = req.body || {};
+      const cleanUtr = String(utr || "").replace(/\D/g, "").trim();
+      const numAmount = Number(amount || 0);
+
+      if (!userId) {
+        return res.status(400).json({ success: false, error: "User ID is required." });
+      }
+      if (cleanUtr.length !== 12) {
+        return res.status(400).json({ success: false, error: "Please enter a valid 12-digit UTR / UPI reference number." });
+      }
+
+      // 1. Check local disk bank_alerts.json FIRST (0 Firestore Reads!)
+      const claimRes = verifyAndClaimAlert(cleanUtr, numAmount > 0 ? numAmount : undefined, userId, userEmail);
+      if (claimRes.success && claimRes.alert) {
+        const creditedAmount = claimRes.alert.amount;
+
+        // Credit wallet in memory & disk cache, perform 1 single write to user doc
+        const adjusted = await adjustUserBalanceSafe(userId, creditedAmount, req.headers.authorization as string);
+        if (!adjusted) {
+          return res.status(500).json({ success: false, error: "Payment verified, but failed to credit wallet balance. Please contact admin." });
+        }
+
+        // Read updated balance from user record
+        let newBalance = 0;
+        try {
+          const uDoc = await getDocSafe("users", userId);
+          newBalance = uDoc?.data()?.balance || 0;
+        } catch (e) {}
+
+        // Save ONE approved deposit record
+        const depositId = `dep_bot_${cleanUtr}_${Date.now()}`;
+        const depositData = {
+          id: depositId,
+          userId,
+          userEmail: userEmail || "not-provided",
+          amount: creditedAmount,
+          utr: cleanUtr,
+          status: "approved",
+          type: "telegram_upi_bot",
+          provider: claimRes.alert.senderBank,
+          verifiedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString()
+        };
+
+        try {
+          await addDocSafe("deposits", depositData);
+          serverCache.deposits.set(depositId, { data: depositData, time: Date.now() });
+          savePersistentCache();
+        } catch (e) {}
+
+        console.log(`[BOT-WALLET-VERIFIED] Credited ₹${creditedAmount} to user ${userId} for UTR ${cleanUtr}`);
+
+        return res.json({
+          success: true,
+          amount: creditedAmount,
+          newBalance,
+          message: `🎉 Payment verified! ₹${creditedAmount} has been credited to your wallet.`
+        });
+      }
+
+      // If claim failed with 400 (already used or explicit amount mismatch), return that exact reason
+      if (claimRes.status === 400) {
+        return res.status(400).json({ success: false, error: claimRes.error });
+      }
+
+      // 2. Fallback check: Payment Gateways or Webhook memory cache
+      const verifyResult = await verifyAndCreditPayment({
+        userId,
+        userEmail,
+        amount: numAmount,
+        utr: cleanUtr,
+        authHeader: req.headers.authorization as string
+      });
+
+      return res.status(verifyResult.status || (verifyResult.success ? 200 : 400)).json(verifyResult);
+    } catch (err: any) {
+      console.error("[VERIFY-UTR-ERR]", err.message);
+      return res.status(500).json({ success: false, error: err.message || "Failed to verify UTR" });
+    }
+  });
+
   app.post("/api/admin/process-deposit", async (req, res) => {
     const { depositId, action, adminEmail, deposit: clientDeposit } = req.body;
     if (!depositId || !action) {
@@ -3330,6 +3537,17 @@ export async function startServer() {
     // 2. Check Gateway Webhook Memory Cache (Real-time confirmed payments from Paytm/PhonePe/UPIGateway)
     let isVerified = false;
     let verifiedProvider = "gateway_auto";
+
+    // Check Local Bank Alerts from Telegram Bot / SMS (0 Firestore Reads!)
+    const alertClaim = verifyAndClaimAlert(cleanUtr, amount, userId, userEmail);
+    if (alertClaim.success && alertClaim.alert) {
+      isVerified = true;
+      verifiedProvider = alertClaim.alert.senderBank || "telegram_bot";
+      console.log(`[AUTO-VERIFY] Matched disk bank alert for UTR ${cleanUtr}: ₹${alertClaim.alert.amount} (${verifiedProvider})`);
+    } else if (alertClaim.status === 400) {
+      return { success: false, status: 400, error: alertClaim.error };
+    }
+
     const matchedWebhookPayment = serverCache.received_gateway_payments.get(cleanUtr);
 
     if (matchedWebhookPayment) {

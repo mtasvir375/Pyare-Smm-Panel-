@@ -42,7 +42,7 @@
       "paytmEnv": "sandbox",
       "guideVideoUrl": ""
     },
-    "time": 1789965641874
+    "time": 1790018342754
   },
   "providers": [
     [
@@ -646,19 +646,20 @@
       "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
       {
         "data": {
-          "role": "student",
-          "createdAt": "2026-09-14T13:39:37.418Z",
-          "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-          "displayName": "Md Saad Alam",
-          "updatedAt": "2026-09-21T05:31:05.787Z",
-          "last_ordered_at": "2026-07-12T20:24:51.921Z",
-          "email": "mtasvir375@gmail.com",
-          "lastOrderedAt": "2026-09-21T04:57:56.511Z",
+          "id": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "lastActive": "2026-06-17T09:24:31.827Z",
-          "balance": 55804.26,
-          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIVDCPXKVjVCP0jqcCpWx5c759WFIsH20U7smDKXtVCJQmldT5A=s96-c"
+          "createdAt": "2026-09-14T13:39:37.418Z",
+          "displayName": "Md Saad Alam",
+          "email": "mtasvir375@gmail.com",
+          "last_ordered_at": "2026-07-12T20:24:51.921Z",
+          "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "updatedAt": "2026-09-21T17:19:29.446Z",
+          "role": "student",
+          "balance": 55799.16,
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIVDCPXKVjVCP0jqcCpWx5c759WFIsH20U7smDKXtVCJQmldT5A=s96-c",
+          "lastOrderedAt": "2026-09-21T17:19:28.294Z"
         },
-        "time": 1789968941119
+        "time": 1790018341732
       }
     ],
     [
@@ -666,11 +667,11 @@
       {
         "data": {
           "id": "test_user_123",
-          "balance": 300,
+          "balance": 499,
           "email": "test@example.com",
-          "updatedAt": "2026-09-20T17:06:39.350Z"
+          "updatedAt": "2026-09-21T19:24:24.917Z"
         },
-        "time": 1789923999350
+        "time": 1790018664917
       }
     ],
     [
@@ -723,6 +724,19 @@
           "updatedAt": "2026-09-20T20:01:11.970Z"
         },
         "time": 1789934471970
+      }
+    ],
+    [
+      "demo_buyer_777",
+      {
+        "data": {
+          "uid": "demo_buyer_777",
+          "role": "student",
+          "createdAt": "2026-09-21T19:26:33.850Z",
+          "balance": 350,
+          "updatedAt": "2026-09-21T19:26:33.850Z"
+        },
+        "time": 1790018793850
       }
     ]
   ],
@@ -836,6 +850,80 @@
           "createdAt": "2026-09-20T20:01:12.085Z"
         },
         "time": 1789934472118
+      }
+    ],
+    [
+      "dep_1790018665036_sls0l",
+      {
+        "data": {
+          "id": "dep_bot_930507144020_1790018665036",
+          "userId": "test_user_123",
+          "userEmail": "test@example.com",
+          "amount": 199,
+          "utr": "930507144020",
+          "status": "approved",
+          "type": "telegram_upi_bot",
+          "provider": "HDFC Bank",
+          "verifiedAt": "2026-09-21T19:24:25.036Z",
+          "createdAt": "2026-09-21T19:24:25.036Z",
+          "updatedAt": "2026-09-21T19:24:25.036Z"
+        },
+        "time": 1790018665036
+      }
+    ],
+    [
+      "dep_bot_930507144020_1790018665036",
+      {
+        "data": {
+          "id": "dep_bot_930507144020_1790018665036",
+          "userId": "test_user_123",
+          "userEmail": "test@example.com",
+          "amount": 199,
+          "utr": "930507144020",
+          "status": "approved",
+          "type": "telegram_upi_bot",
+          "provider": "HDFC Bank",
+          "verifiedAt": "2026-09-21T19:24:25.036Z",
+          "createdAt": "2026-09-21T19:24:25.036Z"
+        },
+        "time": 1790018665122
+      }
+    ],
+    [
+      "dep_1790018793913_q67vs",
+      {
+        "data": {
+          "id": "dep_bot_950442988774_1790018793913",
+          "userId": "demo_buyer_777",
+          "userEmail": "buyer@test.com",
+          "amount": 350,
+          "utr": "950442988774",
+          "status": "approved",
+          "type": "telegram_upi_bot",
+          "provider": "PhonePe UPI",
+          "verifiedAt": "2026-09-21T19:26:33.913Z",
+          "createdAt": "2026-09-21T19:26:33.913Z",
+          "updatedAt": "2026-09-21T19:26:33.913Z"
+        },
+        "time": 1790018793913
+      }
+    ],
+    [
+      "dep_bot_950442988774_1790018793913",
+      {
+        "data": {
+          "id": "dep_bot_950442988774_1790018793913",
+          "userId": "demo_buyer_777",
+          "userEmail": "buyer@test.com",
+          "amount": 350,
+          "utr": "950442988774",
+          "status": "approved",
+          "type": "telegram_upi_bot",
+          "provider": "PhonePe UPI",
+          "verifiedAt": "2026-09-21T19:26:33.913Z",
+          "createdAt": "2026-09-21T19:26:33.913Z"
+        },
+        "time": 1790018793960
       }
     ]
   ],

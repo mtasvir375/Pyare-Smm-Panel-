@@ -378,13 +378,28 @@ export default function Profile() {
     try {
       const numAmount = Number(amount);
 
-      const response = await axios.post("/api/deposits/verify-qr-auto", {
-        amount: numAmount,
-        utr: cleanUtr,
-        userId: user.uid,
-        userEmail: user.email,
-        client_txn_id: qrAutoData?.client_txn_id
-      });
+      let response: any;
+      try {
+        response = await axios.post("/api/wallet/verify-utr", {
+          amount: numAmount,
+          utr: cleanUtr,
+          userId: user.uid,
+          userEmail: user.email
+        });
+      } catch (firstErr: any) {
+        // If 400 with specific message (e.g. duplicate UTR or amount mismatch), rethrow
+        if (firstErr.response?.status === 400 && firstErr.response?.data?.error) {
+          throw firstErr;
+        }
+        // Otherwise fallback to QR Auto
+        response = await axios.post("/api/deposits/verify-qr-auto", {
+          amount: numAmount,
+          utr: cleanUtr,
+          userId: user.uid,
+          userEmail: user.email,
+          client_txn_id: qrAutoData?.client_txn_id
+        });
+      }
 
       if (response.data.success) {
         const credited = response.data.amount || numAmount;

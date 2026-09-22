@@ -542,13 +542,26 @@ export default function Courses() {
       let credited = Number(depositAmount);
 
       try {
-        const response = await axios.post("/api/deposits/verify-qr-auto", {
-          amount: Number(depositAmount),
-          utr: cleanUtr,
-          userId: user.uid,
-          userEmail: user.email,
-          client_txn_id: qrAutoData?.client_txn_id
-        });
+        let response: any;
+        try {
+          response = await axios.post("/api/wallet/verify-utr", {
+            amount: Number(depositAmount),
+            utr: cleanUtr,
+            userId: user.uid,
+            userEmail: user.email
+          });
+        } catch (firstErr: any) {
+          if (firstErr.response?.status === 400 && firstErr.response?.data?.error) {
+            throw firstErr;
+          }
+          response = await axios.post("/api/deposits/verify-qr-auto", {
+            amount: Number(depositAmount),
+            utr: cleanUtr,
+            userId: user.uid,
+            userEmail: user.email,
+            client_txn_id: qrAutoData?.client_txn_id
+          });
+        }
 
         if (response.data && response.data.success) {
           verified = true;

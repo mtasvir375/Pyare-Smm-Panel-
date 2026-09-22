@@ -35,8 +35,11 @@ import {
   Key,
   Copy,
   Zap,
-  Terminal
+  Terminal,
+  Send,
+  Bot
 } from "lucide-react";
+import { TelegramBotTab } from "@/components/admin/TelegramBotTab";
 import CategoryIcon from "@/components/CategoryIcon";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -1469,6 +1472,10 @@ export default function Admin() {
           {(isAdmin || isPaymentAdmin) && (
             <>
               <TabsTrigger value="deposits" className="rounded-xl px-6">Deposits</TabsTrigger>
+              <TabsTrigger value="telegram-bot" className="rounded-xl px-6 flex items-center gap-1.5 font-bold">
+                <Send className="w-3.5 h-3.5 text-blue-500" />
+                Telegram UPI Bot
+              </TabsTrigger>
             </>
           )}
           {isAdmin && (
@@ -3697,6 +3704,10 @@ export default function Admin() {
               </Card>
                 </>
               )}
+            </TabsContent>
+
+            <TabsContent value="telegram-bot" className="space-y-6">
+              <TelegramBotTab />
             </TabsContent>
           </>
         )}
