@@ -1,7 +1,10 @@
 {
-  "botToken": "8268916986 : AAGn5qnLukLpZGw9h9y1kc",
+  "botToken": "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0",
   "chatId": "12345678",
-  "enabled": false,
-  "lastUpdateId": 0,
-  "lastError": "Telegram Error: Unauthorized. Please verify your token from @BotFather."
+  "enabled": true,
+  "lastUpdateId": 33028225,
+  "botUsername": "BbbSmart_bot",
+  "startedAt": "2026-09-23T12:37:19.917Z",
+  "lastPolledAt": "2026-09-23T12:37:19.917Z",
+  "mode": "polling"
 }

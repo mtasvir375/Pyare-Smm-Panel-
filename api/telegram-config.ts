@@ -120,30 +120,15 @@ export default async function handler(req: any, res: any) {
           });
         }
 
-        // Set webhook in Telegram
+        // Clear any old webhook so getUpdates polling runs with 0 conflicts!
         try {
-          const whRes = await axios.post(
-            `https://api.telegram.org/bot${activeToken}/setWebhook`,
-            {
-              url: webhookUrl,
-              drop_pending_updates: false,
-              allowed_updates: ["message", "channel_post"]
-            },
+          await axios.post(
+            `https://api.telegram.org/bot${activeToken}/deleteWebhook`,
+            { drop_pending_updates: false },
             { timeout: 8000 }
           );
-
-          if (!whRes.data || !whRes.data.ok) {
-            return res.status(400).json({
-              success: false,
-              error: `Failed to set Telegram webhook: ${whRes.data?.description || "Unknown Telegram error"}`
-            });
-          }
         } catch (whErr: any) {
-          const msg = whErr.response?.data?.description || whErr.message;
-          return res.status(400).json({
-            success: false,
-            error: `Failed to register Telegram webhook: ${msg}`
-          });
+          console.warn("[TELEGRAM-DELETE-WEBHOOK-WARN]", whErr.message);
         }
 
         const updatedData = {

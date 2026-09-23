@@ -525,6 +525,7 @@ export default function Courses() {
   };
 
   const handleAddFunds = async () => {
+    if (isUploading) return;
     if (!depositAmount || !user) {
       toast.error("Please enter an amount");
       return;
@@ -538,96 +539,42 @@ export default function Courses() {
 
     setIsUploading(true);
     try {
-      let verified = false;
-      let credited = Number(depositAmount);
-
+      let response: any;
       try {
-        let response: any;
-        try {
-          response = await axios.post("/api/wallet/verify-utr", {
-            amount: Number(depositAmount),
-            utr: cleanUtr,
-            userId: user.uid,
-            userEmail: user.email
-          });
-        } catch (firstErr: any) {
-          if (firstErr.response?.status === 400 && firstErr.response?.data?.error) {
-            throw firstErr;
-          }
-          response = await axios.post("/api/deposits/verify-qr-auto", {
-            amount: Number(depositAmount),
-            utr: cleanUtr,
-            userId: user.uid,
-            userEmail: user.email,
-            client_txn_id: qrAutoData?.client_txn_id
-          });
+        response = await axios.post("/api/wallet/verify-utr", {
+          amount: Number(depositAmount),
+          utr: cleanUtr,
+          userId: user.uid,
+          userEmail: user.email
+        });
+      } catch (firstErr: any) {
+        // If 400 with specific message (e.g. duplicate UTR or amount mismatch), stop and throw immediately
+        if (firstErr.response?.status === 400 && firstErr.response?.data?.error) {
+          throw firstErr;
         }
-
-        if (response.data && response.data.success) {
-          verified = true;
-          credited = response.data.amount || Number(depositAmount);
-        }
-      } catch (apiErr: any) {
-        console.warn("[PAYMENT-VERIFY] Primary API check error/pending:", apiErr?.response?.data?.error || apiErr.message);
+        // Fallback to QR Auto endpoint
+        response = await axios.post("/api/deposits/verify-qr-auto", {
+          amount: Number(depositAmount),
+          utr: cleanUtr,
+          userId: user.uid,
+          userEmail: user.email,
+          client_txn_id: qrAutoData?.client_txn_id
+        });
       }
 
-      // If backend was not reached or returned pending, fallback to direct Firestore pool check
-      if (!verified) {
-        try {
-          const poolData = await dbClient.getDoc("sms_forwarder_pool", cleanUtr);
-          if (poolData && poolData.status !== "claimed") {
-            const poolAmt = Number(poolData.amount || depositAmount);
-            // Claim it in Firestore!
-            await dbClient.updateDoc("sms_forwarder_pool", cleanUtr, {
-              status: "claimed",
-              claimedBy: user.uid,
-              claimedEmail: user.email || "",
-              claimedAt: new Date().toISOString()
-            });
-            // Update user balance in Firestore
-            const newBal = (profile?.balance || 0) + poolAmt;
-            await dbClient.updateDoc("users", user.uid, { balance: newBal });
-            // Add deposit record
-            await dbClient.addDoc("deposits", {
-              userId: user.uid,
-              userEmail: user.email || "",
-              amount: poolAmt,
-              utr: cleanUtr,
-              status: "approved",
-              paymentMethod: "sms_forwarder",
-              createdAt: new Date().toISOString(),
-              verifiedAt: new Date().toISOString()
-            });
-            verified = true;
-            credited = poolAmt;
-          }
-        } catch (poolErr: any) {
-          console.warn("[FIRESTORE-POOL-CHECK] Fallback check error:", poolErr);
-        }
-      }
-
-      if (verified) {
+      if (response && response.data && response.data.success) {
+        const credited = response.data.amount || Number(depositAmount);
         toast.success(`🎉 Payment verified! ₹${credited} added to wallet.`);
         setIsAddFundsOpen(false);
         setDepositAmount("");
         setUtr("");
         setQrAutoData(null);
         if (updateUserProfileLocal) {
-          updateUserProfileLocal({ balance: (profile?.balance || 0) + Number(credited) });
+          updateUserProfileLocal({ balance: response.data.newBalance || ((profile?.balance || 0) + Number(credited)) });
         }
       } else {
-        // Save pending intent in Firestore so when the SMS forwarder arrives, it auto-credits!
-        try {
-          await dbClient.setDoc("pending_user_utrs", cleanUtr, {
-            utr: cleanUtr,
-            userId: user.uid,
-            userEmail: user.email || "",
-            amount: Number(depositAmount),
-            timestamp: new Date().toISOString()
-          });
-        } catch (e) {}
-
-        toast.error(`Payment verification pending: No confirmed transaction received yet for UTR ${cleanUtr}. If you just completed the payment, please wait 15–30 seconds for the Bank/UPI SMS to arrive, then click Confirm again.`);
+        const errMsg = response?.data?.error || response?.data?.message || `Payment verification pending: No confirmed transaction received yet for UTR ${cleanUtr}. If you just completed the payment, please wait 15–30 seconds for the Bank/UPI SMS to arrive, then click Confirm again.`;
+        toast.error(errMsg);
       }
     } catch (error: any) {
       console.warn("Payment verification error:", error);

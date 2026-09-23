@@ -1,48 +1,54 @@
 {
   "settings": {
     "data": {
-      "paytmMerchantKey": "",
-      "customGateway2Enabled": false,
-      "paytmEnabled": false,
-      "selectedTheme": "amber",
-      "phonepeMerchantId": "",
-      "paymentQrUrl": "",
-      "phonepeEnv": "sandbox",
-      "customGateway1Name": "",
-      "qrAutoEnabled": false,
-      "qrAutoUrl": "",
-      "whatsappChatNumber": "9942658657",
-      "customGateway2Key": "",
-      "phonepeEnabled": false,
-      "customGateway1Key": "",
-      "whatsappLink": "https://wa.me/919999999999",
       "customGateway2Url": "",
-      "updatedAt": "2026-09-14T12:51:13.361Z",
-      "phonepeSaltIndex": "1",
-      "selectedFestivalTheme": "none",
-      "providerApiUrl": "",
-      "qrAutoProvider": "smmqr",
-      "phonepeSaltKey": "",
-      "qrAutoApiKey": "",
-      "razorpayEnabled": false,
-      "customGateway1Enabled": false,
-      "qrAutoToken": "",
-      "customGateway1Secret": "",
-      "customGateway2Name": "",
-      "customGateway1Url": "",
-      "customGateway2Secret": "",
-      "upiId": "Poahahsgzgs@2762@paytm",
-      "razorpayKeyId": "",
-      "paytmMid": "",
-      "razorpayKeySecret": "",
-      "backendApiUrl": "",
       "providerApiKey": "",
-      "autoApproveDeposits": false,
+      "qrAutoEnabled": false,
+      "customGateway2Secret": "",
+      "customGateway1Name": "",
+      "backendApiUrl": "",
+      "paytmMerchantKey": "",
+      "paytmEnabled": false,
+      "qrAutoToken": "",
+      "providerApiUrl": "",
+      "qrAutoApiKey": "",
+      "selectedTheme": "amber",
+      "phonepeSaltKey": "",
+      "phonepeEnabled": false,
+      "customGateway1Url": "",
+      "phonepeMerchantId": "",
+      "selectedFestivalTheme": "none",
+      "telegramChatId": "12345678",
+      "upiId": "mdsaudalam621@okicici",
+      "phonepeSaltIndex": "1",
       "merchantName": "Pyare SMM Panel",
+      "customGateway1Secret": "",
+      "customGateway2Key": "",
+      "razorpayKeySecret": "",
+      "telegramBotEnabled": true,
+      "qrAutoProvider": "smmqr",
+      "phonepeEnv": "sandbox",
+      "whatsappLink": "https://wa.me/919999999999",
+      "paymentQrUrl": "",
+      "whatsappChatNumber": "9942658657",
+      "customGateway1Key": "",
+      "telegramBotToken": "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0",
+      "razorpayEnabled": false,
+      "updatedAt": "2026-09-22T09:12:32.956Z",
+      "smsForwarderEnabled": true,
+      "customGateway2Name": "",
+      "customGateway1Enabled": false,
       "paytmEnv": "sandbox",
-      "guideVideoUrl": ""
+      "razorpayKeyId": "",
+      "smsForwarderSecret": "",
+      "qrAutoUrl": "",
+      "telegramBotUsername": "",
+      "paytmMid": "",
+      "customGateway2Enabled": false,
+      "guideVideoUrl": "",
+      "autoApproveDeposits": false
     },
-    "time": 1790018342754
+    "time": 1790167028897
   },
   "providers": [
     [
@@ -647,19 +653,19 @@
       {
         "data": {
           "id": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-          "lastActive": "2026-06-17T09:24:31.827Z",
+          "balance": 474908.08,
+          "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "lastOrderedAt": "2026-09-23T11:47:59.101Z",
           "createdAt": "2026-09-14T13:39:37.418Z",
           "displayName": "Md Saad Alam",
-          "email": "mtasvir375@gmail.com",
-          "last_ordered_at": "2026-07-12T20:24:51.921Z",
-          "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-          "updatedAt": "2026-09-21T17:19:29.446Z",
-          "role": "student",
-          "balance": 55799.16,
           "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIVDCPXKVjVCP0jqcCpWx5c759WFIsH20U7smDKXtVCJQmldT5A=s96-c",
-          "lastOrderedAt": "2026-09-21T17:19:28.294Z"
+          "email": "mtasvir375@gmail.com",
+          "lastActive": "2026-06-17T09:24:31.827Z",
+          "role": "student",
+          "last_ordered_at": "2026-07-12T20:24:51.921Z",
+          "updatedAt": "2026-09-23T12:32:03.883Z"
         },
-        "time": 1790018341732
+        "time": 1790166848325
       }
     ],
     [
@@ -730,6 +736,7 @@
       "demo_buyer_777",
       {
         "data": {
+          "id": "demo_buyer_777",
           "uid": "demo_buyer_777",
           "role": "student",
           "createdAt": "2026-09-21T19:26:33.850Z",
@@ -737,6 +744,19 @@
           "updatedAt": "2026-09-21T19:26:33.850Z"
         },
         "time": 1790018793850
+      }
+    ],
+    [
+      "test_user_race_1",
+      {
+        "data": {
+          "uid": "test_user_race_1",
+          "role": "student",
+          "createdAt": "2026-09-23T12:37:21.545Z",
+          "balance": 1.01,
+          "updatedAt": "2026-09-23T12:37:21.545Z"
+        },
+        "time": 1790167041545
       }
     ]
   ],
@@ -924,6 +944,227 @@
           "createdAt": "2026-09-21T19:26:33.913Z"
         },
         "time": 1790018793960
+      }
+    ],
+    [
+      "dep_1790166195632_cekur",
+      {
+        "data": {
+          "id": "dep_bot_977640245738_1790166195631",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 1.01,
+          "utr": "977640245738",
+          "status": "approved",
+          "type": "telegram_upi_bot",
+          "provider": "Central Bank of India",
+          "verifiedAt": "2026-09-23T12:23:15.631Z",
+          "createdAt": "2026-09-23T12:23:15.631Z",
+          "updatedAt": "2026-09-23T12:23:15.632Z"
+        },
+        "time": 1790166195632
+      }
+    ],
+    [
+      "dep_bot_977640245738_1790166195631",
+      {
+        "data": {
+          "id": "dep_bot_977640245738_1790166195631",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 1.01,
+          "utr": "977640245738",
+          "status": "approved",
+          "type": "telegram_upi_bot",
+          "provider": "Central Bank of India",
+          "verifiedAt": "2026-09-23T12:23:15.631Z",
+          "createdAt": "2026-09-23T12:23:15.631Z"
+        },
+        "time": 1790166195702
+      }
+    ],
+    [
+      "dep_1790166237593_h43qi",
+      {
+        "data": {
+          "id": "dep_1790166237593_h43qi",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 1.01,
+          "utr": "977640245738",
+          "status": "approved",
+          "paymentMethod": "sms_forwarder",
+          "createdAt": "2026-09-23T12:23:54.203Z",
+          "verifiedAt": "2026-09-23T12:23:54.203Z",
+          "updatedAt": "2026-09-23T12:23:57.593Z"
+        },
+        "time": 1790166237593
+      }
+    ],
+    [
+      "dep_1790166653210_lgsty",
+      {
+        "data": {
+          "id": "dep_bot_612151248932_1790166653210",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 100,
+          "utr": "612151248932",
+          "status": "approved",
+          "type": "telegram_upi_bot",
+          "provider": "State Bank of India (SBI)",
+          "verifiedAt": "2026-09-23T12:30:53.210Z",
+          "createdAt": "2026-09-23T12:30:53.210Z",
+          "updatedAt": "2026-09-23T12:30:53.210Z"
+        },
+        "time": 1790166653210
+      }
+    ],
+    [
+      "dep_bot_612151248932_1790166653210",
+      {
+        "data": {
+          "id": "dep_bot_612151248932_1790166653210",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 100,
+          "utr": "612151248932",
+          "status": "approved",
+          "type": "telegram_upi_bot",
+          "provider": "State Bank of India (SBI)",
+          "verifiedAt": "2026-09-23T12:30:53.210Z",
+          "createdAt": "2026-09-23T12:30:53.210Z"
+        },
+        "time": 1790166653387
+      }
+    ],
+    [
+      "dep_1790166675926_8fxj8",
+      {
+        "data": {
+          "id": "dep_bot_426819284919_1790166675926",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 250,
+          "utr": "426819284919",
+          "status": "approved",
+          "type": "telegram_upi_bot",
+          "provider": "State Bank of India (SBI)",
+          "verifiedAt": "2026-09-23T12:31:15.926Z",
+          "createdAt": "2026-09-23T12:31:15.926Z",
+          "updatedAt": "2026-09-23T12:31:15.926Z"
+        },
+        "time": 1790166675926
+      }
+    ],
+    [
+      "dep_bot_426819284919_1790166675926",
+      {
+        "data": {
+          "id": "dep_bot_426819284919_1790166675926",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 250,
+          "utr": "426819284919",
+          "status": "approved",
+          "type": "telegram_upi_bot",
+          "provider": "State Bank of India (SBI)",
+          "verifiedAt": "2026-09-23T12:31:15.926Z",
+          "createdAt": "2026-09-23T12:31:15.926Z"
+        },
+        "time": 1790166676003
+      }
+    ],
+    [
+      "dep_1790166698670_5ljbp",
+      {
+        "data": {
+          "id": "dep_bot_350720051042_1790166698670",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 50,
+          "utr": "350720051042",
+          "status": "approved",
+          "type": "telegram_upi_bot",
+          "provider": "Central Bank of India",
+          "verifiedAt": "2026-09-23T12:31:38.670Z",
+          "createdAt": "2026-09-23T12:31:38.670Z",
+          "updatedAt": "2026-09-23T12:31:38.670Z"
+        },
+        "time": 1790166698670
+      }
+    ],
+    [
+      "dep_bot_350720051042_1790166698670",
+      {
+        "data": {
+          "id": "dep_bot_350720051042_1790166698670",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 50,
+          "utr": "350720051042",
+          "status": "approved",
+          "type": "telegram_upi_bot",
+          "provider": "Central Bank of India",
+          "verifiedAt": "2026-09-23T12:31:38.670Z",
+          "createdAt": "2026-09-23T12:31:38.670Z"
+        },
+        "time": 1790166698752
+      }
+    ],
+    [
+      "dep_1790166723984_if6ca",
+      {
+        "data": {
+          "id": "dep_bot_118233445966_1790166723984",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 59770,
+          "utr": "118233445966",
+          "status": "approved",
+          "type": "telegram_upi_bot",
+          "provider": "Central Bank of India",
+          "verifiedAt": "2026-09-23T12:32:03.984Z",
+          "createdAt": "2026-09-23T12:32:03.984Z",
+          "updatedAt": "2026-09-23T12:32:03.984Z"
+        },
+        "time": 1790166723984
+      }
+    ],
+    [
+      "dep_bot_118233445966_1790166723984",
+      {
+        "data": {
+          "id": "dep_bot_118233445966_1790166723984",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 59770,
+          "utr": "118233445966",
+          "status": "approved",
+          "type": "telegram_upi_bot",
+          "provider": "Central Bank of India",
+          "verifiedAt": "2026-09-23T12:32:03.984Z",
+          "createdAt": "2026-09-23T12:32:03.984Z"
+        },
+        "time": 1790166724045
+      }
+    ],
+    [
+      "dep_1790166749682_dd6nh",
+      {
+        "data": {
+          "id": "dep_1790166749682_dd6nh",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 1,
+          "utr": "131260518980",
+          "status": "approved",
+          "paymentMethod": "sms_forwarder",
+          "createdAt": "2026-09-23T12:32:28.856Z",
+          "verifiedAt": "2026-09-23T12:32:28.856Z",
+          "updatedAt": "2026-09-23T12:32:29.682Z"
+        },
+        "time": 1790166749682
       }
     ]
   ],

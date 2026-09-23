@@ -17,11 +17,18 @@ import {
   initTelegramBotService,
   getBankAlerts,
   getTelegramStatus,
+  getTelegramConfig,
   startTelegramPolling,
   stopTelegramPolling,
   saveTelegramConfig,
   simulateBankSms,
-  verifyAndClaimAlert
+  verifyAndClaimAlert,
+  clearTelegramWebhook,
+  setTelegramWebhook,
+  getTelegramWebhookInfo,
+  processTelegramUpdate,
+  parseBankSms as parseBankSmsFromService,
+  addBankAlert
 } from "./telegramBotService";
 
 dotenv.config();
@@ -2498,10 +2505,17 @@ export async function startServer() {
       const { botToken, chatId, action } = req.body || {};
 
       if (botToken !== undefined || chatId !== undefined) {
-        saveTelegramConfig({
-          ...(botToken !== undefined && { botToken: String(botToken).replace(/\s+/g, "").trim() }),
-          ...(chatId !== undefined && { chatId: String(chatId).trim() })
-        });
+        const cleanTok = botToken !== undefined ? String(botToken).replace(/\s+/g, "").trim() : "";
+        const updateObj: any = {};
+        if (cleanTok && cleanTok.length >= 35) {
+          updateObj.botToken = cleanTok;
+        }
+        if (chatId !== undefined && chatId !== "") {
+          updateObj.chatId = String(chatId).trim();
+        }
+        if (Object.keys(updateObj).length > 0) {
+          saveTelegramConfig(updateObj);
+        }
       }
 
       if (action === "start") {
@@ -2513,6 +2527,27 @@ export async function startServer() {
       } else if (action === "stop") {
         const stopRes = stopTelegramPolling();
         return res.json({ success: true, message: stopRes.message, status: getTelegramStatus() });
+      } else if (action === "set_webhook") {
+        const host = req.get("host") || "localhost:3000";
+        const proto = req.get("x-forwarded-proto") || (host.includes("localhost") ? "http" : "https");
+        const defaultWebhook = `https://${host}/api/telegram-webhook`;
+        const webhookUrl = req.body?.webhookUrl || defaultWebhook;
+        const setRes = await setTelegramWebhook(webhookUrl, req.body?.botToken);
+        if (!setRes.success) {
+          return res.status(400).json({ success: false, error: setRes.message, status: getTelegramStatus() });
+        }
+        return res.json({ success: true, message: setRes.message, status: getTelegramStatus() });
+      } else if (action === "delete_webhook") {
+        const clearRes = await clearTelegramWebhook(req.body?.botToken);
+        if (!clearRes.success) {
+          return res.status(400).json({ success: false, error: clearRes.message, status: getTelegramStatus() });
+        }
+        // Restart polling now that webhook is cleared
+        await startTelegramPolling();
+        return res.json({ success: true, message: clearRes.message, status: getTelegramStatus() });
+      } else if (action === "get_webhook_info") {
+        const infoRes = await getTelegramWebhookInfo(req.body?.botToken);
+        return res.json(infoRes);
       }
 
       return res.json({
@@ -2523,6 +2558,217 @@ export async function startServer() {
     } catch (err: any) {
       console.error("[POST-TELEGRAM-CONFIG-ERR]", err.message);
       return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 2b. Explicit Clear Webhook Endpoint (Fixes 409 Conflict)
+  app.post(["/api/admin/clear-webhook", "/api/telegram-clear-webhook"], async (req, res) => {
+    try {
+      const { token } = req.body || {};
+      const clearRes = await clearTelegramWebhook(token);
+      if (clearRes.success) {
+        // Also restart polling if it was supposed to be running
+        const startRes = await startTelegramPolling();
+        return res.json({
+          success: true,
+          message: "Webhook deleted successfully and Telegram Bot polling reconnected!",
+          status: getTelegramStatus()
+        });
+      }
+      return res.status(400).json({ success: false, error: clearRes.message, status: getTelegramStatus() });
+    } catch (err: any) {
+      console.error("[CLEAR-WEBHOOK-ERR]", err.message);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 2c. Telegram Webhook Receiver (Push updates straight to database)
+  app.post(["/api/telegram-webhook", "/api/admin/telegram-webhook"], async (req, res) => {
+    try {
+      const token = getTelegramConfig().botToken;
+      const result = await processTelegramUpdate(req.body, token);
+
+      // If an alert was captured, check if any user was waiting in pending_user_utrs
+      if (result.success && result.alert) {
+        const cleanUtr = result.alert.utr;
+        const amount = result.alert.amount;
+
+        // Sync with gateway payments cache
+        serverCache.received_gateway_payments.set(cleanUtr, {
+          amount,
+          provider: result.alert.senderBank || "telegram_bot",
+          sender: "Telegram Bot",
+          time: Date.now(),
+          rawSms: result.alert.rawText,
+          status: "available"
+        });
+
+        // Check if user was waiting
+        const pendingUser = serverCache.pending_user_utrs.get(cleanUtr);
+        if (pendingUser && (amount >= pendingUser.amount || Math.abs(amount - pendingUser.amount) <= 1)) {
+          console.log(`[TELEGRAM-AUTO-MATCH] Auto-crediting waiting user ${pendingUser.userId} for UTR ${cleanUtr}`);
+          try {
+            await verifyAndCreditPayment({
+              userId: pendingUser.userId,
+              userEmail: pendingUser.userEmail,
+              amount: pendingUser.amount,
+              utr: cleanUtr
+            });
+            serverCache.pending_user_utrs.delete(cleanUtr);
+            try { await deleteDocSafe("pending_user_utrs", cleanUtr); } catch (e) {}
+          } catch (e: any) {
+            console.error("[TELEGRAM-AUTO-MATCH-ERR]", e.message);
+          }
+        }
+      }
+
+      return res.json({ ok: true });
+    } catch (err: any) {
+      console.error("[TELEGRAM-WEBHOOK-RECEIVE-ERR]", err.message);
+      return res.json({ ok: true }); // Always return 200 OK to Telegram so it doesn't retry
+    }
+  });
+
+  // 2b. Direct Android SMS Forwarder Webhook (Automated Phone-to-Website Ingest)
+  // Supports all major Android SMS Forwarder apps (Lanrens, feliphegomez, MacroDroid, Tasker, etc.)
+  app.all(["/api/sms-forwarder", "/api/sms-webhook", "/api/forwarder"], async (req, res) => {
+    try {
+      const b = req.body || {};
+      const q = req.query || {};
+
+      // Flexible extraction across various SMS Forwarder app schemas
+      let rawText = "";
+      if (typeof b === "string") {
+        rawText = b;
+      } else if (typeof b === "object") {
+        rawText = b.text || b.message || b.body || b.content || b.sms || b.msg || b.data || "";
+      }
+      if (!rawText && typeof q === "object") {
+        rawText = (q.text || q.message || q.body || q.content || q.sms || q.msg || "") as string;
+      }
+
+      const sender = (b.from || b.sender || b.number || b.phone || b.title || q.from || q.sender || "SMS Forwarder App") as string;
+
+      console.log(`[SMS-FORWARDER-INCOMING] Received from: ${sender} | Text: ${rawText.slice(0, 80)}...`);
+
+      if (!rawText || typeof rawText !== "string" || rawText.trim().length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: "Empty SMS text received. Please send SMS text in 'text', 'message', or 'body' field."
+        });
+      }
+
+      const parsed = parseBankSmsFromService(rawText, sender);
+      if (!parsed.isValid || !parsed.utr || parsed.amount <= 0) {
+        console.warn(`[SMS-FORWARDER-PARSE-FAIL] Reason: ${parsed.reason || "Invalid UTR/Amount"} for: ${rawText.slice(0, 80)}`);
+        return res.json({
+          success: true,
+          captured: false,
+          reason: parsed.reason || "No valid 12-digit UTR and amount found in SMS",
+          receivedText: rawText.slice(0, 100)
+        });
+      }
+
+      const result = addBankAlert({
+        utr: parsed.utr,
+        amount: parsed.amount,
+        senderBank: parsed.bank,
+        rawText: rawText
+      });
+
+      if (result.success && result.alert) {
+        const cleanUtr = parsed.utr;
+        const amount = parsed.amount;
+
+        // Auto-match if user has pending UTR claim
+        const pendingUser = serverCache.pending_user_utrs.get(cleanUtr);
+        if (pendingUser && (amount >= pendingUser.amount || Math.abs(amount - pendingUser.amount) <= 1)) {
+          console.log(`[SMS-FORWARDER-AUTO-MATCH] Auto-crediting waiting user ${pendingUser.userId} for UTR ${cleanUtr}`);
+          try {
+            await verifyAndCreditPayment({
+              userId: pendingUser.userId,
+              userEmail: pendingUser.userEmail,
+              amount: pendingUser.amount,
+              utr: cleanUtr
+            });
+            serverCache.pending_user_utrs.delete(cleanUtr);
+            try { await deleteDocSafe("pending_user_utrs", cleanUtr); } catch (e) {}
+          } catch (e: any) {
+            console.error("[SMS-FORWARDER-AUTO-MATCH-ERR]", e.message);
+          }
+        }
+      }
+
+      return res.json({
+        success: true,
+        captured: result.success,
+        duplicate: result.duplicate || false,
+        message: result.success
+          ? `Captured ₹${parsed.amount} with UTR ${parsed.utr} (${parsed.bank})`
+          : "Alert already recorded previously",
+        alert: result.alert
+      });
+    } catch (err: any) {
+      console.error("[SMS-FORWARDER-ERR]", err.message);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 2c. Telegram sendMessage Interceptor Proxy
+  // Allows SMS Forwarder apps to keep using Telegram format while our website captures the SMS and passes it to Telegram!
+  app.post(["/bot:token/sendMessage", "/api/bot:token/sendMessage"], async (req, res) => {
+    try {
+      const token = req.params.token;
+      const { text, chat_id } = req.body || {};
+
+      console.log(`[TELEGRAM-PROXY-SENDMESSAGE] Intercepted sendMessage for chat ${chat_id}: ${String(text || "").slice(0, 80)}...`);
+
+      if (text && typeof text === "string") {
+        const parsed = parseBankSmsFromService(text);
+        if (parsed.isValid && parsed.utr && parsed.amount > 0) {
+          console.log(`[TELEGRAM-PROXY-CAPTURE] Detected UTR ${parsed.utr}, Amount ₹${parsed.amount}`);
+          const addRes = addBankAlert({
+            utr: parsed.utr,
+            amount: parsed.amount,
+            senderBank: parsed.bank,
+            rawText: text
+          });
+
+          // Check pending claim
+          const cleanUtr = parsed.utr;
+          const amount = parsed.amount;
+          const pendingUser = serverCache.pending_user_utrs.get(cleanUtr);
+          if (pendingUser && (amount >= pendingUser.amount || Math.abs(amount - pendingUser.amount) <= 1)) {
+            try {
+              await verifyAndCreditPayment({
+                userId: pendingUser.userId,
+                userEmail: pendingUser.userEmail,
+                amount: pendingUser.amount,
+                utr: cleanUtr
+              });
+              serverCache.pending_user_utrs.delete(cleanUtr);
+              try { await deleteDocSafe("pending_user_utrs", cleanUtr); } catch (e) {}
+            } catch (e: any) {
+              console.error("[PROXY-AUTO-MATCH-ERR]", e.message);
+            }
+          }
+        }
+      }
+
+      // Forward directly to Telegram API so Telegram also receives the message!
+      try {
+        const tgRes = await axios.post(`https://api.telegram.org/bot${token}/sendMessage`, req.body, {
+          headers: { "Content-Type": "application/json" },
+          timeout: 10000
+        });
+        return res.json(tgRes.data);
+      } catch (tgErr: any) {
+        console.warn("[TELEGRAM-PROXY-UPSTREAM-WARN]", tgErr.response?.data || tgErr.message);
+        return res.json({ ok: true, note: "Captured locally, upstream Telegram responded with error" });
+      }
+    } catch (err: any) {
+      console.error("[TELEGRAM-PROXY-ERR]", err.message);
+      return res.status(500).json({ ok: false, error: err.message });
     }
   });
 
@@ -2583,20 +2829,122 @@ export async function startServer() {
     }
   });
 
+  // 4b. Parse & Ingest Real Bank SMS directly (Live Test & Ingest)
+  app.post(["/api/admin/parse-and-add-sms", "/api/parse-and-add-sms"], (req, res) => {
+    try {
+      const { text, sender } = req.body || {};
+      if (!text || typeof text !== "string") {
+        return res.status(400).json({ success: false, error: "Please provide SMS text to parse." });
+      }
+
+      const parsed = parseBankSmsFromService(text, sender);
+      if (!parsed.isValid || !parsed.utr || parsed.amount <= 0) {
+        return res.status(400).json({
+          success: false,
+          error: parsed.reason || "Could not detect 12-digit UTR or amount in this SMS.",
+          parsed
+        });
+      }
+
+      const result = addBankAlert({
+        utr: parsed.utr,
+        amount: parsed.amount,
+        senderBank: parsed.bank,
+        rawText: text
+      });
+
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          error: result.duplicate ? "Duplicate UTR already recorded in database." : "Failed to save bank alert.",
+          duplicate: result.duplicate,
+          parsed
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: `Successfully captured ₹${parsed.amount} with UTR ${parsed.utr} (${parsed.bank})`,
+        alert: result.alert,
+        parsed
+      });
+    } catch (err: any) {
+      console.error("[PARSE-AND-ADD-SMS-ERR]", err.message);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Concurrency & Duplicate Protection Locks
+  const globalUtrLocks = new Set<string>();
+  const globalClaimedUtrs = new Set<string>();
+
+  function isUtrAlreadyClaimed(cleanUtr: string): boolean {
+    if (!cleanUtr) return false;
+    if (globalClaimedUtrs.has(cleanUtr)) return true;
+    if (serverCache.deposits.size > 0) {
+      for (const d of serverCache.deposits.values()) {
+        const item = d?.data || d;
+        if (
+          String(item?.utr || "").replace(/\D/g, "").trim() === cleanUtr &&
+          (item?.status === "approved" || item?.status === "completed")
+        ) {
+          globalClaimedUtrs.add(cleanUtr);
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   // 5. User-Facing UTR Verification & Instant Add Funds
   app.post(["/api/wallet/verify-utr", "/api/verify-utr"], async (req, res) => {
+    const { userId, utr, amount, userEmail } = req.body || {};
+    const cleanUtr = String(utr || "").replace(/\D/g, "").trim();
+    const numAmount = Number(amount || 0);
+
+    if (!userId) {
+      return res.status(400).json({ success: false, error: "User ID is required." });
+    }
+    if (cleanUtr.length !== 12) {
+      return res.status(400).json({ success: false, error: "Please enter a valid 12-digit UTR / UPI reference number." });
+    }
+
+    // 0. Strict Anti-Duplicate Check
+    if (isUtrAlreadyClaimed(cleanUtr)) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "This UTR number has already been verified and credited to balance. Duplicate submissions are not allowed." 
+      });
+    }
+
+    if (!useRestFallback) {
+      try {
+        const snap = await fdb.collection("deposits").where("utr", "==", cleanUtr).limit(1).get();
+        if (!snap.empty) {
+          const docData: any = snap.docs[0].data();
+          if (docData.status === "approved" || docData.status === "completed") {
+            globalClaimedUtrs.add(cleanUtr);
+            return res.status(400).json({ 
+              success: false, 
+              error: "This UTR number has already been verified and credited to balance. Duplicate submissions are not allowed." 
+            });
+          }
+        }
+      } catch (fErr) {}
+    }
+
+    // Check concurrency lock: Is this exact UTR being verified right this millisecond?
+    if (globalUtrLocks.has(cleanUtr)) {
+      return res.status(429).json({
+        success: false,
+        error: "This transaction is currently being processed. Please wait 5 seconds and refresh your balance."
+      });
+    }
+
+    // Acquire lock
+    globalUtrLocks.add(cleanUtr);
+
     try {
-      const { userId, utr, amount, userEmail } = req.body || {};
-      const cleanUtr = String(utr || "").replace(/\D/g, "").trim();
-      const numAmount = Number(amount || 0);
-
-      if (!userId) {
-        return res.status(400).json({ success: false, error: "User ID is required." });
-      }
-      if (cleanUtr.length !== 12) {
-        return res.status(400).json({ success: false, error: "Please enter a valid 12-digit UTR / UPI reference number." });
-      }
-
       // 1. Check local disk bank_alerts.json FIRST (0 Firestore Reads!)
       const claimRes = verifyAndClaimAlert(cleanUtr, numAmount > 0 ? numAmount : undefined, userId, userEmail);
       if (claimRes.success && claimRes.alert) {
@@ -2607,6 +2955,9 @@ export async function startServer() {
         if (!adjusted) {
           return res.status(500).json({ success: false, error: "Payment verified, but failed to credit wallet balance. Please contact admin." });
         }
+
+        // Mark permanently as claimed in memory
+        globalClaimedUtrs.add(cleanUtr);
 
         // Read updated balance from user record
         let newBalance = 0;
@@ -2636,6 +2987,29 @@ export async function startServer() {
           savePersistentCache();
         } catch (e) {}
 
+        // Synchronize: mark in sms_forwarder_pool if exists so it can never be claimed anywhere else
+        try {
+          await updateDocSafe("sms_forwarder_pool", cleanUtr, {
+            status: "claimed",
+            claimedBy: userId,
+            claimedEmail: userEmail || "",
+            claimedAt: new Date().toISOString()
+          });
+        } catch (e) {}
+
+        // Clear any pending user UTR
+        serverCache.pending_user_utrs.delete(cleanUtr);
+        try { await deleteDocSafe("pending_user_utrs", cleanUtr); } catch (e) {}
+
+        // Mark SMS log as claimed
+        const existingLog = (serverCache.sms_forwarder_logs || []).find((l: any) => l.utr === cleanUtr);
+        if (existingLog) {
+          existingLog.status = "claimed";
+          existingLog.claimedBy = userId;
+          existingLog.claimedEmail = userEmail || "";
+          existingLog.claimedAt = new Date().toISOString();
+        }
+
         console.log(`[BOT-WALLET-VERIFIED] Credited ₹${creditedAmount} to user ${userId} for UTR ${cleanUtr}`);
 
         return res.json({
@@ -2660,10 +3034,17 @@ export async function startServer() {
         authHeader: req.headers.authorization as string
       });
 
+      if (verifyResult.success) {
+        globalClaimedUtrs.add(cleanUtr);
+      }
+
       return res.status(verifyResult.status || (verifyResult.success ? 200 : 400)).json(verifyResult);
     } catch (err: any) {
       console.error("[VERIFY-UTR-ERR]", err.message);
       return res.status(500).json({ success: false, error: err.message || "Failed to verify UTR" });
+    } finally {
+      // Always release lock
+      globalUtrLocks.delete(cleanUtr);
     }
   });
 
@@ -3507,7 +3888,20 @@ export async function startServer() {
       return { success: false, status: 400, error: "Invalid UTR number. Please enter a valid 12-digit transaction ID." };
     }
 
-    // 1. Check in-memory deposits cache first (0 Firestore reads)
+    // 0. Strict Anti-Duplicate Check
+    if (isUtrAlreadyClaimed(cleanUtr)) {
+      return { success: false, status: 400, error: "This UTR number has already been verified and credited to balance. Duplicate submissions are not allowed." };
+    }
+
+    // Check concurrency lock: Is this exact UTR being verified right now?
+    if (globalUtrLocks.has(cleanUtr)) {
+      return { success: false, status: 429, error: "This transaction is currently being processed. Please wait a moment." };
+    }
+
+    globalUtrLocks.add(cleanUtr);
+
+    try {
+      // 1. Check in-memory deposits cache first (0 Firestore reads)
     let isAlreadyVerified = false;
     if (serverCache.deposits.size > 0) {
       const cachedDeps = Array.from(serverCache.deposits.values()).map((d: any) => d.data || d);
@@ -3826,6 +4220,8 @@ export async function startServer() {
 
     console.log(`[AUTO-DEPOSIT-SUCCESS] Verified and credited ₹${amount} for user ${userId} (UTR: ${cleanUtr})`);
 
+    globalClaimedUtrs.add(cleanUtr);
+
     return {
       success: true,
       status: 200,
@@ -3833,7 +4229,10 @@ export async function startServer() {
       newBalance,
       message: `Payment verified successfully! ₹${amount} added to your wallet.`
     };
+  } finally {
+    globalUtrLocks.delete(cleanUtr);
   }
+}
 
   // Confirm Payment & Auto Verify endpoint
   app.post("/api/deposits/submit-manual", async (req, res) => {
@@ -4089,99 +4488,17 @@ export async function startServer() {
   // ==========================================
   // BANK SMS PARSING ENGINE FOR AUTOMATIC UPI
   // ==========================================
-  function parseBankSms(smsText: string) {
+  function parseBankSms(smsText: string, sender: string = "") {
     if (!smsText || typeof smsText !== "string") return null;
-    const cleanText = smsText.replace(/\r\n/g, " ").replace(/\n/g, " ").trim();
-    const lower = cleanText.toLowerCase();
-
-    // Rejection check: Explicit debits, expenditures, or withdrawals
-    const isDebit = (
-      lower.includes("debited") || 
-      lower.includes("spent") || 
-      lower.includes("withdrawn") || 
-      lower.includes("sent to") ||
-      lower.includes("paid to") ||
-      lower.includes("purchase of") ||
-      lower.includes("transfer to") ||
-      lower.includes("debited from")
-    ) && !lower.includes("credited") && !lower.includes("received");
-
-    if (isDebit) {
-      return { isCredit: false, reason: "Debit transaction ignored" };
-    }
-
-    // Acceptance check: Credit, received, added, deposited
-    const isCredit = 
-      lower.includes("credit") || 
-      lower.includes("received") || 
-      lower.includes("deposited") || 
-      lower.includes("added to") ||
-      lower.includes("sent you") ||
-      lower.includes("payment of rs") ||
-      lower.includes("payment of inr") ||
-      lower.includes("payment of ₹") ||
-      lower.includes("has transferred") ||
-      lower.includes("transferred rs") ||
-      lower.includes("prapt") ||
-      lower.includes("jama") ||
-      lower.includes("aaye") ||
-      lower.includes("bheje") ||
-      lower.includes("khate me") ||
-      lower.includes("account") ||
-      lower.includes("upi");
-
-    if (!isCredit) {
-      return { isCredit: false, reason: "No payment credit keyword found in message" };
-    }
-
-    // Amount extraction
-    let amount = 0;
-    const amtPatterns = [
-      /(?:rs\.?|inr|₹)\s*([0-9]+(?:,[0-9]+)*(?:\.[0-9]{1,2})?)/i,
-      /(?:credited\s*(?:by|with)?|received|deposited|payment of)\s*(?:rs\.?|inr|₹)?\s*([0-9]+(?:,[0-9]+)*(?:\.[0-9]{1,2})?)/i,
-      /([0-9]+(?:,[0-9]+)*(?:\.[0-9]{1,2})?)\s*(?:rs\.?|inr|₹)\b/i
-    ];
-
-    for (const pat of amtPatterns) {
-      const match = cleanText.match(pat);
-      if (match && match[1]) {
-        const parsed = parseFloat(match[1].replace(/,/g, ""));
-        if (!isNaN(parsed) && parsed > 0) {
-          amount = parsed;
-          break;
-        }
-      }
-    }
-
-    // 12-digit UTR / UPI Ref ID extraction
-    let utr = "";
-    const specificUtrPatterns = [
-      /(?:upi\s*ref(?:\s*no|\s*id)?|ref(?:\s*no|\s*id)?|utr(?:\s*no|\s*id)?|rrn|upi\s*txn\s*id)[\s:/-]*([0-9]{12})\b/i,
-      /upi[\/:][\s]*([0-9]{12})\b/i,
-      /(?:upi\/|ref\s*#?|utr\s*#?)([0-9]{12})\b/i
-    ];
-
-    for (const pat of specificUtrPatterns) {
-      const match = cleanText.match(pat);
-      if (match && match[1]) {
-        utr = match[1];
-        break;
-      }
-    }
-
-    // Fallback: any standalone 12-digit sequence in a confirmed credit SMS
-    if (!utr) {
-      const fallbackMatch = cleanText.match(/\b([0-9]{12})\b/);
-      if (fallbackMatch && fallbackMatch[1]) {
-        utr = fallbackMatch[1];
-      }
-    }
-
+    const res = parseBankSmsFromService(smsText, sender);
     return {
-      isCredit: true,
-      amount,
-      utr,
-      valid: amount > 0 && utr.length === 12
+      isCredit: res.isValid,
+      amount: res.amount,
+      utr: res.utr,
+      bank: res.bank,
+      valid: res.isValid && res.amount > 0 && res.utr.length === 12,
+      isValid: res.isValid && res.amount > 0 && res.utr.length === 12,
+      reason: res.reason
     };
   }
 
@@ -5940,7 +6257,20 @@ export async function startServer() {
   }
 
   if (!process.env.VERCEL) {
-    app.listen(PORT, "0.0.0.0", () => console.log(`[READY] Server running on http://localhost:${PORT}`));
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`[READY] Server running on http://localhost:${PORT}`);
+      // Auto-start Telegram bot polling on startup if enabled
+      try {
+        initTelegramBotService();
+        startTelegramPolling().then((res) => {
+          console.log("[TELEGRAM-BOOT-AUTOSTART]", res.message);
+        }).catch((e) => {
+          console.warn("[TELEGRAM-BOOT-WARN]", e.message);
+        });
+      } catch (err: any) {
+        console.warn("[TELEGRAM-INIT-WARN]", err.message);
+      }
+    });
   }
 }
 

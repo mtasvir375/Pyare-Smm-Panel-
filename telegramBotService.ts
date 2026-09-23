@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import axios from "axios";
+import { setRestDoc, getRestDoc } from "./api/_firestoreRest";
 
 export interface BankAlert {
   id: string;
@@ -15,14 +16,30 @@ export interface BankAlert {
   usedAt?: string;
 }
 
+export interface RawBotMessage {
+  id: string;
+  timestamp: string;
+  sender: string;
+  chatId: string | number;
+  text: string;
+  parsed: boolean;
+  utr?: string;
+  amount?: number;
+  bank?: string;
+  reason?: string;
+}
+
 export interface TelegramBotConfig {
   botToken: string;
+  botUsername?: string;
   chatId?: string;
   enabled: boolean;
   lastUpdateId: number;
   startedAt?: string;
   lastPolledAt?: string;
   lastError?: string;
+  mode?: "polling" | "webhook";
+  webhookUrl?: string;
 }
 
 const ALERTS_FILE = path.join(process.cwd(), "bank_alerts.json");
@@ -30,6 +47,7 @@ const CONFIG_FILE = path.join(process.cwd(), "telegram_bot_config.json");
 
 // In-memory cache for ultra-fast zero-latency matching
 let memoryAlerts: BankAlert[] = [];
+let memoryRawMessages: RawBotMessage[] = [];
 let memoryConfig: TelegramBotConfig = {
   botToken: "",
   chatId: "",
@@ -38,6 +56,21 @@ let memoryConfig: TelegramBotConfig = {
 };
 let isPolling = false;
 let pollingAbortController: AbortController | null = null;
+let lastSuccessfulPollTime = Date.now();
+let watchdogInterval: NodeJS.Timeout | null = null;
+let currentLoopEpoch = 0;
+
+function recordIncomingMessage(entry: Omit<RawBotMessage, "id" | "timestamp">) {
+  const item: RawBotMessage = {
+    id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    timestamp: new Date().toISOString(),
+    ...entry
+  };
+  memoryRawMessages.unshift(item);
+  if (memoryRawMessages.length > 25) {
+    memoryRawMessages.pop();
+  }
+}
 
 // Initialize from disk
 export function initTelegramBotService() {
@@ -59,15 +92,26 @@ export function initTelegramBotService() {
     if (fs.existsSync(CONFIG_FILE)) {
       const data = fs.readFileSync(CONFIG_FILE, "utf-8");
       memoryConfig = { ...memoryConfig, ...JSON.parse(data) };
-    } else {
-      saveTelegramConfig(memoryConfig);
     }
   } catch (err: any) {
     console.warn("[TELEGRAM-SERVICE] Error reading telegram_bot_config.json:", err.message);
   }
 
-  // If bot was previously enabled with a token, resume polling automatically
-  if (memoryConfig.enabled && memoryConfig.botToken) {
+  // If memoryConfig token is empty or invalid (< 35 chars), sync from Firestore
+  if (!memoryConfig.botToken || memoryConfig.botToken.length < 35) {
+    getRestDoc("settings", "telegram_bot").then((tgDoc) => {
+      if (tgDoc && tgDoc.botToken && tgDoc.botToken.length >= 35) {
+        memoryConfig.botToken = tgDoc.botToken.replace(/\s+/g, "").trim();
+        memoryConfig.chatId = tgDoc.chatId || memoryConfig.chatId;
+        memoryConfig.enabled = tgDoc.enabled !== false;
+        saveTelegramConfig(memoryConfig);
+        console.log("[TELEGRAM-SERVICE] Restored bot token from Firestore settings/telegram_bot");
+        if (memoryConfig.enabled) {
+          startTelegramPolling().catch((e) => console.warn("[TELEGRAM-SERVICE] Auto-start error:", e.message));
+        }
+      }
+    }).catch(() => {});
+  } else if (memoryConfig.enabled && memoryConfig.botToken) {
     console.log("[TELEGRAM-SERVICE] Resuming Telegram bot polling from saved config...");
     startTelegramPolling().catch((e) => {
       console.warn("[TELEGRAM-SERVICE] Auto-start failed:", e.message);
@@ -123,22 +167,23 @@ export function parseBankSms(rawText: string, senderName?: string): {
   }
 
   // 1. Detect if debit message (ignore unless clearly credit)
-  const isDebit = /\b(debited|spent|withdrawn|sent\s+rs|paid\s+rs|transferred\s+to)\b/i.test(text);
-  const isCredit = /\b(credited|received|deposit|deposited|added|cr\b|payment\s+received|received\s+payment|jama|prapt)\b/i.test(text);
-  if (isDebit && !isCredit) {
+  // Ensure "transferred to your a/c" or "credited" is NOT mistaken for debit
+  const isExplicitDebit = /\b(debited\s+from|money\s+debited|debited\s+by|sent\s+to\s+[a-zA-Z]|paid\s+to\s+[a-zA-Z]|withdrawn\s+from)\b/i.test(text);
+  const isCredit = /\b(credited|credit|received|deposit|deposited|added|cr\.?|jama|prapt|transferred\s+to\s+your|transferred\s+from|transfer\s+from|payment\s+received|money\s+received|received\s+rs|rcvd\s+rs|rcvd|payment\s+of)\b/i.test(text);
+
+  if (isExplicitDebit && !isCredit) {
     return { utr: "", amount: 0, bank: "Unknown", isValid: false, reason: "Debit notification ignored" };
   }
 
   // 2. Extract 12-digit UTR / RRN
-  // Priority 1: Labelled UTR patterns
   let utr = "";
-  const utrPatterns = [
-    /(?:upi\s*ref(?:\s*no|\s*id)?|ref(?:\s*no|\s*id)?|utr(?:\s*no|\s*id)?|rrn|txn\s*id|txnid|upi\s*id|reference\s*no)[\s:/-]*([0-9]{12})\b/i,
-    /(?:upi\/|upi:\s*)([0-9]{12})\b/i,
+  const labelledUtrPatterns = [
+    /(?:upi\s*ref(?:\s*no|\s*id)?|ref(?:\s*no|\s*id)?|utr(?:\s*no|\s*id)?|rrn|txn\s*id|txnid|upi\s*id|reference\s*(?:no|num)?|upi\/|upi:\s*)[\s:/-]*([0-9]{12})\b/i,
+    /(?:imps|neft|rtgs|cms)[\s:/-]*([0-9]{12})\b/i,
     /\b([0-9]{12})\b/
   ];
 
-  for (const pat of utrPatterns) {
+  for (const pat of labelledUtrPatterns) {
     const m = text.match(pat);
     if (m && m[1]) {
       utr = m[1];
@@ -153,18 +198,35 @@ export function parseBankSms(rawText: string, senderName?: string): {
   // 3. Extract Amount in INR
   let amount = 0;
   const amountPatterns = [
-    /(?:credited\s*(?:by|with)?|received|deposited|payment\s*of)\s*(?:rs\.?|inr|₹)?\s*([0-9]+(?:,[0-9]+)*(?:\.[0-9]{1,2})?)/i,
     /(?:rs\.?|inr|₹)\s*([0-9]+(?:,[0-9]+)*(?:\.[0-9]{1,2})?)/i,
-    /([0-9]+(?:,[0-9]+)*(?:\.[0-9]{1,2})?)\s*(?:rs\.?|inr|₹)\b/i
+    /([0-9]+(?:,[0-9]+)*(?:\.[0-9]{1,2})?)\s*(?:rs\.?|inr|₹)\b/i,
+    /(?:credited|received|deposited|deposit|added|payment\s+of|amt|amount|paid)\s*(?:by|with|for|of|is|:)?\s*(?:rs\.?|inr|₹)?\s*([0-9]+(?:,[0-9]+)*(?:\.[0-9]{1,2})?)/i,
+    /transferred\s*(?:rs\.?|inr|₹)?\s*([0-9]+(?:,[0-9]+)*(?:\.[0-9]{1,2})?)/i
   ];
 
   for (const pat of amountPatterns) {
     const m = text.match(pat);
     if (m && m[1]) {
       const cleanNum = parseFloat(m[1].replace(/,/g, ""));
-      if (!isNaN(cleanNum) && cleanNum > 0) {
+      if (!isNaN(cleanNum) && cleanNum > 0 && cleanNum !== parseFloat(utr)) {
         amount = cleanNum;
         break;
+      }
+    }
+  }
+
+  // Fallback: If no currency prefix/suffix was used, extract any standalone number (1 to 6 digits) that is not the UTR
+  if (!amount || amount <= 0) {
+    const remainingText = text.replace(new RegExp(utr, "g"), " ");
+    const genericMatches = remainingText.match(/\b([1-9][0-9]{0,5}(?:\.[0-9]{1,2})?)\b/g);
+    if (genericMatches) {
+      for (const numStr of genericMatches) {
+        const num = parseFloat(numStr);
+        // Exclude 4-digit years
+        if (num >= 1 && num <= 200000 && num !== 2024 && num !== 2025 && num !== 2026 && num !== 2027) {
+          amount = num;
+          break;
+        }
       }
     }
   }
@@ -178,6 +240,7 @@ export function parseBankSms(rawText: string, senderName?: string): {
   const upperText = `${text} ${senderName || ""}`.toUpperCase();
 
   if (upperText.includes("SBI") || upperText.includes("STATE BANK")) bank = "State Bank of India (SBI)";
+  else if (upperText.includes("CENTBK") || upperText.includes("CENTRAL BANK") || upperText.includes("CBOI") || upperText.includes("CBOL")) bank = "Central Bank of India";
   else if (upperText.includes("HDFC")) bank = "HDFC Bank";
   else if (upperText.includes("ICICI")) bank = "ICICI Bank";
   else if (upperText.includes("PAYTM") || upperText.includes("PYTM")) bank = "Paytm Payments Bank";
@@ -237,6 +300,23 @@ export function addBankAlert(params: {
     memoryAlerts = memoryAlerts.slice(0, 500);
   }
   saveBankAlerts(memoryAlerts);
+
+  // Sync to Firestore collections in background so website sees it under any domain / environment
+  try {
+    setRestDoc("bank_alerts", cleanUtr, newAlert).catch((err: any) => {
+      console.warn("[FIRESTORE-REST-ALERT-SYNC-WARN]", err.message);
+    });
+    setRestDoc("sms_forwarder_pool", cleanUtr, {
+      utr: cleanUtr,
+      amount: newAlert.amount,
+      sender: newAlert.senderBank,
+      rawSms: newAlert.rawText,
+      timestamp: newAlert.timestamp,
+      status: "available"
+    }).catch(() => {});
+  } catch (syncErr) {
+    // Non-blocking
+  }
 
   console.log(`[TELEGRAM-ALERT-SAVED] UTR: ${cleanUtr} | Amount: ₹${newAlert.amount} | Bank: ${newAlert.senderBank}`);
   return { success: true, alert: newAlert };
@@ -299,82 +379,407 @@ export function verifyAndClaimAlert(
 /**
  * Send an acknowledgment message to Telegram chat
  */
-async function sendTelegramReply(botToken: string, chatId: string | number, text: string) {
+export async function sendTelegramReply(botToken: string, chatId: string | number, text: string) {
+  if (!chatId) return;
   try {
-    await axios.post(
-      `https://api.telegram.org/bot${botToken}/sendMessage`,
-      {
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      try { controller.abort(); } catch {}
+    }, 6000);
+
+    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Connection": "close"
+      },
+      body: JSON.stringify({
         chat_id: chatId,
         text,
         parse_mode: "HTML"
-      },
-      { timeout: 5000 }
-    );
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timer);
   } catch (err: any) {
     console.warn("[TELEGRAM-SERVICE] Failed to send Telegram reply:", err.message);
   }
 }
 
+interface PartialMessageState {
+  utr?: string;
+  amount?: number;
+  bank?: string;
+  rawText?: string;
+  senderName?: string;
+  timestamp: number;
+}
+const partialMessageByChat = new Map<string, PartialMessageState>();
+
+function extractAmountOnly(text: string): number {
+  const amountPatterns = [
+    /(?:rs\.?|inr|₹)\s*([0-9]+(?:,[0-9]+)*(?:\.[0-9]{1,2})?)/i,
+    /([0-9]+(?:,[0-9]+)*(?:\.[0-9]{1,2})?)\s*(?:rs\.?|inr|₹)\b/i,
+    /(?:credited|received|deposited|deposit|added|payment\s+of|amt|amount|paid)\s*(?:by|with|for|of|is|:)?\s*(?:rs\.?|inr|₹)?\s*([0-9]+(?:,[0-9]+)*(?:\.[0-9]{1,2})?)/i,
+    /transferred\s*(?:rs\.?|inr|₹)?\s*([0-9]+(?:,[0-9]+)*(?:\.[0-9]{1,2})?)/i
+  ];
+  for (const pat of amountPatterns) {
+    const m = text.match(pat);
+    if (m && m[1]) {
+      const clean = parseFloat(m[1].replace(/,/g, ""));
+      if (!isNaN(clean) && clean > 0) return clean;
+    }
+  }
+  return 0;
+}
+
+function extractBankOnly(text: string, senderName?: string): string {
+  const upper = `${text} ${senderName || ""}`.toUpperCase();
+  if (upper.includes("SBI") || upper.includes("STATE BANK")) return "State Bank of India (SBI)";
+  if (upper.includes("CENTBK") || upper.includes("CENTRAL BANK") || upper.includes("CBOI") || upper.includes("CBOL")) return "Central Bank of India";
+  if (upper.includes("HDFC")) return "HDFC Bank";
+  if (upper.includes("ICICI")) return "ICICI Bank";
+  if (upper.includes("PAYTM") || upper.includes("PYTM")) return "Paytm Payments Bank";
+  if (upper.includes("PHONEPE")) return "PhonePe UPI";
+  if (upper.includes("GPAY") || upper.includes("GOOGLE PAY")) return "Google Pay";
+  if (upper.includes("AXIS")) return "Axis Bank";
+  if (upper.includes("KOTAK")) return "Kotak Mahindra Bank";
+  if (upper.includes("BOB") || upper.includes("BARODA")) return "Bank of Baroda";
+  if (upper.includes("PNB") || upper.includes("PUNJAB")) return "Punjab National Bank";
+  if (upper.includes("CANARA")) return "Canara Bank";
+  if (upper.includes("UNION")) return "Union Bank of India";
+  if (upper.includes("INDUSIND")) return "IndusInd Bank";
+  return "UPI Payment";
+}
+
 /**
- * Telegram Long-Polling Loop
+ * Unified Telegram update processor used by BOTH polling AND webhooks
  */
-export async function startTelegramPolling(): Promise<{ success: boolean; message: string }> {
-  if (isPolling) {
-    return { success: true, message: "Telegram bot is already running." };
+export async function processTelegramUpdate(update: any, token: string): Promise<{
+  success: boolean;
+  isCommand?: boolean;
+  alert?: BankAlert;
+  duplicate?: boolean;
+  parsed?: any;
+  reason?: string;
+}> {
+  if (!update || typeof update !== "object") {
+    return { success: false, reason: "Invalid update payload" };
   }
 
+  const msg = update.message || update.channel_post || update.edited_message || update.business_message;
+  if (!msg) {
+    return { success: false, reason: "No message in update" };
+  }
+
+  const text = String(msg.text || msg.caption || "").trim();
+  const senderName = msg.from
+    ? `${msg.from.first_name || ""} ${msg.from.last_name || ""}`.trim() || msg.from.username || "User"
+    : (msg.chat?.title || "Channel/Group");
+  const chatId = msg.chat?.id;
+
+  if (!text) {
+    return { success: false, reason: "Message has no text or caption" };
+  }
+
+  console.log(`[TELEGRAM-MSG-IN] From: ${senderName} (Chat: ${chatId}): "${text.replace(/\n/g, " ")}"`);
+
+  // Handle /start, /status, /help commands
+  if (text === "/start" || text === "/status" || text.startsWith("/start ") || text === "/help") {
+    const total = memoryAlerts.length;
+    const unused = memoryAlerts.filter((a) => !a.isUsed).length;
+    recordIncomingMessage({
+      sender: senderName,
+      chatId: chatId || "",
+      text,
+      parsed: true,
+      reason: "Command /start executed"
+    });
+
+    await sendTelegramReply(
+      token,
+      chatId,
+      `🤖 <b>Pyare SMM Panel UPI Payment Bot is Active!</b>\n\n` +
+      `Forward any Indian Bank SMS or UPI payment notification into this chat.\n\n` +
+      `📊 <b>Live Database Stats:</b>\n` +
+      `• Total Recorded Alerts: <b>${total}</b>\n` +
+      `• Unused & Ready to Claim: <b>${unused}</b>\n\n` +
+      `<i>Format Tip: Forward the SMS from your bank (e.g. SBI, HDFC, ICICI, Central Bank, Paytm, PhonePe, GPay). As soon as the 12-digit UTR is detected, it will be added to the website!</i>`
+    );
+    return { success: true, isCommand: true };
+  }
+
+  // Parse Bank SMS
+  let parsed = parseBankSms(text, senderName);
+  const chatKey = String(chatId || "");
+
+  // Multi-part / Split SMS Handler (e.g. UTR in one message, amount in another)
+  const pending = partialMessageByChat.get(chatKey);
+  const isPendingValid = pending && (Date.now() - pending.timestamp < 180000);
+
+  const standaloneUtrMatch = text.replace(/[\s\-_]/g, "").match(/\b([0-9]{12})\b/);
+  const detectedUtr = standaloneUtrMatch ? standaloneUtrMatch[1] : (parsed.utr || "");
+
+  if (detectedUtr && (!parsed.isValid || parsed.amount <= 0)) {
+    if (isPendingValid && pending.amount && pending.amount > 0) {
+      console.log(`[TELEGRAM-STITCH] Merging UTR ${detectedUtr} with pending amount ₹${pending.amount} from chat ${chatKey}`);
+      parsed = {
+        utr: detectedUtr,
+        amount: pending.amount,
+        bank: pending.bank || "UPI Payment",
+        isValid: true
+      };
+      partialMessageByChat.delete(chatKey);
+    } else {
+      partialMessageByChat.set(chatKey, {
+        utr: detectedUtr,
+        senderName,
+        timestamp: Date.now()
+      });
+      console.log(`[TELEGRAM-PARTIAL] Saved partial UTR ${detectedUtr} for chat ${chatKey}. Waiting for payment SMS...`);
+      recordIncomingMessage({
+        sender: senderName,
+        chatId: chatId || "",
+        text,
+        parsed: false,
+        reason: `12-digit UTR ${detectedUtr} saved. Waiting for amount SMS.`
+      });
+      if (chatId) {
+        await sendTelegramReply(
+          token,
+          chatId,
+          `⏳ <b>12-digit UTR Detected:</b> <code>${detectedUtr}</code>\n\n` +
+          `Waiting for payment amount SMS. Forward the bank notification or send the amount (e.g. ₹100).`
+        );
+      }
+      return { success: true, reason: "Partial UTR saved" };
+    }
+  } else if (!parsed.isValid && parsed.reason === "No 12-digit UTR found") {
+    const amountOnly = extractAmountOnly(text);
+    const bankOnly = extractBankOnly(text, senderName);
+    if (amountOnly > 0) {
+      if (isPendingValid && pending.utr) {
+        console.log(`[TELEGRAM-STITCH] Merging amount ₹${amountOnly} with pending UTR ${pending.utr} from chat ${chatKey}`);
+        parsed = {
+          utr: pending.utr,
+          amount: amountOnly,
+          bank: bankOnly,
+          isValid: true
+        };
+        partialMessageByChat.delete(chatKey);
+      } else {
+        partialMessageByChat.set(chatKey, {
+          amount: amountOnly,
+          bank: bankOnly,
+          rawText: text,
+          senderName,
+          timestamp: Date.now()
+        });
+        console.log(`[TELEGRAM-PARTIAL] Saved partial Amount ₹${amountOnly} (${bankOnly}) for chat ${chatKey}. Waiting for 12-digit UTR...`);
+        recordIncomingMessage({
+          sender: senderName,
+          chatId: chatId || "",
+          text,
+          parsed: false,
+          reason: `Amount ₹${amountOnly} saved. Waiting for 12-digit UTR.`
+        });
+        if (chatId) {
+          await sendTelegramReply(
+            token,
+            chatId,
+            `⏳ <b>Payment Amount Detected:</b> ₹${amountOnly} (${bankOnly})\n\n` +
+            `Please forward or type the <b>12-digit UPI UTR number</b> to complete and add to website.`
+          );
+        }
+        return { success: true, reason: "Partial Amount saved" };
+      }
+    }
+  }
+
+  if (parsed.isValid && parsed.utr && parsed.amount > 0) {
+    partialMessageByChat.delete(chatKey);
+    const result = addBankAlert({
+      utr: parsed.utr,
+      amount: parsed.amount,
+      senderBank: parsed.bank,
+      rawText: text
+    });
+
+    recordIncomingMessage({
+      sender: senderName,
+      chatId: chatId || "",
+      text,
+      parsed: true,
+      utr: parsed.utr,
+      amount: parsed.amount,
+      bank: parsed.bank
+    });
+
+    if (result.success && result.alert) {
+      console.log(`[TELEGRAM-SMS-SAVED] UTR: ${parsed.utr}, Amount: ₹${parsed.amount}, Bank: ${parsed.bank}`);
+      await sendTelegramReply(
+        token,
+        chatId,
+        `✅ <b>Payment Alert Captured on Website!</b>\n\n` +
+        `💰 <b>Amount:</b> ₹${parsed.amount}\n` +
+        `🔢 <b>UTR / Ref:</b> <code>${parsed.utr}</code>\n` +
+        `🏦 <b>Bank:</b> ${parsed.bank}\n` +
+        `🟢 <b>Status:</b> Added to website database & ready for instant wallet claim.`
+      );
+      return { success: true, alert: result.alert, parsed };
+    } else if (result.duplicate) {
+      console.log(`[TELEGRAM-SMS-DUPLICATE] UTR: ${parsed.utr} already exists.`);
+      await sendTelegramReply(
+        token,
+        chatId,
+        `ℹ️ <b>Duplicate SMS:</b> UTR <code>${parsed.utr}</code> (₹${parsed.amount}) is already recorded in the website database.`
+      );
+      return { success: true, duplicate: true, parsed };
+    }
+  } else {
+    console.log(`[TELEGRAM-SMS-PARSE-FAIL] Reason: ${parsed.reason} | Text: "${text.slice(0, 80)}"`);
+    recordIncomingMessage({
+      sender: senderName,
+      chatId: chatId || "",
+      text,
+      parsed: false,
+      reason: parsed.reason || "Missing 12-digit UTR or amount"
+    });
+
+    if (chatId) {
+      await sendTelegramReply(
+        token,
+        chatId,
+        `⚠️ <b>Payment details not detected:</b>\n` +
+        `${parsed.reason || "Could not detect 12-digit UTR or amount."}\n\n` +
+        `<i>Make sure the message contains:</i>\n` +
+        `1. 12-digit UPI UTR / Ref No (e.g. 426819284918)\n` +
+        `2. Amount (e.g. ₹100 or Rs. 100)`
+      );
+    }
+    return { success: false, reason: parsed.reason, parsed };
+  }
+
+  return { success: false };
+}
+
+/**
+ * Telegram Long-Polling Loop with Fetch, Watchdog & Strict Epoch Cancellation
+ */
+export async function startTelegramPolling(): Promise<{ success: boolean; message: string }> {
   const token = memoryConfig.botToken.replace(/\s+/g, "").trim();
   if (!token) {
     return { success: false, message: "Bot token is missing. Please provide a valid Telegram Bot Token from @BotFather." };
   }
 
+  // Cancel any running loops by incrementing epoch and aborting previous controller
+  currentLoopEpoch++;
+  const thisEpoch = currentLoopEpoch;
+
+  if (pollingAbortController) {
+    try { pollingAbortController.abort(); } catch {}
+    pollingAbortController = null;
+  }
+  isPolling = false;
+
   // Verify token via getMe
   try {
-    const meRes = await axios.get(`https://api.telegram.org/bot${token}/getMe`, { timeout: 8000 });
-    if (!meRes.data || !meRes.data.ok) {
-      const errMsg = meRes.data?.description || "Invalid Telegram Bot Token";
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 8000);
+    const meRes = await fetch(`https://api.telegram.org/bot${token}/getMe`, {
+      headers: { "Connection": "close" },
+      signal: controller.signal
+    });
+    clearTimeout(t);
+    const meData: any = await meRes.json().catch(() => ({}));
+
+    if (!meData || !meData.ok) {
+      const errMsg = meData?.description || "Invalid Telegram Bot Token";
       saveTelegramConfig({ lastError: errMsg });
       return { success: false, message: `Telegram Error: ${errMsg}. Please verify your bot token with @BotFather.` };
     }
-    console.log(`[TELEGRAM-SERVICE] Bot authenticated successfully as @${meRes.data.result.username}`);
+    const botUser = meData.result?.username || "";
+    console.log(`[TELEGRAM-SERVICE] Bot authenticated successfully as @${botUser}`);
+    saveTelegramConfig({
+      lastError: undefined,
+      botUsername: botUser
+    });
   } catch (netErr: any) {
-    const desc = netErr.response?.data?.description;
-    const msg = desc 
-      ? `Telegram Error: ${desc}. Please verify your token from @BotFather.`
-      : (netErr.message || "Failed to reach Telegram API");
+    const msg = netErr.message || "Failed to reach Telegram API";
     saveTelegramConfig({ lastError: msg });
     return { success: false, message: msg };
   }
 
+  // Clear any active webhook so Telegram getUpdates works cleanly
+  try {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 8000);
+    await fetch(`https://api.telegram.org/bot${token}/deleteWebhook`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Connection": "close" },
+      body: JSON.stringify({ drop_pending_updates: false }),
+      signal: controller.signal
+    });
+    clearTimeout(t);
+    console.log("[TELEGRAM-SERVICE] Telegram webhook cleared successfully for polling.");
+  } catch (delErr: any) {
+    console.warn("[TELEGRAM-SERVICE] deleteWebhook notice:", delErr.message);
+  }
+
   isPolling = true;
+  lastSuccessfulPollTime = Date.now();
   saveTelegramConfig({
     enabled: true,
     startedAt: new Date().toISOString(),
-    lastError: undefined
+    lastPolledAt: new Date().toISOString(),
+    lastError: undefined,
+    mode: "polling"
   });
 
   pollingAbortController = new AbortController();
 
-  // Run polling loop asynchronously
+  // Polling loop with strictly 1 active loop per epoch
   (async () => {
-    console.log("[TELEGRAM-SERVICE] Telegram polling loop started.");
+    console.log(`[TELEGRAM-SERVICE] Telegram polling loop started (epoch: ${thisEpoch}) with native fetch.`);
     let consecutiveErrors = 0;
 
-    while (isPolling) {
+    while (isPolling && thisEpoch === currentLoopEpoch) {
       try {
         const offset = (memoryConfig.lastUpdateId || 0) + 1;
-        const url = `https://api.telegram.org/bot${token}/getUpdates?offset=${offset}&timeout=20`;
+        const url = `https://api.telegram.org/bot${token}/getUpdates?offset=${offset}&timeout=8&allowed_updates=["message","channel_post","edited_message","business_message"]`;
 
-        const res = await axios.get(url, {
-          timeout: 30000,
-          signal: pollingAbortController?.signal
-        });
+        const reqAbort = new AbortController();
+        const pollTimer = setTimeout(() => {
+          try { reqAbort.abort(); } catch {}
+        }, 12000);
+
+        let resJson: any = null;
+        try {
+          const resp = await fetch(url, {
+            method: "GET",
+            headers: { "Connection": "close" },
+            signal: reqAbort.signal
+          });
+          clearTimeout(pollTimer);
+
+          if (resp.ok) {
+            resJson = await resp.json();
+          } else {
+            const errBody: any = await resp.json().catch(() => ({}));
+            throw new Error(errBody?.description || `HTTP ${resp.status}`);
+          }
+        } finally {
+          clearTimeout(pollTimer);
+        }
+
+        if (thisEpoch !== currentLoopEpoch || !isPolling) break;
 
         consecutiveErrors = 0;
-        saveTelegramConfig({ lastPolledAt: new Date().toISOString() });
+        lastSuccessfulPollTime = Date.now();
+        saveTelegramConfig({ lastPolledAt: new Date().toISOString(), lastError: undefined });
 
-        if (res.data && res.data.ok && Array.isArray(res.data.result)) {
-          const updates = res.data.result;
+        if (resJson && resJson.ok && Array.isArray(resJson.result)) {
+          const updates = resJson.result;
 
           for (const update of updates) {
             if (update.update_id > (memoryConfig.lastUpdateId || 0)) {
@@ -382,91 +787,159 @@ export async function startTelegramPolling(): Promise<{ success: boolean; messag
               saveTelegramConfig({ lastUpdateId: update.update_id });
             }
 
-            // Extract message or channel_post
-            const msg = update.message || update.channel_post || update.edited_message;
-            if (!msg) continue;
-
-            const text = msg.text || msg.caption || "";
-            const senderName = msg.from ? `${msg.from.first_name || ""} ${msg.from.last_name || ""}` : "";
-            const chatId = msg.chat?.id;
-
-            if (text) {
-              // Check for /start or /status command
-              if (text.trim() === "/start" || text.trim() === "/status") {
-                const total = memoryAlerts.length;
-                const unused = memoryAlerts.filter((a) => !a.isUsed).length;
-                await sendTelegramReply(
-                  token,
-                  chatId,
-                  `🤖 <b>SMM Panel UPI Payment Bot is Active!</b>\n\n` +
-                  `Forward any Bank SMS or UPI payment notification into this chat.\n` +
-                  `📊 <b>Stats:</b>\n` +
-                  `• Total Alerts: ${total}\n` +
-                  `• Available (Unused): ${unused}\n\n` +
-                  `When users enter the 12-digit UTR on the website, their wallet will be credited instantly!`
-                );
-                continue;
-              }
-
-              // Parse as bank SMS
-              const parsed = parseBankSms(text, senderName);
-              if (parsed.isValid && parsed.utr && parsed.amount > 0) {
-                const result = addBankAlert({
-                  utr: parsed.utr,
-                  amount: parsed.amount,
-                  senderBank: parsed.bank,
-                  rawText: text
-                });
-
-                if (result.success && result.alert) {
-                  await sendTelegramReply(
-                    token,
-                    chatId,
-                    `✅ <b>Payment Alert Captured!</b>\n\n` +
-                    `💰 <b>Amount:</b> ₹${parsed.amount}\n` +
-                    `🔢 <b>UTR / Ref:</b> <code>${parsed.utr}</code>\n` +
-                    `🏦 <b>Bank:</b> ${parsed.bank}\n` +
-                    `🟢 <b>Status:</b> Ready for instant wallet claim.`
-                  );
-                } else if (result.duplicate) {
-                  await sendTelegramReply(
-                    token,
-                    chatId,
-                    `ℹ️ <b>Duplicate SMS:</b> UTR <code>${parsed.utr}</code> (₹${parsed.amount}) is already recorded in the database.`
-                  );
-                }
-              }
-            }
+            // Process via unified pipeline
+            await processTelegramUpdate(update, token);
           }
         }
       } catch (err: any) {
-        if (!isPolling) break; // User stopped the bot
+        if (!isPolling || thisEpoch !== currentLoopEpoch) break;
+
+        const errMsg = err.message || "Polling error";
+
+        // Abort errors from normal timeout are benign
+        if (err.name === "AbortError" || errMsg.includes("aborted")) {
+          lastSuccessfulPollTime = Date.now();
+          saveTelegramConfig({ lastPolledAt: new Date().toISOString(), lastError: undefined });
+          continue;
+        }
 
         consecutiveErrors++;
-        const errMsg = err.response?.data?.description || err.message;
-        console.warn(`[TELEGRAM-POLLING-ERROR] #${consecutiveErrors}:`, errMsg);
+        console.warn(`[TELEGRAM-POLL-NOTICE] #${consecutiveErrors}:`, errMsg);
+
+        // Auto-heal 409 Conflict: wait 4 seconds before retrying so stale connection closes
+        if (errMsg && (errMsg.toLowerCase().includes("deletewebhook") || errMsg.toLowerCase().includes("conflict"))) {
+          console.log("[TELEGRAM-SERVICE] 409 Conflict detected. Deleting webhook & waiting 4s...");
+          try {
+            await fetch(`https://api.telegram.org/bot${token}/deleteWebhook`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Connection": "close" },
+              body: JSON.stringify({ drop_pending_updates: false })
+            });
+          } catch {}
+          saveTelegramConfig({ lastError: "Conflict: Waiting for other connection to close..." });
+          await new Promise((r) => setTimeout(r, 4000));
+          continue;
+        }
 
         saveTelegramConfig({ lastError: errMsg });
 
-        // Exponential backoff up to 15s
-        const sleepMs = Math.min(2000 * consecutiveErrors, 15000);
+        const sleepMs = Math.min(2000 * consecutiveErrors, 10000);
         await new Promise((r) => setTimeout(r, sleepMs));
       }
     }
 
-    console.log("[TELEGRAM-SERVICE] Telegram polling loop terminated.");
+    console.log(`[TELEGRAM-SERVICE] Telegram polling loop terminated (epoch: ${thisEpoch}).`);
   })();
+
+  // Setup Watchdog to prevent loop stalls
+  if (!watchdogInterval) {
+    watchdogInterval = setInterval(() => {
+      if (isPolling && memoryConfig.mode !== "webhook") {
+        const inactiveMs = Date.now() - lastSuccessfulPollTime;
+        if (inactiveMs > 35000) {
+          console.warn(`[TELEGRAM-WATCHDOG] Polling loop inactive for ${Math.round(inactiveMs / 1000)}s. Reviving...`);
+          try {
+            pollingAbortController?.abort();
+          } catch {}
+          startTelegramPolling().catch((e) => console.error("[WATCHDOG-RESTART-ERROR]", e.message));
+        }
+      }
+    }, 15000);
+  }
 
   return { success: true, message: "Telegram bot polling started successfully." };
 }
 
+export async function clearTelegramWebhook(token?: string): Promise<{ success: boolean; message: string }> {
+  const activeToken = (token || memoryConfig.botToken || "").replace(/\s+/g, "").trim();
+  if (!activeToken) {
+    return { success: false, message: "No bot token provided." };
+  }
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${activeToken}/deleteWebhook`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Connection": "close" },
+      body: JSON.stringify({ drop_pending_updates: false })
+    });
+    const data: any = await res.json().catch(() => ({}));
+    if (data?.ok) {
+      saveTelegramConfig({ lastError: undefined, mode: "polling" });
+      return { success: true, message: "Webhook deleted successfully! Bot can now use getUpdates polling." };
+    }
+    return { success: false, message: data?.description || "Failed to delete webhook" };
+  } catch (err: any) {
+    return { success: false, message: err.message };
+  }
+}
+
+export async function setTelegramWebhook(webhookUrl: string, token?: string): Promise<{ success: boolean; message: string }> {
+  const activeToken = (token || memoryConfig.botToken || "").replace(/\s+/g, "").trim();
+  if (!activeToken) {
+    return { success: false, message: "No bot token provided." };
+  }
+  if (!webhookUrl || !webhookUrl.startsWith("https://")) {
+    return { success: false, message: "Webhook URL must be a valid HTTPS URL." };
+  }
+
+  // Stop polling first so webhook takes over cleanly
+  stopTelegramPolling();
+
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${activeToken}/setWebhook`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Connection": "close" },
+      body: JSON.stringify({
+        url: webhookUrl,
+        allowed_updates: ["message", "channel_post", "edited_message", "business_message"],
+        drop_pending_updates: false
+      })
+    });
+    const data: any = await res.json().catch(() => ({}));
+    if (data?.ok) {
+      saveTelegramConfig({
+        mode: "webhook",
+        webhookUrl,
+        lastError: undefined,
+        enabled: true
+      });
+      console.log(`[TELEGRAM-SERVICE] Webhook set successfully to ${webhookUrl}`);
+      return { success: true, message: `Webhook set successfully to ${webhookUrl}! Telegram will now push SMS instantly to your website.` };
+    }
+    return { success: false, message: data?.description || "Failed to set webhook." };
+  } catch (err: any) {
+    return { success: false, message: err.message };
+  }
+}
+
+export async function getTelegramWebhookInfo(token?: string): Promise<{ success: boolean; info?: any; message?: string }> {
+  const activeToken = (token || memoryConfig.botToken || "").replace(/\s+/g, "").trim();
+  if (!activeToken) {
+    return { success: false, message: "No bot token provided." };
+  }
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${activeToken}/getWebhookInfo`);
+    const data: any = await res.json().catch(() => ({}));
+    if (data?.ok) {
+      return { success: true, info: data.result };
+    }
+    return { success: false, message: data?.description || "Failed to fetch webhook info." };
+  } catch (err: any) {
+    return { success: false, message: err.message };
+  }
+}
+
 export function stopTelegramPolling(): { success: boolean; message: string } {
+  currentLoopEpoch++;
   isPolling = false;
   if (pollingAbortController) {
     try {
       pollingAbortController.abort();
     } catch (e) {}
     pollingAbortController = null;
+  }
+  if (watchdogInterval) {
+    clearInterval(watchdogInterval);
+    watchdogInterval = null;
   }
   saveTelegramConfig({ enabled: false });
   console.log("[TELEGRAM-SERVICE] Stopped Telegram bot polling.");
@@ -485,17 +958,24 @@ export function getTelegramStatus() {
     maskedToken = "******";
   }
 
+  const lastPolledAgeSeconds = memoryConfig.lastPolledAt 
+    ? Math.max(0, Math.round((Date.now() - new Date(memoryConfig.lastPolledAt).getTime()) / 1000))
+    : null;
+
   return {
     running: isPolling,
     enabled: memoryConfig.enabled,
     hasToken: !!rawToken,
     maskedToken,
+    botUsername: memoryConfig.botUsername || "",
     chatId: memoryConfig.chatId || "",
     startedAt: memoryConfig.startedAt,
     lastPolledAt: memoryConfig.lastPolledAt,
+    lastPolledAgeSeconds,
     lastError: memoryConfig.lastError,
     totalAlertsCount: totalAlerts,
-    unusedAlertsCount: unusedAlerts
+    unusedAlertsCount: unusedAlerts,
+    recentMessages: memoryRawMessages
   };
 }
 

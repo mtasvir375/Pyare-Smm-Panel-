@@ -1,1 +1,113 @@
-[]
+[
+  {
+    "id": "alert_531588143987_1790165992385",
+    "utr": "531588143987",
+    "amount": 1.01,
+    "senderBank": "Central Bank of India",
+    "rawText": "From : AX-CENTBK-T()\nA/c XX0953 credited by Rs. 1.01 on 23092026 via UPI from Mr MD SAUD ALAM           via Ref No. 531588143987. -CBoI",
+    "timestamp": "2026-09-23T12:19:52.385Z",
+    "isUsed": true,
+    "usedBy": "test_user_race_1",
+    "usedByEmail": "race1@test.com",
+    "usedAt": "2026-09-23T12:37:21.407Z"
+  },
+  {
+    "id": "alert_977640245738_1790164994604",
+    "utr": "977640245738",
+    "amount": 1.01,
+    "senderBank": "Central Bank of India",
+    "rawText": "From : AX-CENTBK-T()\nA/c XX0953 credited by Rs. 1.01 on 23092026 via UPI from Mr MD SAUD ALAM           via Ref No. 977640245738. -CBoI",
+    "timestamp": "2026-09-23T12:03:14.604Z",
+    "isUsed": true,
+    "usedBy": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+    "usedByEmail": "mtasvir375@gmail.com",
+    "usedAt": "2026-09-23T12:23:15.515Z"
+  },
+  {
+    "id": "alert_118233445966_1790161517494",
+    "utr": "118233445966",
+    "amount": 59770,
+    "senderBank": "Central Bank of India",
+    "rawText": "✅ Payment Alert Captured on Website!\n\n💰 Amount: ₹59770\n🔢 UTR / Ref: 118233445966\n🏦 Bank: Central Bank of India\n🟢 Status: Added to website database & ready for instant wallet claim.",
+    "timestamp": "2026-09-23T11:05:17.494Z",
+    "isUsed": true,
+    "usedBy": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+    "usedByEmail": "mtasvir375@gmail.com",
+    "usedAt": "2026-09-23T12:32:03.878Z"
+  },
+  {
+    "id": "alert_131260518980_1790100411154",
+    "utr": "131260518980",
+    "amount": 1,
+    "senderBank": "Central Bank of India",
+    "rawText": "From : AD-CENTBK-T()\nA/c XX0953 credited by Rs. 1.00 on 22092026 via UPI from Mr MD SAUD ALAM           via Ref No. 131260518980. -CBoI",
+    "timestamp": "2026-09-22T18:06:51.154Z",
+    "isUsed": false
+  },
+  {
+    "id": "alert_131468518980_1790100402505",
+    "utr": "131468518980",
+    "amount": 1,
+    "senderBank": "Central Bank of India",
+    "rawText": "From : AD-CENTBK-T()\nA/c XX0953 credited by Rs. 1.00 on 22092026 via UPI from Mr MD SAUD ALAM           via Ref No. 131468518980. -CBoI",
+    "timestamp": "2026-09-22T18:06:42.505Z",
+    "isUsed": false
+  },
+  {
+    "id": "alert_350720051042_1790100352388",
+    "utr": "350720051042",
+    "amount": 50,
+    "senderBank": "Central Bank of India",
+    "rawText": "From : AD-CENTBK-T()\nA/c XX0953 credited by Rs. 50.00 on 22092026 via UPI from Mr MD SAUD ALAM via Ref No. 350720051042. -CBoI",
+    "timestamp": "2026-09-22T18:05:52.388Z",
+    "isUsed": true,
+    "usedBy": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+    "usedByEmail": "mtasvir375@gmail.com",
+    "usedAt": "2026-09-23T12:31:38.591Z"
+  },
+  {
+    "id": "alert_363577704861_1790099665043",
+    "utr": "363577704861",
+    "amount": 2,
+    "senderBank": "Central Bank of India",
+    "rawText": "From : AD-CENTBK-T()\nA/c XX0953 credited by Rs. 2.00 on 22092026 via UPI from Mr MD SAUD ALAM           via Ref No. 363577704861. -CBoI",
+    "timestamp": "2026-09-22T17:54:25.043Z",
+    "isUsed": true,
+    "usedBy": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+    "usedByEmail": "mtasvir375@gmail.com",
+    "usedAt": "2026-09-22T17:58:08.787Z"
+  },
+  {
+    "id": "alert_131460518980_1790099080000",
+    "utr": "131460518980",
+    "amount": 1,
+    "senderBank": "Central Bank of India",
+    "rawText": "From : AD-CENTBK-T()\nA/c XX0953 credited by Rs. 1.00 on 22092026 via UPI from Mr MD SAUD ALAM via Ref No. 131460518980. -CBol",
+    "timestamp": "2026-09-22T17:40:00.000Z",
+    "isUsed": false
+  },
+  {
+    "id": "alert_426819284919_1790070050845",
+    "utr": "426819284919",
+    "amount": 250,
+    "senderBank": "State Bank of India (SBI)",
+    "rawText": "Dear SBI UPI User, A/C ..4102 credited by Rs.250.00 on 22Sep24 transfer from Payer Ref No 426819284919",
+    "timestamp": "2026-09-22T09:40:50.845Z",
+    "isUsed": true,
+    "usedBy": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+    "usedByEmail": "mtasvir375@gmail.com",
+    "usedAt": "2026-09-23T12:31:15.835Z"
+  },
+  {
+    "id": "alert_612151248932_1790068569375",
+    "utr": "612151248932",
+    "amount": 100,
+    "senderBank": "State Bank of India (SBI)",
+    "rawText": "Dear SBI UPI User, A/C ..4102 credited by Rs.100.00 on 22 Sept 26 transfer from Payer Ref No 612151248932 -SBI",
+    "timestamp": "2026-09-22T09:16:09.375Z",
+    "isUsed": true,
+    "usedBy": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+    "usedByEmail": "mtasvir375@gmail.com",
+    "usedAt": "2026-09-23T12:30:53.083Z"
+  }
+]

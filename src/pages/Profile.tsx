@@ -363,6 +363,7 @@ export default function Profile() {
   };
 
   const handleAddFunds = async () => {
+    if (isUploading) return;
     if (!amount || !user) {
       toast.error("Please enter an amount");
       return;
