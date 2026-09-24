@@ -28,7 +28,12 @@ import {
   getTelegramWebhookInfo,
   processTelegramUpdate,
   parseBankSms as parseBankSmsFromService,
-  addBankAlert
+  addBankAlert,
+  createPaymentIntent,
+  getPaymentIntent,
+  getAllPaymentIntents,
+  registerPaymentIntentCallback,
+  sendTelegramReply
 } from "./telegramBotService";
 
 dotenv.config();
@@ -1062,6 +1067,61 @@ export async function startServer() {
   const adjustUserBalanceREST = async (user_id: string, change: number, token?: string) => {
     return adjustUserBalanceSafe(user_id, change, token);
   };
+
+  // Register Zero-UTR Automatic Payment Intent Callback
+  registerPaymentIntentCallback(async (intent, utr, rawText) => {
+    console.log(`[ZERO-UTR-INTENT-CALLBACK] Processing wallet credit for intent ${intent.intentId} (Order: ${intent.orderRef}, ₹${intent.amount})`);
+    try {
+      // 1. Credit User Balance
+      const adjusted = await adjustUserBalanceSafe(intent.userId, intent.amount);
+      if (!adjusted) {
+        console.error(`[ZERO-UTR-CREDIT-FAIL] Failed to credit wallet for user ${intent.userId}`);
+        return false;
+      }
+
+      // 2. Read new balance
+      let newBalance = 0;
+      try {
+        const uDoc = await getDocSafe("users", intent.userId);
+        newBalance = uDoc?.data()?.balance || 0;
+      } catch (e) {}
+
+      // 3. Save approved deposit record
+      const cleanUtr = utr || intent.orderRef;
+      const depositId = `dep_auto_${intent.orderRef}_${Date.now()}`;
+      const depositData = {
+        id: depositId,
+        userId: intent.userId,
+        userEmail: intent.userEmail || "customer",
+        amount: intent.amount,
+        baseAmount: intent.baseAmount,
+        utr: cleanUtr,
+        orderRef: intent.orderRef,
+        status: "approved",
+        type: "auto_zero_utr_upi",
+        paymentMethod: "auto_zero_utr_upi",
+        provider: intent.senderBank || "UPI Auto QR",
+        verifiedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString()
+      };
+
+      try {
+        await addDocSafe("deposits", depositData);
+        serverCache.deposits.set(depositId, { data: depositData, time: Date.now() });
+        savePersistentCache();
+      } catch (e) {}
+
+      if (cleanUtr && cleanUtr.length === 12) {
+        globalClaimedUtrs.add(cleanUtr);
+      }
+
+      console.log(`[ZERO-UTR-CREDITED-SUCCESS] Credited ₹${intent.amount} to user ${intent.userId} (New Balance: ₹${newBalance})`);
+      return true;
+    } catch (err: any) {
+      console.error("[ZERO-UTR-CREDIT-EXCEPTION]", err.message);
+      return false;
+    }
+  });
 
   // Startup permissions test to enable automatic Firestore REST fallback before handling requests
   const initAdminSdk = async () => {
@@ -2502,9 +2562,9 @@ export async function startServer() {
   // 2. Save Telegram Bot Config & Start/Stop Polling
   app.post(["/api/admin/telegram-config", "/api/telegram-config"], async (req, res) => {
     try {
-      const { botToken, chatId, action } = req.body || {};
+      const { botToken, chatId, upiId, payeeName, action } = req.body || {};
 
-      if (botToken !== undefined || chatId !== undefined) {
+      if (botToken !== undefined || chatId !== undefined || upiId !== undefined || payeeName !== undefined) {
         const cleanTok = botToken !== undefined ? String(botToken).replace(/\s+/g, "").trim() : "";
         const updateObj: any = {};
         if (cleanTok && cleanTok.length >= 35) {
@@ -2512,6 +2572,12 @@ export async function startServer() {
         }
         if (chatId !== undefined && chatId !== "") {
           updateObj.chatId = String(chatId).trim();
+        }
+        if (upiId !== undefined && String(upiId).trim().length > 0) {
+          updateObj.upiId = String(upiId).trim();
+        }
+        if (payeeName !== undefined && String(payeeName).trim().length > 0) {
+          updateObj.payeeName = String(payeeName).trim();
         }
         if (Object.keys(updateObj).length > 0) {
           saveTelegramConfig(updateObj);
@@ -2769,6 +2835,201 @@ export async function startServer() {
     } catch (err: any) {
       console.error("[TELEGRAM-PROXY-ERR]", err.message);
       return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // ========================================================
+  // ZERO-UTR AUTOMATIC PAYMENT GATEWAY & INTENT ENGINE
+  // ========================================================
+
+  // 1. Create Dynamic Payment Intent (Zero-Collision Amount & Unique Order Ref)
+  app.post("/api/payments/create-intent", async (req, res) => {
+    try {
+      const { amount, userId, userEmail } = req.body || {};
+      const numAmount = Number(amount);
+      if (!numAmount || isNaN(numAmount) || numAmount < 1) {
+        return res.status(400).json({ success: false, error: "Minimum deposit amount is ₹1." });
+      }
+      if (!userId) {
+        return res.status(400).json({ success: false, error: "User ID is required." });
+      }
+
+      const cfg = getTelegramConfig();
+      // Ensure we use the latest UPI ID and Payee Name configured by admin
+      const upiId = cfg.upiId || (serverCache.settings?.data?.upiId) || "paytmqr281005050101111956557626@paytm";
+      const payeeName = cfg.payeeName || (serverCache.settings?.data?.merchantName) || "Pyare SMM Panel";
+
+      const result = createPaymentIntent({
+        baseAmount: numAmount,
+        userId: String(userId),
+        userEmail: userEmail ? String(userEmail) : "",
+        upiId,
+        payeeName
+      });
+
+      if (!result.success || !result.intent) {
+        return res.status(400).json({ success: false, error: result.error || "Failed to create payment intent." });
+      }
+
+      return res.json({
+        success: true,
+        intentId: result.intent.intentId,
+        orderRef: result.intent.orderRef,
+        baseAmount: result.intent.baseAmount,
+        amount: result.intent.amount,
+        upiId: result.intent.upiId,
+        payeeName: result.intent.payeeName,
+        upiLink: result.intent.upiLink,
+        expiresAt: result.intent.expiresAt
+      });
+    } catch (err: any) {
+      console.error("[CREATE-INTENT-ERR]", err.message);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 2. Check Intent Status (Polled by Frontend every 2 seconds)
+  app.get("/api/payments/check-intent/:intentId", async (req, res) => {
+    try {
+      const { intentId } = req.params;
+      const intent = getPaymentIntent(intentId);
+      if (!intent) {
+        return res.status(404).json({ success: false, error: "Payment intent not found or expired." });
+      }
+
+      let userBalance: number | undefined;
+      if (intent.status === "completed") {
+        try {
+          const uDoc = await getDocSafe("users", intent.userId);
+          userBalance = uDoc?.data()?.balance;
+        } catch (e) {}
+      }
+
+      return res.json({
+        success: true,
+        status: intent.status,
+        intentId: intent.intentId,
+        orderRef: intent.orderRef,
+        amount: intent.amount,
+        baseAmount: intent.baseAmount,
+        creditedAmount: intent.amount,
+        utr: intent.utr,
+        expiresAt: intent.expiresAt,
+        completedAt: intent.completedAt,
+        newBalance: userBalance
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 3. Admin UPI Gateway Configuration (Get Config)
+  app.get("/api/admin/upi-gateway-config", (req, res) => {
+    try {
+      const cfg = getTelegramConfig();
+      const status = getTelegramStatus();
+      const upiId = cfg.upiId || (serverCache.settings?.data?.upiId) || "paytmqr281005050101111956557626@paytm";
+      const payeeName = cfg.payeeName || (serverCache.settings?.data?.merchantName) || "Pyare SMM Panel";
+
+      return res.json({
+        success: true,
+        upiId,
+        payeeName,
+        botToken: cfg.botToken ? `${cfg.botToken.slice(0, 6)}...${cfg.botToken.slice(-4)}` : "",
+        rawBotToken: cfg.botToken || "",
+        chatId: cfg.chatId || "",
+        enabled: cfg.enabled,
+        running: status.running,
+        botUsername: cfg.botUsername || status.botUsername || "",
+        lastPolledAt: status.lastPolledAt,
+        totalAlertsCount: status.totalAlertsCount,
+        unusedAlertsCount: status.unusedAlertsCount
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 4. Admin UPI Gateway Configuration (Save / Update / Start / Stop / Test Ping)
+  app.post("/api/admin/upi-gateway-config", async (req, res) => {
+    try {
+      const { upiId, payeeName, botToken, chatId, action } = req.body || {};
+      const updates: any = {};
+
+      if (upiId !== undefined && String(upiId).trim().length > 0) {
+        updates.upiId = String(upiId).trim();
+      }
+      if (payeeName !== undefined && String(payeeName).trim().length > 0) {
+        updates.payeeName = String(payeeName).trim();
+      }
+      if (chatId !== undefined && String(chatId).trim().length > 0) {
+        updates.chatId = String(chatId).trim();
+      }
+      if (botToken !== undefined && String(botToken).trim().length >= 35) {
+        updates.botToken = String(botToken).replace(/\s+/g, "").trim();
+      }
+
+      if (Object.keys(updates).length > 0) {
+        saveTelegramConfig(updates);
+
+        // Sync with Firestore settings/payment & settings/telegram_bot for permanent persistence across restarts
+        try {
+          const paymentDocUpdate: any = {};
+          if (updates.upiId) paymentDocUpdate.upiId = updates.upiId;
+          if (updates.payeeName) paymentDocUpdate.merchantName = updates.payeeName;
+          if (updates.botToken) paymentDocUpdate.telegramBotToken = updates.botToken;
+          if (updates.chatId) paymentDocUpdate.telegramChatId = updates.chatId;
+
+          if (Object.keys(paymentDocUpdate).length > 0) {
+            await addDocSafe("settings", { ...paymentDocUpdate, id: "payment" });
+            if (serverCache.settings?.data) {
+              serverCache.settings.data = { ...serverCache.settings.data, ...paymentDocUpdate };
+            }
+          }
+          await addDocSafe("settings", { ...updates, id: "telegram_bot" });
+          savePersistentCache();
+        } catch (dbErr: any) {
+          console.warn("[UPI-GATEWAY-CONFIG-DB-WARN]", dbErr.message);
+        }
+      }
+
+      if (action === "start") {
+        const startRes = await startTelegramPolling();
+        if (!startRes.success) {
+          return res.status(400).json({ success: false, error: startRes.message, status: getTelegramStatus() });
+        }
+        return res.json({ success: true, message: "UPI Gateway & Telegram Bot started!", status: getTelegramStatus() });
+      } else if (action === "stop") {
+        const stopRes = stopTelegramPolling();
+        return res.json({ success: true, message: "UPI Gateway & Telegram Bot stopped.", status: getTelegramStatus() });
+      } else if (action === "test_ping") {
+        const activeCfg = getTelegramConfig();
+        if (!activeCfg.botToken || !activeCfg.chatId) {
+          return res.status(400).json({
+            success: false,
+            error: "Bot Token and Group Chat ID are required before sending a test ping."
+          });
+        }
+        await sendTelegramReply(
+          activeCfg.botToken,
+          activeCfg.chatId,
+          `🔔 <b>UPI Gateway Connection Verified!</b>\n\n` +
+          `✅ The Automatic Zero-UTR Telegram Bot is connected and active.\n` +
+          `💳 <b>Configured UPI ID:</b> <code>${activeCfg.upiId || "Not set"}</code>\n` +
+          `👤 <b>Payee Name:</b> ${activeCfg.payeeName || "SMM Panel"}\n` +
+          `⏰ <b>Timestamp:</b> ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}`
+        );
+        return res.json({ success: true, message: `Test ping sent successfully to Chat ID: ${activeCfg.chatId}!` });
+      }
+
+      return res.json({
+        success: true,
+        message: "UPI Gateway configuration saved permanently.",
+        status: getTelegramStatus()
+      });
+    } catch (err: any) {
+      console.error("[UPI-GATEWAY-CONFIG-ERR]", err.message);
+      return res.status(500).json({ success: false, error: err.message });
     }
   });
 

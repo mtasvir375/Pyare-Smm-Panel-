@@ -63,6 +63,8 @@ interface TelegramConfigStatus {
   hasToken: boolean;
   maskedToken: string;
   chatId: string;
+  upiId?: string;
+  payeeName?: string;
   botUsername?: string;
   webhookUrl?: string;
   startedAt?: string;
@@ -71,6 +73,7 @@ interface TelegramConfigStatus {
   lastError?: string;
   totalAlertsCount: number;
   unusedAlertsCount: number;
+  totalIntentsCount?: number;
   recentMessages?: RawBotMessage[];
 }
 
@@ -78,9 +81,12 @@ export const TelegramBotTab: React.FC = () => {
   const [config, setConfig] = useState<TelegramConfigStatus | null>(null);
   const [botToken, setBotToken] = useState("");
   const [chatId, setChatId] = useState("");
+  const [upiId, setUpiId] = useState("paytmqr281005050101111956557626@paytm");
+  const [payeeName, setPayeeName] = useState("Pyare SMM Panel");
   const [showToken, setShowToken] = useState(false);
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [savingAction, setSavingAction] = useState<"start" | "stop" | "save" | null>(null);
+  const [isTestingPing, setIsTestingPing] = useState(false);
 
   // Bank Alerts State
   const [alerts, setAlerts] = useState<BankAlert[]>([]);
@@ -125,12 +131,14 @@ export const TelegramBotTab: React.FC = () => {
     let loaded = false;
 
     // 1. Try serverless routes first
-    for (const endpoint of ["/api/telegram-config", "/api/admin/telegram-config"]) {
+    for (const endpoint of ["/api/admin/upi-gateway-config", "/api/telegram-config", "/api/admin/telegram-config"]) {
       try {
         const res = await axios.get(endpoint, { timeout: 4000 });
         if (res.data && res.data.success) {
           setConfig(res.data);
           if (res.data.chatId && !chatId) setChatId(res.data.chatId);
+          if (res.data.upiId) setUpiId(res.data.upiId);
+          if (res.data.payeeName) setPayeeName(res.data.payeeName);
           loaded = true;
           break;
         }
@@ -149,6 +157,10 @@ export const TelegramBotTab: React.FC = () => {
         const cId = tgDoc?.chatId || paymentDoc?.telegramChatId || "";
         const username = tgDoc?.botUsername || paymentDoc?.telegramBotUsername || "";
         const isEnabled = tgDoc?.enabled ?? paymentDoc?.telegramBotEnabled ?? false;
+        const uId = paymentDoc?.upiId || tgDoc?.upiId || "paytmqr281005050101111956557626@paytm";
+        const pName = paymentDoc?.merchantName || tgDoc?.payeeName || "Pyare SMM Panel";
+        setUpiId(uId);
+        setPayeeName(pName);
 
         let masked = "";
         if (rawToken && rawToken.length > 8) {
@@ -162,6 +174,8 @@ export const TelegramBotTab: React.FC = () => {
           hasToken: !!rawToken,
           maskedToken: masked,
           chatId: cId,
+          upiId: uId,
+          payeeName: pName,
           botUsername: username,
           webhookUrl: tgDoc?.webhookUrl || `https://${window.location.host}/api/telegram-webhook`,
           startedAt: tgDoc?.startedAt,
@@ -373,17 +387,21 @@ export const TelegramBotTab: React.FC = () => {
     }
 
     // Step 2: Try Serverless API routes
-    const payload: any = { action };
+    const payload: any = {
+      action,
+      upiId: upiId.trim(),
+      payeeName: payeeName.trim()
+    };
     if (cleanToken) payload.botToken = cleanToken;
     if (cleanChatId) payload.chatId = cleanChatId;
 
-    for (const endpoint of ["/api/telegram-config", "/api/admin/telegram-config"]) {
+    for (const endpoint of ["/api/admin/upi-gateway-config", "/api/telegram-config", "/api/admin/telegram-config"]) {
       try {
         const res = await axios.post(endpoint, payload, { timeout: 6000 });
         if (res.data && res.data.success) {
           success = true;
           if (res.data.status) setConfig(res.data.status);
-          toast.success(res.data.message || "Settings updated successfully");
+          toast.success(res.data.message || "UPI Gateway settings updated successfully");
           break;
         }
       } catch (e) {}
@@ -398,6 +416,8 @@ export const TelegramBotTab: React.FC = () => {
       const docUpdate: any = {
         ...(cleanToken && { botToken: cleanToken }),
         chatId: cleanChatId,
+        upiId: upiId.trim(),
+        payeeName: payeeName.trim(),
         botUsername: botUsername || config?.botUsername || "",
         enabled: isEnabled,
         updatedAt: new Date().toISOString()
@@ -413,7 +433,9 @@ export const TelegramBotTab: React.FC = () => {
           ...(cleanToken && { telegramBotToken: cleanToken }),
           telegramChatId: cleanChatId,
           telegramBotUsername: botUsername || config?.botUsername || "",
-          telegramBotEnabled: isEnabled
+          telegramBotEnabled: isEnabled,
+          upiId: upiId.trim(),
+          merchantName: payeeName.trim()
         })
       ]);
 
@@ -428,7 +450,7 @@ export const TelegramBotTab: React.FC = () => {
       }
 
       if (!success) {
-        toast.success(action === "start" ? "Telegram Bot started successfully!" : (action === "stop" ? "Telegram Bot stopped." : "Telegram Bot credentials saved!"));
+        toast.success(action === "start" ? "UPI Gateway & Bot started successfully!" : (action === "stop" ? "UPI Gateway & Bot stopped." : "UPI Gateway settings saved!"));
       }
       setBotToken(""); // Clear raw token
       fetchConfig();
@@ -440,6 +462,28 @@ export const TelegramBotTab: React.FC = () => {
       }
     } finally {
       setSavingAction(null);
+    }
+  };
+
+  const handleTestPing = async () => {
+    setIsTestingPing(true);
+    try {
+      const res = await axios.post("/api/admin/upi-gateway-config", {
+        action: "test_ping",
+        upiId: upiId.trim(),
+        payeeName: payeeName.trim(),
+        botToken: botToken.trim() || undefined,
+        chatId: chatId.trim() || undefined
+      }, { timeout: 8000 });
+      if (res.data?.success) {
+        toast.success(res.data.message || "Test ping sent to Telegram Group!");
+      } else {
+        toast.error(res.data?.error || "Failed to send test ping");
+      }
+    } catch (err: any) {
+      toast.error(extractErrorMessage(err));
+    } finally {
+      setIsTestingPing(false);
     }
   };
 
@@ -667,13 +711,16 @@ export const TelegramBotTab: React.FC = () => {
                 <div>
                   <CardTitle className="text-base sm:text-lg font-bold flex items-center gap-2 text-gray-900">
                     <Send className="w-4 h-4 text-blue-600" />
-                    Telegram Bot Connection
+                    UPI Gateway Config (Zero-UTR Engine)
                   </CardTitle>
                   <CardDescription className="text-xs text-gray-500">
-                    Configure your Telegram Bot credentials to receive and poll SMS in real-time.
+                    Configure your UPI Gateway & Telegram Bot credentials for 24/7 automatic deposits without UTR entry.
                   </CardDescription>
                 </div>
                 <div className="flex items-center gap-2">
+                  <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-bold">
+                    ⚡ Zero-UTR Auto
+                  </Badge>
                   {config?.botUsername && (
                     <a
                       href={`https://t.me/${config.botUsername}`}
@@ -687,7 +734,7 @@ export const TelegramBotTab: React.FC = () => {
                     </a>
                   )}
                   {config?.hasToken && (
-                    <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[11px] font-medium">
+                    <Badge className="bg-blue-50 text-blue-700 border-blue-200 text-[11px] font-medium">
                       Token Active
                     </Badge>
                   )}
@@ -696,6 +743,15 @@ export const TelegramBotTab: React.FC = () => {
             </CardHeader>
 
             <CardContent className="p-5 sm:p-6 space-y-4">
+              {/* Single Notification Protection Guarantee Banner */}
+              <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-2xl flex items-center justify-between gap-3 text-xs text-blue-900">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                  <span className="font-semibold">STRICT SINGLE-NOTIFICATION:</span>
+                  <span className="text-blue-700">Duplicate messages are strictly blocked. Group receives only 1 verified receipt per transaction.</span>
+                </div>
+              </div>
+
               {config?.lastError && (
                 <div className="p-4 bg-rose-50 rounded-2xl border border-rose-200 space-y-2 text-xs text-rose-800">
                   <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -750,9 +806,47 @@ export const TelegramBotTab: React.FC = () => {
                 </ul>
               </div>
 
+              {/* 1. UPI ID & Payee Name Fields */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center justify-between">
+                    <span>UPI ID (VPA)</span>
+                    <span className="text-[10px] text-blue-600 font-normal">Primary QR Gateway</span>
+                  </label>
+                  <Input
+                    type="text"
+                    placeholder="e.g. paytmqr...@paytm or name@okaxis"
+                    value={upiId}
+                    onChange={(e) => setUpiId(e.target.value.trim())}
+                    className="rounded-2xl h-12 text-xs border-gray-200 focus:border-blue-500 font-mono"
+                  />
+                  <p className="text-[11px] text-gray-400">
+                    Customers will scan dynamic QR codes directed to this VPA.
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center justify-between">
+                    <span>Payee / Merchant Name</span>
+                    <span className="text-[10px] text-gray-400 font-normal">Displays on UPI App</span>
+                  </label>
+                  <Input
+                    type="text"
+                    placeholder="e.g. Pyare SMM Panel"
+                    value={payeeName}
+                    onChange={(e) => setPayeeName(e.target.value)}
+                    className="rounded-2xl h-12 text-xs border-gray-200 focus:border-blue-500"
+                  />
+                  <p className="text-[11px] text-gray-400">
+                    Business / Panel name shown on GPay, PhonePe, Paytm.
+                  </p>
+                </div>
+              </div>
+
+              {/* 2. Telegram Bot Token Field */}
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center justify-between">
-                  <span>Telegram Bot Token</span>
+                  <span>Telegram Bot Token (Custom BotFather)</span>
                   {config?.maskedToken && (
                     <span className="text-[10px] text-gray-400 font-mono font-normal">
                       Current: {config.maskedToken}
@@ -810,20 +904,21 @@ export const TelegramBotTab: React.FC = () => {
                 </div>
               )}
 
+              {/* 3. Telegram Group Chat ID Field */}
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center justify-between">
-                  <span>Chat ID / Channel ID (Optional)</span>
-                  <span className="text-[10px] text-gray-400 font-normal">For confirmation receipts</span>
+                  <span>Telegram Group Chat ID</span>
+                  <span className="text-[10px] text-gray-400 font-normal">For instant verified receipts</span>
                 </label>
                 <Input
                   type="text"
-                  placeholder="e.g. 123456789 or -100123456789"
+                  placeholder="e.g. 12345678 or -100123456789"
                   value={chatId}
-                  onChange={(e) => setChatId(e.target.value)}
+                  onChange={(e) => setChatId(e.target.value.trim())}
                   className="rounded-2xl h-12 text-xs border-gray-200 focus:border-blue-500 font-mono"
                 />
                 <p className="text-[11px] text-gray-400">
-                  When a payment SMS is recorded, the bot sends an instant receipt to this chat.
+                  Single verified receipt will be delivered to this group when an automatic payment succeeds.
                 </p>
               </div>
 
@@ -839,7 +934,7 @@ export const TelegramBotTab: React.FC = () => {
                     ) : (
                       <Play className="w-4 h-4 fill-white mr-2" />
                     )}
-                    {savingAction === "start" ? "Connecting Bot..." : "Start Telegram Bot"}
+                    {savingAction === "start" ? "Starting Engine..." : "Start 24/7 Engine"}
                   </Button>
                 ) : (
                   <Button
@@ -853,7 +948,7 @@ export const TelegramBotTab: React.FC = () => {
                     ) : (
                       <Square className="w-4 h-4 fill-white mr-2" />
                     )}
-                    {savingAction === "stop" ? "Stopping..." : "Stop Bot Polling"}
+                    {savingAction === "stop" ? "Stopping..." : "Stop Engine"}
                   </Button>
                 )}
 
@@ -863,7 +958,21 @@ export const TelegramBotTab: React.FC = () => {
                   variant="outline"
                   className="h-12 rounded-2xl text-xs font-bold border-gray-200 hover:bg-gray-50 px-5"
                 >
-                  Save Credentials
+                  Save UPI Config
+                </Button>
+
+                <Button
+                  onClick={handleTestPing}
+                  disabled={isTestingPing || !chatId}
+                  variant="secondary"
+                  className="h-12 rounded-2xl text-xs font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 px-4"
+                >
+                  {isTestingPing ? (
+                    <RefreshCw className="w-4 h-4 animate-spin mr-1.5" />
+                  ) : (
+                    <Send className="w-4 h-4 mr-1.5" />
+                  )}
+                  {isTestingPing ? "Sending..." : "Test Group Ping"}
                 </Button>
               </div>
             </CardContent>

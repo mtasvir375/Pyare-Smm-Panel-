@@ -1,0 +1,17 @@
+[
+  {
+    "intentId": "pi_1790244455391_2ehhr",
+    "orderRef": "BSM20460",
+    "baseAmount": 100,
+    "amount": 100,
+    "userId": "test-user-123",
+    "userEmail": "",
+    "upiId": "paytmqr281005050101111956557626@paytm",
+    "payeeName": "Pyare SMM Panel",
+    "upiLink": "upi://pay?pa=paytmqr281005050101111956557626%40paytm&pn=Pyare%20SMM%20Panel&am=100.00&tr=BSM20460&tn=BSM20460&cu=INR",
+    "status": "pending",
+    "createdAt": 1790244455391,
+    "expiresAt": 1790244755391,
+    "notified": false
+  }
+]

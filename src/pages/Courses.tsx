@@ -26,6 +26,7 @@ import CategoryIcon from "@/components/CategoryIcon";
 import { cn } from "@/lib/utils";
 import imageCompression from "browser-image-compression";
 import { QRCodeSVG } from "qrcode.react";
+import { InstantZeroUtrPayment } from "@/components/payment/InstantZeroUtrPayment";
 
 const CATEGORIES = ["All", "Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Other"];
 
@@ -83,7 +84,7 @@ export default function Courses() {
   const [isOrderSuccessOpen, setIsOrderSuccessOpen] = useState(false);
   const [lastOrder, setLastOrder] = useState<any>(null);
   const [paymentSettings, setPaymentSettings] = useState<any>(null);
-  const [paymentMethod, setPaymentMethod] = useState<"auto" | "manual" | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<"zero_utr" | "manual" | "auto">("zero_utr");
   const [isRazorpayLoading, setIsRazorpayLoading] = useState(false);
   const [isPhonePeLoading, setIsPhonePeLoading] = useState(false);
   const [isPaytmLoading, setIsPaytmLoading] = useState(false);
@@ -1095,62 +1096,75 @@ export default function Courses() {
 
             {(() => {
               const hasTraditionalAuto = !!(paymentSettings?.razorpayEnabled || paymentSettings?.phonepeEnabled || paymentSettings?.paytmEnabled);
-              const qrAutoEnabled = !!paymentSettings?.qrAutoEnabled;
-              const hasAnyAuto = hasTraditionalAuto || qrAutoEnabled;
               
               return (
                 <>
-                  {hasAnyAuto && depositAmount && Number(depositAmount) > 0 && (
-                    <div className="grid grid-cols-2 gap-3 mb-4 mt-1">
+                  {depositAmount && Number(depositAmount) > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-3 mt-1">
                       <button
                         type="button"
-                        onClick={() => setPaymentMethod("auto")}
-                        className={`flex flex-col items-center justify-center p-3 rounded-2xl border-2 text-center transition-all ${
-                          paymentMethod === "auto" 
-                            ? "border-primary bg-primary/5 text-primary" 
+                        onClick={() => setPaymentMethod("zero_utr")}
+                        className={`flex-1 min-w-[120px] flex flex-col items-center justify-center p-3 rounded-2xl border-2 text-center transition-all ${
+                          paymentMethod === "zero_utr" 
+                            ? "border-emerald-500 bg-emerald-50 text-emerald-700 shadow-sm" 
                             : "border-gray-100 hover:border-gray-200 text-gray-600"
                         }`}
                       >
-                        <Zap className="w-5 h-5 mb-1 text-yellow-500 fill-yellow-500 animate-pulse" />
-                        <span className="text-xs font-bold">Auto Gateways</span>
-                        <span className="text-[9px] opacity-80">Razorpay/PhonePe</span>
+                        <Zap className="w-5 h-5 mb-1 text-emerald-600 fill-emerald-600 animate-pulse" />
+                        <span className="text-xs font-bold">Instant Auto QR</span>
+                        <span className="text-[9px] opacity-80 text-emerald-600 font-semibold">Zero-UTR (2s Credit)</span>
                       </button>
+
                       <button
                         type="button"
-                        onClick={async () => {
-                          setPaymentMethod("manual");
-                          if (paymentSettings?.qrAutoEnabled && depositAmount && Number(depositAmount) >= 1) {
-                            setIsQrAutoLoading(true);
-                            try {
-                              const res = await axios.post("/api/deposits/create-qr-auto-order", {
-                                userId: user.uid,
-                                amount: Number(depositAmount),
-                                userEmail: user.email
-                              });
-                              if (res.data.success && res.data.payment_url) {
-                                setQrAutoData({ 
-                                  payment_url: res.data.payment_url, 
-                                  client_txn_id: res.data.client_txn_id 
-                                });
-                              }
-                            } catch (err) {
-                              console.error("Auto pre-order failed:", err);
-                            } finally {
-                              setIsQrAutoLoading(false);
-                            }
-                          }
-                        }}
-                        className={`flex flex-col items-center justify-center p-3 rounded-2xl border-2 text-center transition-all ${
+                        onClick={() => setPaymentMethod("manual")}
+                        className={`flex-1 min-w-[120px] flex flex-col items-center justify-center p-3 rounded-2xl border-2 text-center transition-all ${
                           paymentMethod === "manual" 
                             ? "border-primary bg-primary/5 text-primary" 
                             : "border-gray-100 hover:border-gray-200 text-gray-600"
                         }`}
                       >
                         <QrCode className="w-5 h-5 mb-1 text-blue-500" />
-                        <span className="text-xs font-bold">UPI QR {qrAutoEnabled && "(Auto)"}</span>
-                        <span className="text-[9px] opacity-80">{qrAutoEnabled ? "Instant Verify" : "Manual Verify"}</span>
+                        <span className="text-xs font-bold">Manual UPI QR</span>
+                        <span className="text-[9px] opacity-80">Enter 12-digit UTR</span>
                       </button>
+
+                      {hasTraditionalAuto && (
+                        <button
+                          type="button"
+                          onClick={() => setPaymentMethod("auto")}
+                          className={`flex-1 min-w-[120px] flex flex-col items-center justify-center p-3 rounded-2xl border-2 text-center transition-all ${
+                            paymentMethod === "auto" 
+                              ? "border-primary bg-primary/5 text-primary" 
+                              : "border-gray-100 hover:border-gray-200 text-gray-600"
+                          }`}
+                        >
+                          <Wallet className="w-5 h-5 mb-1 text-yellow-500" />
+                          <span className="text-xs font-bold">Auto Gateways</span>
+                          <span className="text-[9px] opacity-80">Razorpay/PhonePe</span>
+                        </button>
+                      )}
                     </div>
+                  )}
+
+                  {paymentMethod === "zero_utr" && depositAmount && Number(depositAmount) > 0 && user && (
+                    <InstantZeroUtrPayment
+                      amount={Number(depositAmount)}
+                      userId={user.uid}
+                      userEmail={user.email || undefined}
+                      onSuccess={(credited, newBal) => {
+                        if (newBal !== undefined && updateUserProfileLocal) {
+                          updateUserProfileLocal({ balance: newBal });
+                        } else if (updateUserProfileLocal) {
+                          updateUserProfileLocal({ balance: (profile?.balance || 0) + credited });
+                        }
+                        if (refreshUserProfile) {
+                          refreshUserProfile();
+                        }
+                        setIsAddFundsOpen(false);
+                      }}
+                      onCancelOrSwitchManual={() => setPaymentMethod("manual")}
+                    />
                   )}
 
                   {paymentMethod === "auto" && hasTraditionalAuto && depositAmount && Number(depositAmount) > 0 && (

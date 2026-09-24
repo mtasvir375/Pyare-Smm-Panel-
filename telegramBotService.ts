@@ -29,10 +29,37 @@ export interface RawBotMessage {
   reason?: string;
 }
 
+export interface PaymentIntent {
+  intentId: string;
+  orderRef: string;
+  baseAmount: number;
+  amount: number;
+  userId: string;
+  userEmail: string;
+  upiId: string;
+  payeeName: string;
+  upiLink: string;
+  status: "pending" | "completed" | "expired";
+  createdAt: number;
+  expiresAt: number;
+  completedAt?: number;
+  utr?: string;
+  senderBank?: string;
+  notified?: boolean;
+}
+
+export type PaymentIntentCallback = (
+  intent: PaymentIntent,
+  utr?: string,
+  rawText?: string
+) => Promise<boolean>;
+
 export interface TelegramBotConfig {
   botToken: string;
   botUsername?: string;
   chatId?: string;
+  upiId?: string;
+  payeeName?: string;
   enabled: boolean;
   lastUpdateId: number;
   startedAt?: string;
@@ -44,13 +71,20 @@ export interface TelegramBotConfig {
 
 const ALERTS_FILE = path.join(process.cwd(), "bank_alerts.json");
 const CONFIG_FILE = path.join(process.cwd(), "telegram_bot_config.json");
+const INTENTS_FILE = path.join(process.cwd(), "payment_intents.json");
 
 // In-memory cache for ultra-fast zero-latency matching
 let memoryAlerts: BankAlert[] = [];
 let memoryRawMessages: RawBotMessage[] = [];
+let memoryIntents: Map<string, PaymentIntent> = new Map();
+const notifiedIntents: Set<string> = new Set();
+let intentMatchCallback: PaymentIntentCallback | null = null;
+
 let memoryConfig: TelegramBotConfig = {
   botToken: "",
   chatId: "",
+  upiId: "paytmqr281005050101111956557626@paytm",
+  payeeName: "Pyare SMM Panel",
   enabled: false,
   lastUpdateId: 0
 };
@@ -59,6 +93,162 @@ let pollingAbortController: AbortController | null = null;
 let lastSuccessfulPollTime = Date.now();
 let watchdogInterval: NodeJS.Timeout | null = null;
 let currentLoopEpoch = 0;
+
+export function registerPaymentIntentCallback(cb: PaymentIntentCallback) {
+  intentMatchCallback = cb;
+}
+
+export function savePaymentIntents() {
+  try {
+    const list = Array.from(memoryIntents.values()).slice(-200); // keep recent 200
+    fs.writeFileSync(INTENTS_FILE, JSON.stringify(list, null, 2), "utf-8");
+  } catch (err: any) {
+    console.error("[TELEGRAM-SERVICE] Failed to write payment_intents.json:", err.message);
+  }
+}
+
+export function getPaymentIntent(intentId: string): PaymentIntent | null {
+  const intent = memoryIntents.get(intentId);
+  if (!intent) return null;
+  if (intent.status === "pending" && intent.expiresAt < Date.now()) {
+    intent.status = "expired";
+    savePaymentIntents();
+  }
+  return intent;
+}
+
+export function getAllPaymentIntents(): PaymentIntent[] {
+  return Array.from(memoryIntents.values());
+}
+
+/**
+ * Dynamic Zero-Collision QR Engine
+ * Generates unique decimal amount and unique Order Ref
+ */
+export function createPaymentIntent(params: {
+  baseAmount: number;
+  userId: string;
+  userEmail?: string;
+  upiId?: string;
+  payeeName?: string;
+}): { success: boolean; intent?: PaymentIntent; error?: string } {
+  const base = Number(params.baseAmount);
+  if (!base || isNaN(base) || base < 1) {
+    return { success: false, error: "Minimum deposit amount is ₹1." };
+  }
+  if (!params.userId) {
+    return { success: false, error: "User ID is required." };
+  }
+
+  const now = Date.now();
+  // Mark expired pending intents
+  for (const [_, it] of memoryIntents.entries()) {
+    if (it.status === "pending" && it.expiresAt < now) {
+      it.status = "expired";
+    }
+  }
+
+  // Find active pending intents within 5 minute window
+  const activePending = Array.from(memoryIntents.values()).filter(
+    (i) => i.status === "pending" && i.expiresAt > now
+  );
+
+  // Dynamic Zero-Collision Decimal Avoidance
+  const activeAmountsInPaise = new Set(
+    activePending.map((i) => Math.round(i.amount * 100))
+  );
+
+  const baseInPaise = Math.round(base * 100);
+  let selectedPaise = baseInPaise;
+  let offset = 0;
+  // If exact amount is already pending for another active session, offset by 0.01 up to 0.99
+  while (activeAmountsInPaise.has(selectedPaise) && offset < 99) {
+    offset++;
+    selectedPaise = baseInPaise + offset;
+  }
+  const finalAmount = Number((selectedPaise / 100).toFixed(2));
+
+  // Generate unique Order Ref: e.g. BSM84920
+  const existingRefs = new Set(activePending.map((i) => i.orderRef.toUpperCase()));
+  let orderRef = "";
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const candidate = `BSM${Math.floor(10000 + Math.random() * 90000)}`;
+    if (!existingRefs.has(candidate)) {
+      orderRef = candidate;
+      break;
+    }
+  }
+  if (!orderRef) {
+    orderRef = `BSM${Date.now().toString().slice(-5)}`;
+  }
+
+  const activeUpi = (params.upiId || memoryConfig.upiId || "paytmqr281005050101111956557626@paytm").trim();
+  const activeName = (params.payeeName || memoryConfig.payeeName || "Pyare SMM Panel").trim();
+
+  // Dynamic UPI Link Format:
+  // upi://pay?pa={UPI_ID}&pn={NAME}&am={AMOUNT}&tr={REF}&tn={REF}&cu=INR
+  const upiLink = `upi://pay?pa=${encodeURIComponent(activeUpi)}&pn=${encodeURIComponent(activeName)}&am=${finalAmount.toFixed(2)}&tr=${orderRef}&tn=${orderRef}&cu=INR`;
+  const intentId = `pi_${now}_${Math.random().toString(36).substring(2, 7)}`;
+  const expiresAt = now + 5 * 60 * 1000; // 5 minutes validity
+
+  const intent: PaymentIntent = {
+    intentId,
+    orderRef,
+    baseAmount: base,
+    amount: finalAmount,
+    userId: params.userId,
+    userEmail: params.userEmail || "",
+    upiId: activeUpi,
+    payeeName: activeName,
+    upiLink,
+    status: "pending",
+    createdAt: now,
+    expiresAt,
+    notified: false
+  };
+
+  memoryIntents.set(intentId, intent);
+  savePaymentIntents();
+
+  console.log(`[PAYMENT-INTENT-CREATED] Created intent ${intentId}: ₹${finalAmount} (Ref: ${orderRef}) for user ${params.userId}`);
+
+  return { success: true, intent };
+}
+
+/**
+ * Match an incoming SMS/alert against active pending intents
+ */
+export function findMatchingIntent(params: {
+  orderRef?: string | null;
+  amount?: number;
+  utr?: string;
+}): PaymentIntent | null {
+  const now = Date.now();
+  const active = Array.from(memoryIntents.values()).filter(
+    (i) => i.status === "pending" && i.expiresAt > now
+  );
+
+  // 1. By Order Reference (exact BSM84920 match)
+  if (params.orderRef) {
+    const cleanRef = params.orderRef.toUpperCase().trim();
+    const byRef = active.find((i) => i.orderRef.toUpperCase() === cleanRef);
+    if (byRef) return byRef;
+  }
+
+  // 2. By Exact Decimal Amount (collision-free exact paise match, e.g. 100.01)
+  if (params.amount && params.amount > 0) {
+    const byAmount = active.find((i) => Math.abs(i.amount - params.amount!) < 0.005);
+    if (byAmount) return byAmount;
+  }
+
+  // 3. By UTR if already mapped
+  if (params.utr && params.utr.length === 12) {
+    const byUtr = active.find((i) => i.utr === params.utr);
+    if (byUtr) return byUtr;
+  }
+
+  return null;
+}
 
 function recordIncomingMessage(entry: Omit<RawBotMessage, "id" | "timestamp">) {
   const item: RawBotMessage = {
@@ -95,6 +285,24 @@ export function initTelegramBotService() {
     }
   } catch (err: any) {
     console.warn("[TELEGRAM-SERVICE] Error reading telegram_bot_config.json:", err.message);
+  }
+
+  try {
+    if (fs.existsSync(INTENTS_FILE)) {
+      const data = fs.readFileSync(INTENTS_FILE, "utf-8");
+      const list: PaymentIntent[] = JSON.parse(data);
+      if (Array.isArray(list)) {
+        memoryIntents = new Map(list.map((it) => [it.intentId, it]));
+        for (const it of list) {
+          if (it.notified || it.status === "completed") {
+            notifiedIntents.add(it.intentId);
+            notifiedIntents.add(it.orderRef);
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn("[TELEGRAM-SERVICE] Error reading payment_intents.json:", err.message);
   }
 
   // If memoryConfig token is empty or invalid (< 35 chars), sync from Firestore
@@ -519,6 +727,90 @@ export async function processTelegramUpdate(update: any, token: string): Promise
 
   const standaloneUtrMatch = text.replace(/[\s\-_]/g, "").match(/\b([0-9]{12})\b/);
   const detectedUtr = standaloneUtrMatch ? standaloneUtrMatch[1] : (parsed.utr || "");
+
+  // ========================================================
+  // ZERO-UTR INTENT MATCHING ENGINE (Dynamic QR Payments)
+  // ========================================================
+  const refMatch = text.match(/\b(BSM[A-Z0-9]{4,8})\b/i);
+  const detectedRef = refMatch ? refMatch[1].toUpperCase() : null;
+  const detectedAmount = parsed.amount > 0 ? parsed.amount : extractAmountOnly(text);
+  const detectedBank = (parsed.bank && parsed.bank !== "Unknown") ? parsed.bank : extractBankOnly(text, senderName);
+
+  const matchedIntent = findMatchingIntent({
+    orderRef: detectedRef,
+    amount: detectedAmount > 0 ? detectedAmount : undefined,
+    utr: detectedUtr && detectedUtr.length === 12 ? detectedUtr : undefined
+  });
+
+  if (matchedIntent) {
+    console.log(`[ZERO-UTR-MATCH] Matched Order: ${matchedIntent.orderRef}, Amount: ₹${matchedIntent.amount} for user: ${matchedIntent.userId}`);
+    matchedIntent.status = "completed";
+    matchedIntent.completedAt = Date.now();
+    matchedIntent.utr = (detectedUtr && detectedUtr.length === 12) ? detectedUtr : (detectedRef || matchedIntent.orderRef);
+    matchedIntent.senderBank = detectedBank;
+    savePaymentIntents();
+
+    recordIncomingMessage({
+      sender: senderName,
+      chatId: chatId || "",
+      text,
+      parsed: true,
+      utr: matchedIntent.utr,
+      amount: matchedIntent.amount,
+      bank: detectedBank,
+      reason: `Zero-UTR Matched Order ${matchedIntent.orderRef}`
+    });
+
+    // Execute wallet credit callback
+    if (intentMatchCallback) {
+      try {
+        await intentMatchCallback(matchedIntent, matchedIntent.utr, text);
+      } catch (cbErr: any) {
+        console.error("[ZERO-UTR-CALLBACK-ERR]", cbErr.message);
+      }
+    }
+
+    // STRICT SINGLE-NOTIFICATION:
+    const notificationKey = matchedIntent.intentId;
+    if (!notifiedIntents.has(notificationKey) && !matchedIntent.notified) {
+      notifiedIntents.add(notificationKey);
+      notifiedIntents.add(matchedIntent.orderRef);
+      matchedIntent.notified = true;
+      savePaymentIntents();
+
+      const targetChat = memoryConfig.chatId || chatId;
+      if (targetChat) {
+        await sendTelegramReply(
+          token,
+          targetChat,
+          `✅ <b>Payment Verified!</b>\n\n` +
+          `💰 <b>Amount:</b> ₹${matchedIntent.amount.toFixed(2)}\n` +
+          `🆔 <b>Order Ref:</b> <code>${matchedIntent.orderRef}</code>\n` +
+          `🔢 <b>UTR:</b> <code>${matchedIntent.utr}</code>\n` +
+          `👤 <b>User:</b> ${matchedIntent.userEmail || matchedIntent.userId}\n` +
+          `🏦 <b>Gateway:</b> ${detectedBank}\n` +
+          `🟢 <b>Status:</b> Wallet Credited Instantly (Zero-UTR Auto)`
+        );
+      }
+    }
+
+    return {
+      success: true,
+      alert: {
+        id: `alert_intent_${matchedIntent.intentId}`,
+        utr: matchedIntent.utr,
+        amount: matchedIntent.amount,
+        senderBank: detectedBank,
+        rawText: text,
+        timestamp: new Date().toISOString(),
+        isUsed: true,
+        usedBy: matchedIntent.userId,
+        usedByEmail: matchedIntent.userEmail,
+        usedAt: new Date().toISOString()
+      },
+      parsed: { utr: matchedIntent.utr, amount: matchedIntent.amount, bank: detectedBank }
+    };
+  }
 
   if (detectedUtr && (!parsed.isValid || parsed.amount <= 0)) {
     if (isPendingValid && pending.amount && pending.amount > 0) {
@@ -969,12 +1261,15 @@ export function getTelegramStatus() {
     maskedToken,
     botUsername: memoryConfig.botUsername || "",
     chatId: memoryConfig.chatId || "",
+    upiId: memoryConfig.upiId || "paytmqr281005050101111956557626@paytm",
+    payeeName: memoryConfig.payeeName || "Pyare SMM Panel",
     startedAt: memoryConfig.startedAt,
     lastPolledAt: memoryConfig.lastPolledAt,
     lastPolledAgeSeconds,
     lastError: memoryConfig.lastError,
     totalAlertsCount: totalAlerts,
     unusedAlertsCount: unusedAlerts,
+    totalIntentsCount: memoryIntents.size,
     recentMessages: memoryRawMessages
   };
 }
