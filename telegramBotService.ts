@@ -83,7 +83,7 @@ let intentMatchCallback: PaymentIntentCallback | null = null;
 let memoryConfig: TelegramBotConfig = {
   botToken: "",
   chatId: "",
-  upiId: "paytmqr281005050101111956557626@paytm",
+  upiId: "",
   payeeName: "Pyare SMM Panel",
   enabled: false,
   lastUpdateId: 0
@@ -107,8 +107,13 @@ export function savePaymentIntents() {
   }
 }
 
-export function getPaymentIntent(intentId: string): PaymentIntent | null {
-  const intent = memoryIntents.get(intentId);
+export function getPaymentIntent(intentIdOrRef: string): PaymentIntent | null {
+  let intent = memoryIntents.get(intentIdOrRef);
+  if (!intent) {
+    intent = Array.from(memoryIntents.values()).find(
+      (it) => it.orderRef === intentIdOrRef || it.intentId === intentIdOrRef
+    );
+  }
   if (!intent) return null;
   if (intent.status === "pending" && intent.expiresAt < Date.now()) {
     intent.status = "expired";
@@ -168,28 +173,32 @@ export function createPaymentIntent(params: {
   }
   const finalAmount = Number((selectedPaise / 100).toFixed(2));
 
-  // Generate unique Order Ref: e.g. BSM84920
-  const existingRefs = new Set(activePending.map((i) => i.orderRef.toUpperCase()));
+  // Generate unique 12-digit numeric Order Ref: e.g. 252525383637 (exactly 12 numeric digits, no pms prefix)
+  const existingRefs = new Set(Array.from(memoryIntents.values()).map((i) => i.orderRef.toLowerCase()));
   let orderRef = "";
-  for (let attempt = 0; attempt < 20; attempt++) {
-    const candidate = `BSM${Math.floor(10000 + Math.random() * 90000)}`;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const part1 = Math.floor(100000 + Math.random() * 900000).toString(); // 6 digits
+    const part2 = Math.floor(100000 + Math.random() * 900000).toString(); // 6 digits
+    const candidate = `${part1}${part2}`; // exactly 12 numeric digits
     if (!existingRefs.has(candidate)) {
       orderRef = candidate;
       break;
     }
   }
   if (!orderRef) {
-    orderRef = `BSM${Date.now().toString().slice(-5)}`;
+    const timeDigits = Date.now().toString().slice(-10);
+    const randDigits = Math.floor(10 + Math.random() * 90).toString();
+    orderRef = `${timeDigits}${randDigits}`;
   }
 
-  const activeUpi = (params.upiId || memoryConfig.upiId || "paytmqr281005050101111956557626@paytm").trim();
+  const activeUpi = (params.upiId || memoryConfig.upiId || "").trim();
   const activeName = (params.payeeName || memoryConfig.payeeName || "Pyare SMM Panel").trim();
 
   // Dynamic UPI Link Format:
   // upi://pay?pa={UPI_ID}&pn={NAME}&am={AMOUNT}&tr={REF}&tn={REF}&cu=INR
   const upiLink = `upi://pay?pa=${encodeURIComponent(activeUpi)}&pn=${encodeURIComponent(activeName)}&am=${finalAmount.toFixed(2)}&tr=${orderRef}&tn=${orderRef}&cu=INR`;
   const intentId = `pi_${now}_${Math.random().toString(36).substring(2, 7)}`;
-  const expiresAt = now + 5 * 60 * 1000; // 5 minutes validity
+  const expiresAt = now + 30 * 60 * 1000; // 30 minutes validity
 
   const intent: PaymentIntent = {
     intentId,
@@ -210,54 +219,91 @@ export function createPaymentIntent(params: {
   memoryIntents.set(intentId, intent);
   savePaymentIntents();
 
-  console.log(`[PAYMENT-INTENT-CREATED] Created intent ${intentId}: ₹${finalAmount} (Ref: ${orderRef}) for user ${params.userId}`);
+  console.log(`[PAYMENT-INTENT-CREATED] Created 12-digit numeric intent ${intentId}: ₹${finalAmount} (Ref: ${orderRef}) for user ${params.userId}`);
 
   return { success: true, intent };
 }
 
 /**
- * Match an incoming SMS/alert against active pending intents
+ * Match an incoming SMS/alert against pending or uncompleted intents
  */
 export function findMatchingIntent(params: {
   orderRef?: string | null;
   amount?: number;
   utr?: string;
+  all12Digits?: string[];
 }): PaymentIntent | null {
   const now = Date.now();
-  const active = Array.from(memoryIntents.values()).filter(
-    (i) => i.status === "pending" && i.expiresAt > now
+  const allIntents = Array.from(memoryIntents.values());
+  // Candidates that are NOT yet completed (pending or recently expired within 24 hours)
+  const uncompleted = allIntents.filter(
+    (i) => i.status !== "completed" && (now - i.createdAt < 24 * 60 * 60 * 1000)
   );
 
-  // 1. By Order Reference (exact BSM84920 match)
-  if (params.orderRef) {
-    const cleanRef = params.orderRef.toUpperCase().trim();
-    const byRef = active.find((i) => i.orderRef.toUpperCase() === cleanRef);
-    if (byRef) return byRef;
+  const candidate12Digits = new Set<string>();
+  if (params.orderRef) candidate12Digits.add(params.orderRef.toLowerCase().trim());
+  if (params.utr && params.utr.length === 12) candidate12Digits.add(params.utr.trim());
+  if (params.all12Digits && params.all12Digits.length > 0) {
+    for (const d of params.all12Digits) {
+      if (d) candidate12Digits.add(d.trim());
+    }
   }
 
-  // 2. By Exact Decimal Amount (collision-free exact paise match, e.g. 100.01)
+  // 1. PRIMARY MATCH: Match by unique 12-digit code (orderRef)
+  // Each QR code has a globally unique 12-digit numeric code. If it matches, it's 100% this user's payment!
+  if (candidate12Digits.size > 0) {
+    for (const num of candidate12Digits) {
+      // First check active pending intents
+      const matchPending = uncompleted.find(
+        (i) => i.status === "pending" && i.orderRef.toLowerCase() === num.toLowerCase()
+      );
+      if (matchPending) return matchPending;
+
+      // Also check uncompleted intents (in case payment took a bit longer than initial timer)
+      const matchAny = uncompleted.find(
+        (i) => i.orderRef.toLowerCase() === num.toLowerCase()
+      );
+      if (matchAny) return matchAny;
+    }
+  }
+
+  // 2. SECONDARY MATCH: Match by EXACT Decimal Amount (e.g. 2.01, 1.01)
   if (params.amount && params.amount > 0) {
-    const byAmount = active.find((i) => Math.abs(i.amount - params.amount!) < 0.005);
-    if (byAmount) return byAmount;
+    const targetAmt = params.amount;
+    // Check pending intents
+    const matchByExactAmt = uncompleted.find(
+      (i) =>
+        i.status === "pending" &&
+        (Math.abs(i.amount - targetAmt) < 0.005 || Math.abs(i.baseAmount - targetAmt) < 0.005)
+    );
+    if (matchByExactAmt) return matchByExactAmt;
+
+    // Check all uncompleted intents created in the last 60 minutes
+    const matchRecentAmt = uncompleted.find(
+      (i) =>
+        now - i.createdAt < 60 * 60 * 1000 &&
+        (Math.abs(i.amount - targetAmt) < 0.005 || Math.abs(i.baseAmount - targetAmt) < 0.005)
+    );
+    if (matchRecentAmt) return matchRecentAmt;
   }
 
   // 3. By UTR if already mapped
   if (params.utr && params.utr.length === 12) {
-    const byUtr = active.find((i) => i.utr === params.utr);
+    const byUtr = uncompleted.find((i) => i.utr === params.utr);
     if (byUtr) return byUtr;
   }
 
   return null;
 }
 
-function recordIncomingMessage(entry: Omit<RawBotMessage, "id" | "timestamp">) {
+export function recordIncomingMessage(entry: Omit<RawBotMessage, "id" | "timestamp">) {
   const item: RawBotMessage = {
     id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
     timestamp: new Date().toISOString(),
     ...entry
   };
   memoryRawMessages.unshift(item);
-  if (memoryRawMessages.length > 25) {
+  if (memoryRawMessages.length > 50) {
     memoryRawMessages.pop();
   }
 }
@@ -349,6 +395,10 @@ export function saveTelegramConfig(cfg: Partial<TelegramBotConfig>): TelegramBot
   if (cleanedCfg.botToken !== undefined) {
     cleanedCfg.botToken = String(cleanedCfg.botToken).replace(/\s+/g, "").trim();
   }
+  if ("lastError" in cfg && (!cfg.lastError || cfg.lastError === undefined)) {
+    delete memoryConfig.lastError;
+    delete cleanedCfg.lastError;
+  }
   memoryConfig = { ...memoryConfig, ...cleanedCfg };
   try {
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(memoryConfig, null, 2), "utf-8");
@@ -375,15 +425,15 @@ export function parseBankSms(rawText: string, senderName?: string): {
   }
 
   // 1. Detect if debit message (ignore unless clearly credit)
-  // Ensure "transferred to your a/c" or "credited" is NOT mistaken for debit
-  const isExplicitDebit = /\b(debited\s+from|money\s+debited|debited\s+by|sent\s+to\s+[a-zA-Z]|paid\s+to\s+[a-zA-Z]|withdrawn\s+from)\b/i.test(text);
-  const isCredit = /\b(credited|credit|received|deposit|deposited|added|cr\.?|jama|prapt|transferred\s+to\s+your|transferred\s+from|transfer\s+from|payment\s+received|money\s+received|received\s+rs|rcvd\s+rs|rcvd|payment\s+of)\b/i.test(text);
+  // Ensure "paid you" or "credited" is NOT mistaken for debit
+  const isExplicitDebit = /\b(debited\s+from|money\s+debited|debited\s+by|sent\s+to\s+[a-zA-Z]|paid\s+to\s+(?!you\b)[a-zA-Z]|withdrawn\s+from)\b/i.test(text);
+  const isCredit = /\b(paid\s+you|paid|credited|credit|received|deposit|deposited|added|cr\.?|jama|prapt|transferred\s+to\s+your|transferred\s+from|transfer\s+from|payment\s+received|money\s+received|received\s+rs|rcvd\s+rs|rcvd|payment\s+of)\b/i.test(text);
 
   if (isExplicitDebit && !isCredit) {
     return { utr: "", amount: 0, bank: "Unknown", isValid: false, reason: "Debit notification ignored" };
   }
 
-  // 2. Extract 12-digit UTR / RRN
+  // 2. Extract 12-digit UTR / RRN / Order Ref without altering whitespace
   let utr = "";
   const labelledUtrPatterns = [
     /(?:upi\s*ref(?:\s*no|\s*id)?|ref(?:\s*no|\s*id)?|utr(?:\s*no|\s*id)?|rrn|txn\s*id|txnid|upi\s*id|reference\s*(?:no|num)?|upi\/|upi:\s*)[\s:/-]*([0-9]{12})\b/i,
@@ -408,7 +458,7 @@ export function parseBankSms(rawText: string, senderName?: string): {
   const amountPatterns = [
     /(?:rs\.?|inr|₹)\s*([0-9]+(?:,[0-9]+)*(?:\.[0-9]{1,2})?)/i,
     /([0-9]+(?:,[0-9]+)*(?:\.[0-9]{1,2})?)\s*(?:rs\.?|inr|₹)\b/i,
-    /(?:credited|received|deposited|deposit|added|payment\s+of|amt|amount|paid)\s*(?:by|with|for|of|is|:)?\s*(?:rs\.?|inr|₹)?\s*([0-9]+(?:,[0-9]+)*(?:\.[0-9]{1,2})?)/i,
+    /(?:paid(?:\s+you)?|credited|received|deposited|deposit|added|payment\s+of|amt|amount)\s*(?:by|with|for|of|is|:)?\s*(?:rs\.?|inr|₹)?\s*([0-9]+(?:,[0-9]+)*(?:\.[0-9]{1,2})?)/i,
     /transferred\s*(?:rs\.?|inr|₹)?\s*([0-9]+(?:,[0-9]+)*(?:\.[0-9]{1,2})?)/i
   ];
 
@@ -526,6 +576,16 @@ export function addBankAlert(params: {
     // Non-blocking
   }
 
+  // Instantly try matching against active pending 12-digit QR payment intents
+  tryMatchAndCompleteIntent({
+    text: params.rawText || "",
+    utr: cleanUtr,
+    amount: newAlert.amount,
+    bank: newAlert.senderBank
+  }).catch((mErr) => {
+    console.warn("[AUTO-INTENT-MATCH-WARN]", mErr.message);
+  });
+
   console.log(`[TELEGRAM-ALERT-SAVED] UTR: ${cleanUtr} | Amount: ₹${newAlert.amount} | Bank: ${newAlert.senderBank}`);
   return { success: true, alert: newAlert };
 }
@@ -584,18 +644,25 @@ export function verifyAndClaimAlert(
   return { success: true, status: 200, alert };
 }
 
+export function escapeHtml(str: string): string {
+  return String(str || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 /**
  * Send an acknowledgment message to Telegram chat
  */
 export async function sendTelegramReply(botToken: string, chatId: string | number, text: string) {
-  if (!chatId) return;
+  if (!chatId || !botToken) return;
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => {
       try { controller.abort(); } catch {}
     }, 6000);
 
-    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -609,6 +676,20 @@ export async function sendTelegramReply(botToken: string, chatId: string | numbe
       signal: controller.signal
     });
     clearTimeout(timer);
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      console.warn("[TELEGRAM-SERVICE] HTML sendMessage failed, falling back to plain text:", errData?.description || res.status);
+      const plainText = text.replace(/<[^>]*>/g, "");
+      await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Connection": "close" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: plainText
+        })
+      }).catch(() => {});
+    }
   } catch (err: any) {
     console.warn("[TELEGRAM-SERVICE] Failed to send Telegram reply:", err.message);
   }
@@ -663,6 +744,146 @@ function extractBankOnly(text: string, senderName?: string): string {
 /**
  * Unified Telegram update processor used by BOTH polling AND webhooks
  */
+/**
+ * Try to match and complete a payment intent from incoming text or webhook
+ */
+export async function tryMatchAndCompleteIntent(params: {
+  text: string;
+  utr?: string;
+  amount?: number;
+  bank?: string;
+  senderName?: string;
+  chatId?: string | number;
+  token?: string;
+}): Promise<{ matched: boolean; intent?: PaymentIntent }> {
+  const text = String(params.text || "").trim();
+  const all12DigitMatches = text.match(/\b([0-9]{12})\b/g) || [];
+  const refMatch = text.match(/\b(pms[0-9]{9}|[a-z]{3}[0-9]{9}|BSM[A-Z0-9]{4,10})\b/i);
+  const detectedRef = refMatch ? refMatch[1].toLowerCase() : null;
+
+  const detectedUtr = params.utr || (all12DigitMatches.length > 0 ? all12DigitMatches[0] : "");
+  const detectedAmount = params.amount && params.amount > 0 ? params.amount : extractAmountOnly(text);
+  const detectedBank = params.bank || extractBankOnly(text, params.senderName) || "Google Pay / PhonePe / UPI";
+
+  const matchedIntent = findMatchingIntent({
+    orderRef: detectedRef,
+    all12Digits: all12DigitMatches,
+    amount: detectedAmount > 0 ? detectedAmount : undefined,
+    utr: detectedUtr && detectedUtr.length === 12 ? detectedUtr : undefined
+  });
+
+  if (matchedIntent && matchedIntent.status !== "completed") {
+    console.log(`[ZERO-UTR-MATCH] Matched Order: ${matchedIntent.orderRef}, Amount: ₹${matchedIntent.amount} for user: ${matchedIntent.userId}`);
+    matchedIntent.status = "completed";
+    matchedIntent.completedAt = Date.now();
+    const other12 = all12DigitMatches.find((n) => n !== matchedIntent.orderRef);
+    matchedIntent.utr = (detectedUtr && detectedUtr.length === 12) ? detectedUtr : (other12 || matchedIntent.orderRef);
+    matchedIntent.senderBank = detectedBank;
+    savePaymentIntents();
+
+    // Mark corresponding bank alert as used in memoryAlerts & persist
+    const targetAlert = memoryAlerts.find(
+      (a) => a.utr === matchedIntent.utr || a.utr === matchedIntent.orderRef
+    );
+    if (targetAlert) {
+      targetAlert.isUsed = true;
+      targetAlert.usedBy = matchedIntent.userId;
+      targetAlert.usedByEmail = matchedIntent.userEmail;
+      targetAlert.usedAt = new Date().toISOString();
+      saveBankAlerts(memoryAlerts);
+    }
+
+    recordIncomingMessage({
+      sender: params.senderName || "SMS / Gateway",
+      chatId: params.chatId ? String(params.chatId) : "",
+      text,
+      parsed: true,
+      utr: matchedIntent.utr,
+      amount: matchedIntent.amount,
+      bank: detectedBank,
+      reason: `Zero-UTR Matched Order ${matchedIntent.orderRef}`
+    });
+
+    if (intentMatchCallback) {
+      try {
+        await intentMatchCallback(matchedIntent, matchedIntent.utr, text);
+      } catch (cbErr: any) {
+        console.error("[ZERO-UTR-CALLBACK-ERR]", cbErr.message);
+      }
+    }
+
+    const notificationKey = matchedIntent.intentId;
+    if (!notifiedIntents.has(notificationKey) && !matchedIntent.notified) {
+      notifiedIntents.add(notificationKey);
+      notifiedIntents.add(matchedIntent.orderRef);
+      matchedIntent.notified = true;
+      savePaymentIntents();
+
+      const activeToken = params.token || memoryConfig.botToken;
+      const targetChat = params.chatId || memoryConfig.chatId;
+      if (activeToken && targetChat) {
+        await sendTelegramReply(
+          activeToken,
+          targetChat,
+          `📋 <b>[SMS Auto-Forwarded & Received]</b>\n` +
+          `<code>${escapeHtml(text)}</code>\n\n` +
+          `✅ <b>Payment Verified Instantly!</b>\n` +
+          `💰 <b>Amount:</b> ₹${matchedIntent.amount.toFixed(2)}\n` +
+          `🆔 <b>Order Ref:</b> <code>${matchedIntent.orderRef}</code>\n` +
+          `🔢 <b>UTR:</b> <code>${matchedIntent.utr}</code>\n` +
+          `👤 <b>User:</b> ${matchedIntent.userEmail || matchedIntent.userId}\n` +
+          `🏦 <b>Gateway:</b> ${detectedBank}\n` +
+          `🟢 <b>Status:</b> Auto-received & wallet credited in 0.1s!`
+        );
+      }
+    }
+
+    return { matched: true, intent: matchedIntent };
+  }
+
+  return { matched: false };
+}
+
+/**
+ * Auto-reconcile any pending or recently expired intents with unused bank alerts in memory/database
+ */
+export async function reconcilePendingIntentsWithAlerts(): Promise<number> {
+  let reconciled = 0;
+  const now = Date.now();
+  const uncompleted = Array.from(memoryIntents.values()).filter(
+    (i) => i.status !== "completed" && (now - i.createdAt < 24 * 60 * 60 * 1000)
+  );
+
+  for (const intent of uncompleted) {
+    const matchedAlert = memoryAlerts.find((alert) => {
+      if (alert.isUsed) return false;
+      // 1. Exact match by 12-digit code
+      if (alert.utr === intent.orderRef) return true;
+      if (alert.rawText && alert.rawText.includes(intent.orderRef)) return true;
+      // 2. Exact match by unique amount (within 30 mins)
+      if (Math.abs(alert.amount - intent.amount) < 0.005) {
+        const alertTime = new Date(alert.timestamp).getTime();
+        if (Math.abs(intent.createdAt - alertTime) < 60 * 60 * 1000) return true;
+      }
+      return false;
+    });
+
+    if (matchedAlert) {
+      console.log(`[RECONCILE] Found matching alert ${matchedAlert.utr} (₹${matchedAlert.amount}) for uncompleted intent ${intent.orderRef} (user: ${intent.userId})`);
+      const res = await tryMatchAndCompleteIntent({
+        text: matchedAlert.rawText,
+        utr: matchedAlert.utr,
+        amount: matchedAlert.amount,
+        bank: matchedAlert.senderBank
+      });
+      if (res.matched) {
+        reconciled++;
+      }
+    }
+  }
+  return reconciled;
+}
+
 export async function processTelegramUpdate(update: any, token: string): Promise<{
   success: boolean;
   isCommand?: boolean;
@@ -686,8 +907,33 @@ export async function processTelegramUpdate(update: any, token: string): Promise
     : (msg.chat?.title || "Channel/Group");
   const chatId = msg.chat?.id;
 
+  if (chatId) {
+    saveTelegramConfig({ chatId: String(chatId) });
+  }
+
   if (!text) {
     return { success: false, reason: "Message has no text or caption" };
+  }
+
+  // Smart Loop Protection: ONLY ignore messages that were generated by our own bot's replies!
+  // DO NOT ignore messages just because msg.from?.is_bot is true, because SMS Forwarder apps
+  // frequently use Telegram Bot API to forward bank SMS into the chat!
+  const isOurBotReply =
+    text.includes("[SMS Forwarded & Received]") ||
+    text.includes("[SMS Auto-Forwarded & Received]") ||
+    text.includes("[SMS Received & Processed Automatically]") ||
+    text.includes("[SMS Already Received & Recorded]") ||
+    text.includes("Payment Verified Instantly") ||
+    text.includes("Payment Alert Captured on Website") ||
+    text.includes("Pyare SMM Panel UPI Payment Bot is Active") ||
+    text.includes("12-digit UTR Detected:") ||
+    text.includes("Payment Amount Detected:") ||
+    text.includes("Waiting for payment amount SMS") ||
+    text.includes("Waiting for 12-digit UTR") ||
+    text.includes("Zero-UTR Matched Order");
+
+  if (isOurBotReply) {
+    return { success: true, reason: "Bot self-reply ignored to prevent infinite loop" };
   }
 
   console.log(`[TELEGRAM-MSG-IN] From: ${senderName} (Chat: ${chatId}): "${text.replace(/\n/g, " ")}"`);
@@ -725,19 +971,19 @@ export async function processTelegramUpdate(update: any, token: string): Promise
   const pending = partialMessageByChat.get(chatKey);
   const isPendingValid = pending && (Date.now() - pending.timestamp < 180000);
 
-  const standaloneUtrMatch = text.replace(/[\s\-_]/g, "").match(/\b([0-9]{12})\b/);
-  const detectedUtr = standaloneUtrMatch ? standaloneUtrMatch[1] : (parsed.utr || "");
-
   // ========================================================
   // ZERO-UTR INTENT MATCHING ENGINE (Dynamic QR Payments)
   // ========================================================
-  const refMatch = text.match(/\b(BSM[A-Z0-9]{4,8})\b/i);
-  const detectedRef = refMatch ? refMatch[1].toUpperCase() : null;
+  const all12DigitMatches = text.match(/\b([0-9]{12})\b/g) || [];
+  const detectedUtr = (all12DigitMatches.length > 0 ? all12DigitMatches[0] : "") || (parsed.utr || "");
+  const refMatch = text.match(/\b(pms[0-9]{9}|[a-z]{3}[0-9]{9}|BSM[A-Z0-9]{4,10})\b/i);
+  const detectedRef = refMatch ? refMatch[1].toLowerCase() : null;
   const detectedAmount = parsed.amount > 0 ? parsed.amount : extractAmountOnly(text);
-  const detectedBank = (parsed.bank && parsed.bank !== "Unknown") ? parsed.bank : extractBankOnly(text, senderName);
+  const detectedBank = (parsed.bank && parsed.bank !== "Unknown") ? parsed.bank : (extractBankOnly(text, senderName) || "Google Pay / PhonePe / UPI");
 
   const matchedIntent = findMatchingIntent({
     orderRef: detectedRef,
+    all12Digits: all12DigitMatches,
     amount: detectedAmount > 0 ? detectedAmount : undefined,
     utr: detectedUtr && detectedUtr.length === 12 ? detectedUtr : undefined
   });
@@ -746,7 +992,8 @@ export async function processTelegramUpdate(update: any, token: string): Promise
     console.log(`[ZERO-UTR-MATCH] Matched Order: ${matchedIntent.orderRef}, Amount: ₹${matchedIntent.amount} for user: ${matchedIntent.userId}`);
     matchedIntent.status = "completed";
     matchedIntent.completedAt = Date.now();
-    matchedIntent.utr = (detectedUtr && detectedUtr.length === 12) ? detectedUtr : (detectedRef || matchedIntent.orderRef);
+    const other12 = all12DigitMatches.find((n) => n !== matchedIntent.orderRef);
+    matchedIntent.utr = (detectedUtr && detectedUtr.length === 12) ? detectedUtr : (other12 || matchedIntent.orderRef);
     matchedIntent.senderBank = detectedBank;
     savePaymentIntents();
 
@@ -778,36 +1025,52 @@ export async function processTelegramUpdate(update: any, token: string): Promise
       matchedIntent.notified = true;
       savePaymentIntents();
 
-      const targetChat = memoryConfig.chatId || chatId;
+      const targetChat = chatId || memoryConfig.chatId;
       if (targetChat) {
         await sendTelegramReply(
           token,
           targetChat,
-          `✅ <b>Payment Verified!</b>\n\n` +
+          `📋 <b>[SMS Auto-Forwarded & Received]</b>\n` +
+          `<code>${escapeHtml(text)}</code>\n\n` +
+          `✅ <b>Payment Verified Instantly!</b>\n` +
           `💰 <b>Amount:</b> ₹${matchedIntent.amount.toFixed(2)}\n` +
           `🆔 <b>Order Ref:</b> <code>${matchedIntent.orderRef}</code>\n` +
           `🔢 <b>UTR:</b> <code>${matchedIntent.utr}</code>\n` +
           `👤 <b>User:</b> ${matchedIntent.userEmail || matchedIntent.userId}\n` +
           `🏦 <b>Gateway:</b> ${detectedBank}\n` +
-          `🟢 <b>Status:</b> Wallet Credited Instantly (Zero-UTR Auto)`
+          `🟢 <b>Status:</b> Auto-received & wallet credited in 0.1s!`
         );
       }
     }
 
+    const matchedAlertObj: BankAlert = {
+      id: `alert_intent_${matchedIntent.intentId}`,
+      utr: matchedIntent.utr,
+      amount: matchedIntent.amount,
+      senderBank: detectedBank,
+      rawText: text,
+      timestamp: new Date().toISOString(),
+      isUsed: true,
+      usedBy: matchedIntent.userId,
+      usedByEmail: matchedIntent.userEmail,
+      usedAt: new Date().toISOString()
+    };
+
+    const alertIdx = memoryAlerts.findIndex(a => a.utr === matchedIntent.utr || a.utr === matchedIntent.orderRef);
+    if (alertIdx >= 0) {
+      memoryAlerts[alertIdx].isUsed = true;
+      memoryAlerts[alertIdx].usedBy = matchedIntent.userId;
+      memoryAlerts[alertIdx].usedByEmail = matchedIntent.userEmail;
+      memoryAlerts[alertIdx].usedAt = new Date().toISOString();
+      saveBankAlerts(memoryAlerts);
+    } else {
+      memoryAlerts.unshift(matchedAlertObj);
+      saveBankAlerts(memoryAlerts);
+    }
+
     return {
       success: true,
-      alert: {
-        id: `alert_intent_${matchedIntent.intentId}`,
-        utr: matchedIntent.utr,
-        amount: matchedIntent.amount,
-        senderBank: detectedBank,
-        rawText: text,
-        timestamp: new Date().toISOString(),
-        isUsed: true,
-        usedBy: matchedIntent.userId,
-        usedByEmail: matchedIntent.userEmail,
-        usedAt: new Date().toISOString()
-      },
+      alert: matchedAlertObj,
       parsed: { utr: matchedIntent.utr, amount: matchedIntent.amount, bank: detectedBank }
     };
   }
@@ -888,12 +1151,16 @@ export async function processTelegramUpdate(update: any, token: string): Promise
     }
   }
 
-  if (parsed.isValid && parsed.utr && parsed.amount > 0) {
+  const finalUtr = detectedUtr || parsed.utr;
+  const finalAmount = detectedAmount > 0 ? detectedAmount : parsed.amount;
+  const finalBank = detectedBank || parsed.bank || "Google Pay / PhonePe / UPI";
+
+  if (finalUtr && finalUtr.length === 12 && finalAmount > 0) {
     partialMessageByChat.delete(chatKey);
     const result = addBankAlert({
-      utr: parsed.utr,
-      amount: parsed.amount,
-      senderBank: parsed.bank,
+      utr: finalUtr,
+      amount: finalAmount,
+      senderBank: finalBank,
       rawText: text
     });
 
@@ -902,29 +1169,33 @@ export async function processTelegramUpdate(update: any, token: string): Promise
       chatId: chatId || "",
       text,
       parsed: true,
-      utr: parsed.utr,
-      amount: parsed.amount,
-      bank: parsed.bank
+      utr: finalUtr,
+      amount: finalAmount,
+      bank: finalBank
     });
 
     if (result.success && result.alert) {
-      console.log(`[TELEGRAM-SMS-SAVED] UTR: ${parsed.utr}, Amount: ₹${parsed.amount}, Bank: ${parsed.bank}`);
+      console.log(`[TELEGRAM-SMS-SAVED] UTR: ${finalUtr}, Amount: ₹${finalAmount}, Bank: ${finalBank}`);
       await sendTelegramReply(
         token,
-        chatId,
-        `✅ <b>Payment Alert Captured on Website!</b>\n\n` +
-        `💰 <b>Amount:</b> ₹${parsed.amount}\n` +
-        `🔢 <b>UTR / Ref:</b> <code>${parsed.utr}</code>\n` +
-        `🏦 <b>Bank:</b> ${parsed.bank}\n` +
-        `🟢 <b>Status:</b> Added to website database & ready for instant wallet claim.`
+        chatId || memoryConfig.chatId,
+        `📋 <b>[SMS Auto-Forwarded & Received]</b>\n` +
+        `<code>${escapeHtml(text)}</code>\n\n` +
+        `✅ <b>Payment Alert Captured on Website!</b>\n` +
+        `💰 <b>Amount:</b> ₹${finalAmount}\n` +
+        `🔢 <b>UTR / Ref:</b> <code>${finalUtr}</code>\n` +
+        `🏦 <b>Bank:</b> ${finalBank}\n` +
+        `🟢 <b>Status:</b> Auto-received from your device & ready for instant wallet credit!`
       );
       return { success: true, alert: result.alert, parsed };
     } else if (result.duplicate) {
-      console.log(`[TELEGRAM-SMS-DUPLICATE] UTR: ${parsed.utr} already exists.`);
+      console.log(`[TELEGRAM-SMS-DUPLICATE] UTR: ${finalUtr} already exists.`);
       await sendTelegramReply(
         token,
-        chatId,
-        `ℹ️ <b>Duplicate SMS:</b> UTR <code>${parsed.utr}</code> (₹${parsed.amount}) is already recorded in the website database.`
+        chatId || memoryConfig.chatId,
+        `📋 <b>[SMS Auto-Forwarded & Received]</b>\n` +
+        `<code>${escapeHtml(text)}</code>\n\n` +
+        `ℹ️ <b>Already Recorded:</b> UTR <code>${finalUtr}</code> (₹${finalAmount}) is already in the website database.`
       );
       return { success: true, duplicate: true, parsed };
     }
@@ -1261,7 +1532,7 @@ export function getTelegramStatus() {
     maskedToken,
     botUsername: memoryConfig.botUsername || "",
     chatId: memoryConfig.chatId || "",
-    upiId: memoryConfig.upiId || "paytmqr281005050101111956557626@paytm",
+    upiId: memoryConfig.upiId || "",
     payeeName: memoryConfig.payeeName || "Pyare SMM Panel",
     startedAt: memoryConfig.startedAt,
     lastPolledAt: memoryConfig.lastPolledAt,

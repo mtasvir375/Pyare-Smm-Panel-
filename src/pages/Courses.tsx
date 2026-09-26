@@ -171,8 +171,12 @@ export default function Courses() {
         const settingsData = await getCachedSettings();
         if (settingsData) {
           setPaymentSettings(settingsData);
-          const hasAuto = !!(settingsData.razorpayEnabled || settingsData.phonepeEnabled || settingsData.paytmEnabled || settingsData.qrAutoEnabled);
-          setPaymentMethod(hasAuto ? "auto" : "manual");
+          const isInstant = settingsData.instantQrEnabled !== false;
+          const isManual = settingsData.manualQrEnabled !== false;
+          const hasAuto = !!(settingsData.razorpayEnabled || settingsData.phonepeEnabled || settingsData.paytmEnabled);
+          if (isInstant) setPaymentMethod("zero_utr");
+          else if (isManual) setPaymentMethod("manual");
+          else if (hasAuto) setPaymentMethod("auto");
         }
       } catch (error) {
         console.error(error);
@@ -194,11 +198,15 @@ export default function Courses() {
 
   useEffect(() => {
     if (isAddFundsOpen) {
-      import("@/lib/cache").then(mod => mod.getCachedSettings(false)).then(settings => {
+      import("@/lib/cache").then(mod => mod.getCachedSettings(true)).then(settings => {
         if (settings) {
           setPaymentSettings(settings);
+          const isInstant = settings.instantQrEnabled !== false;
+          const isManual = settings.manualQrEnabled !== false;
           const hasAuto = !!(settings.razorpayEnabled || settings.phonepeEnabled || settings.paytmEnabled);
-          setPaymentMethod(hasAuto ? "auto" : "manual");
+          if (isInstant) setPaymentMethod("zero_utr");
+          else if (isManual) setPaymentMethod("manual");
+          else if (hasAuto) setPaymentMethod("auto");
         }
       }).catch(console.error);
     }
@@ -1096,45 +1104,68 @@ export default function Courses() {
 
             {(() => {
               const hasTraditionalAuto = !!(paymentSettings?.razorpayEnabled || paymentSettings?.phonepeEnabled || paymentSettings?.paytmEnabled);
+              const isInstantQrEnabled = paymentSettings?.instantQrEnabled !== false;
+              const isManualQrEnabled = paymentSettings?.manualQrEnabled !== false;
+              
+              // Count available methods
+              const availableMethods = [
+                ...(isInstantQrEnabled ? ["zero_utr"] : []),
+                ...(isManualQrEnabled ? ["manual"] : []),
+                ...(hasTraditionalAuto ? ["auto"] : [])
+              ];
+
+              // Ensure active paymentMethod is valid
+              let effectiveMethod = paymentMethod;
+              if (effectiveMethod === "zero_utr" && !isInstantQrEnabled) {
+                effectiveMethod = isManualQrEnabled ? "manual" : (hasTraditionalAuto ? "auto" : "manual");
+              } else if (effectiveMethod === "manual" && !isManualQrEnabled) {
+                effectiveMethod = isInstantQrEnabled ? "zero_utr" : (hasTraditionalAuto ? "auto" : "zero_utr");
+              } else if (effectiveMethod === "auto" && !hasTraditionalAuto) {
+                effectiveMethod = isInstantQrEnabled ? "zero_utr" : (isManualQrEnabled ? "manual" : "zero_utr");
+              }
               
               return (
                 <>
-                  {depositAmount && Number(depositAmount) > 0 && (
+                  {depositAmount && Number(depositAmount) > 0 && availableMethods.length > 1 && (
                     <div className="flex flex-wrap gap-2 mb-3 mt-1">
-                      <button
-                        type="button"
-                        onClick={() => setPaymentMethod("zero_utr")}
-                        className={`flex-1 min-w-[120px] flex flex-col items-center justify-center p-3 rounded-2xl border-2 text-center transition-all ${
-                          paymentMethod === "zero_utr" 
-                            ? "border-emerald-500 bg-emerald-50 text-emerald-700 shadow-sm" 
-                            : "border-gray-100 hover:border-gray-200 text-gray-600"
-                        }`}
-                      >
-                        <Zap className="w-5 h-5 mb-1 text-emerald-600 fill-emerald-600 animate-pulse" />
-                        <span className="text-xs font-bold">Instant Auto QR</span>
-                        <span className="text-[9px] opacity-80 text-emerald-600 font-semibold">Zero-UTR (2s Credit)</span>
-                      </button>
+                      {isInstantQrEnabled && (
+                        <button
+                          type="button"
+                          onClick={() => setPaymentMethod("zero_utr")}
+                          className={`flex-1 min-w-[120px] flex flex-col items-center justify-center p-3 rounded-2xl border-2 text-center transition-all ${
+                            effectiveMethod === "zero_utr" 
+                              ? "border-emerald-500 bg-emerald-50 text-emerald-700 shadow-sm" 
+                              : "border-gray-100 hover:border-gray-200 text-gray-600"
+                          }`}
+                        >
+                          <Zap className="w-5 h-5 mb-1 text-emerald-600 fill-emerald-600 animate-pulse" />
+                          <span className="text-xs font-bold">Instant Auto QR</span>
+                          <span className="text-[9px] opacity-80 text-emerald-600 font-semibold">Zero-UTR (2s Credit)</span>
+                        </button>
+                      )}
 
-                      <button
-                        type="button"
-                        onClick={() => setPaymentMethod("manual")}
-                        className={`flex-1 min-w-[120px] flex flex-col items-center justify-center p-3 rounded-2xl border-2 text-center transition-all ${
-                          paymentMethod === "manual" 
-                            ? "border-primary bg-primary/5 text-primary" 
-                            : "border-gray-100 hover:border-gray-200 text-gray-600"
-                        }`}
-                      >
-                        <QrCode className="w-5 h-5 mb-1 text-blue-500" />
-                        <span className="text-xs font-bold">Manual UPI QR</span>
-                        <span className="text-[9px] opacity-80">Enter 12-digit UTR</span>
-                      </button>
+                      {isManualQrEnabled && (
+                        <button
+                          type="button"
+                          onClick={() => setPaymentMethod("manual")}
+                          className={`flex-1 min-w-[120px] flex flex-col items-center justify-center p-3 rounded-2xl border-2 text-center transition-all ${
+                            effectiveMethod === "manual" 
+                              ? "border-primary bg-primary/5 text-primary" 
+                              : "border-gray-100 hover:border-gray-200 text-gray-600"
+                          }`}
+                        >
+                          <QrCode className="w-5 h-5 mb-1 text-blue-500" />
+                          <span className="text-xs font-bold">Manual UPI QR</span>
+                          <span className="text-[9px] opacity-80">Enter 12-digit UTR</span>
+                        </button>
+                      )}
 
                       {hasTraditionalAuto && (
                         <button
                           type="button"
                           onClick={() => setPaymentMethod("auto")}
                           className={`flex-1 min-w-[120px] flex flex-col items-center justify-center p-3 rounded-2xl border-2 text-center transition-all ${
-                            paymentMethod === "auto" 
+                            effectiveMethod === "auto" 
                               ? "border-primary bg-primary/5 text-primary" 
                               : "border-gray-100 hover:border-gray-200 text-gray-600"
                           }`}
@@ -1147,7 +1178,7 @@ export default function Courses() {
                     </div>
                   )}
 
-                  {paymentMethod === "zero_utr" && depositAmount && Number(depositAmount) > 0 && user && (
+                  {effectiveMethod === "zero_utr" && isInstantQrEnabled && depositAmount && Number(depositAmount) > 0 && user && (
                     <InstantZeroUtrPayment
                       amount={Number(depositAmount)}
                       userId={user.uid}
@@ -1163,11 +1194,11 @@ export default function Courses() {
                         }
                         setIsAddFundsOpen(false);
                       }}
-                      onCancelOrSwitchManual={() => setPaymentMethod("manual")}
+                      onCancelOrSwitchManual={isManualQrEnabled ? () => setPaymentMethod("manual") : undefined}
                     />
                   )}
 
-                  {paymentMethod === "auto" && hasTraditionalAuto && depositAmount && Number(depositAmount) > 0 && (
+                  {effectiveMethod === "auto" && hasTraditionalAuto && depositAmount && Number(depositAmount) > 0 && (
                     <div className="space-y-2 pt-2 animate-in fade-in slide-in-from-top-2">
                       <div className="relative flex items-center py-2">
                         <div className="flex-grow border-t border-gray-100"></div>
@@ -1228,7 +1259,7 @@ export default function Courses() {
                     </div>
                   )}
 
-                  {paymentMethod === "manual" && depositAmount && Number(depositAmount) > 0 && paymentSettings?.upiId && (
+                  {effectiveMethod === "manual" && isManualQrEnabled && depositAmount && Number(depositAmount) > 0 && paymentSettings?.upiId && (
                     <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
                       <div className="flex flex-col items-center gap-2 p-4 bg-primary/5 rounded-3xl border-2 border-primary/10 relative overflow-hidden">
                         <div className="absolute top-0 right-0 p-2 opacity-5">
@@ -1299,9 +1330,15 @@ export default function Courses() {
                     </div>
                   )}
 
-                  {!paymentSettings?.upiId && (
+                  {effectiveMethod === "manual" && isManualQrEnabled && !paymentSettings?.upiId && (
                     <div className="p-4 bg-orange-50 text-orange-700 rounded-2xl text-xs border border-orange-100">
                       Payment system is currently being set up by admin. Please try again later.
+                    </div>
+                  )}
+
+                  {availableMethods.length === 0 && (
+                    <div className="p-4 bg-gray-50 text-gray-600 rounded-2xl text-xs border border-gray-200 text-center">
+                      Payment options are temporarily unavailable. Please contact support.
                     </div>
                   )}
                 </>
@@ -1309,7 +1346,7 @@ export default function Courses() {
             })()}
           </div>
 
-          {paymentMethod === "manual" && (
+          {paymentMethod === "manual" && paymentSettings?.manualQrEnabled !== false && (
             <DialogFooter>
               <Button 
                 className="w-full h-12 rounded-xl text-base font-bold shadow-lg bg-emerald-600 hover:bg-emerald-700 text-white" 

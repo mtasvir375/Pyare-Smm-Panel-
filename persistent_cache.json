@@ -1,54 +1,56 @@
 {
   "settings": {
     "data": {
-      "customGateway2Url": "",
-      "providerApiKey": "",
-      "qrAutoEnabled": false,
-      "customGateway2Secret": "",
-      "customGateway1Name": "",
-      "backendApiUrl": "",
-      "paytmMerchantKey": "",
-      "paytmEnabled": false,
-      "qrAutoToken": "",
-      "providerApiUrl": "",
-      "qrAutoApiKey": "",
-      "selectedTheme": "amber",
-      "phonepeSaltKey": "",
-      "phonepeEnabled": false,
-      "customGateway1Url": "",
-      "phonepeMerchantId": "",
-      "selectedFestivalTheme": "none",
-      "telegramChatId": "12345678",
-      "upiId": "mdsaudalam621@okicici",
-      "phonepeSaltIndex": "1",
-      "merchantName": "Pyare SMM Panel",
-      "customGateway1Secret": "",
-      "customGateway2Key": "",
-      "razorpayKeySecret": "",
-      "telegramBotEnabled": true,
-      "qrAutoProvider": "smmqr",
-      "phonepeEnv": "sandbox",
-      "whatsappLink": "https://wa.me/919999999999",
-      "paymentQrUrl": "",
-      "whatsappChatNumber": "9942658657",
-      "customGateway1Key": "",
-      "telegramBotToken": "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0",
-      "razorpayEnabled": false,
-      "updatedAt": "2026-09-22T09:12:32.956Z",
-      "smsForwarderEnabled": true,
-      "customGateway2Name": "",
-      "customGateway1Enabled": false,
-      "paytmEnv": "sandbox",
-      "razorpayKeyId": "",
       "smsForwarderSecret": "",
-      "qrAutoUrl": "",
-      "telegramBotUsername": "",
-      "paytmMid": "",
-      "customGateway2Enabled": false,
+      "providerApiKey": "",
+      "instantQrEnabled": true,
+      "customGateway1Url": "",
+      "whatsappChatNumber": "9942653865",
+      "telegramBotEnabled": true,
+      "razorpayKeySecret": "",
+      "telegramBotToken": "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0",
+      "updatedAt": "2026-09-25T08:53:19.531Z",
       "guideVideoUrl": "",
-      "autoApproveDeposits": false
+      "razorpayEnabled": false,
+      "telegramBotUsername": "BbbSmart_bot",
+      "upiId": "mdsaudalam621@okicici",
+      "paytmMerchantKey": "",
+      "customGateway2Key": "",
+      "paytmEnv": "sandbox",
+      "customGateway1Secret": "",
+      "selectedTheme": "amber",
+      "qrAutoUrl": "",
+      "phonepeMerchantId": "",
+      "phonepeSaltIndex": "1",
+      "customGateway1Name": "",
+      "customGateway2Name": "",
+      "razorpayKeyId": "",
+      "autoApproveDeposits": false,
+      "paymentQrUrl": "",
+      "qrAutoEnabled": false,
+      "manualQrEnabled": false,
+      "qrAutoProvider": "smmqr",
+      "customGateway1Key": "",
+      "providerApiUrl": "",
+      "selectedFestivalTheme": "none",
+      "smsForwarderEnabled": true,
+      "backendApiUrl": "",
+      "paytmMid": "",
+      "customGateway2Secret": "",
+      "customGateway1Enabled": false,
+      "whatsappLink": "https://wa.me/919999999999",
+      "telegramChatId": "12345678",
+      "merchantName": "Pyare SMM Panel",
+      "phonepeEnabled": false,
+      "phonepeEnv": "sandbox",
+      "qrAutoApiKey": "",
+      "customGateway2Enabled": false,
+      "phonepeSaltKey": "",
+      "customGateway2Url": "",
+      "paytmEnabled": false,
+      "qrAutoToken": ""
     },
-    "time": 1790167028897
+    "time": 1790417442814
   },
   "providers": [
     [
@@ -652,20 +654,19 @@
       "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
       {
         "data": {
-          "id": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-          "balance": 474908.08,
-          "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-          "lastOrderedAt": "2026-09-23T11:47:59.101Z",
-          "createdAt": "2026-09-14T13:39:37.418Z",
-          "displayName": "Md Saad Alam",
-          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIVDCPXKVjVCP0jqcCpWx5c759WFIsH20U7smDKXtVCJQmldT5A=s96-c",
-          "email": "mtasvir375@gmail.com",
-          "lastActive": "2026-06-17T09:24:31.827Z",
           "role": "student",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIVDCPXKVjVCP0jqcCpWx5c759WFIsH20U7smDKXtVCJQmldT5A=s96-c",
           "last_ordered_at": "2026-07-12T20:24:51.921Z",
-          "updatedAt": "2026-09-23T12:32:03.883Z"
+          "lastOrderedAt": "2026-09-25T10:29:57.109Z",
+          "email": "mtasvir375@gmail.com",
+          "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "displayName": "Md Saad Alam",
+          "lastActive": "2026-06-17T09:24:31.827Z",
+          "createdAt": "2026-09-14T13:39:37.418Z",
+          "balance": 475027.22,
+          "updatedAt": "2026-09-26T10:03:56.486Z"
         },
-        "time": 1790166848325
+        "time": 1790417603823
       }
     ],
     [
@@ -673,35 +674,34 @@
       {
         "data": {
           "id": "test_user_123",
-          "balance": 499,
+          "balance": 509,
           "email": "test@example.com",
-          "updatedAt": "2026-09-21T19:24:24.917Z"
+          "updatedAt": "2026-09-25T09:25:39.659Z"
         },
-        "time": 1790018664917
+        "time": 1790328339659
       }
     ],
     [
       "w1VAF0MJoYducsSTQtMRW907OBX2",
       {
         "data": {
-          "id": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "displayName": "Md Saud alam",
+          "balance": 202.96,
+          "lastOrderedAt": "2026-09-18T20:49:43.838Z",
           "referralCount": 68,
-          "lastActive": "2026-06-19T17:34:46.827Z",
-          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIUTpZ85iklK5gQBo-8WZW4pbsWDEuag3g-3zNEAbq7K1wBaw=s96-c",
+          "last_ordered_at": "2026-07-12T20:25:19.570Z",
+          "email": "mdsaudalam621@gmail.com",
+          "updatedAt": "2026-09-26T10:20:49.270Z",
+          "uid": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "referralEarnings": 26875,
           "createdAt": {
             "_methodName": "serverTimestamp"
           },
-          "updatedAt": "2026-09-15T22:01:57.102Z",
-          "role": "student",
-          "balance": 9798,
-          "referralEarnings": 26875,
-          "email": "mdsaudalam621@gmail.com",
-          "lastOrderedAt": "2026-09-15T13:52:23.010Z",
-          "uid": "w1VAF0MJoYducsSTQtMRW907OBX2",
-          "displayName": "Md Saud alam",
-          "last_ordered_at": "2026-07-12T20:25:19.570Z"
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIUTpZ85iklK5gQBo-8WZW4pbsWDEuag3g-3zNEAbq7K1wBaw=s96-c",
+          "lastActive": "2026-06-19T17:34:46.827Z",
+          "role": "student"
         },
-        "time": 1789509717102
+        "time": 1790418049270
       }
     ],
     [
@@ -750,6 +750,7 @@
       "test_user_race_1",
       {
         "data": {
+          "id": "test_user_race_1",
           "uid": "test_user_race_1",
           "role": "student",
           "createdAt": "2026-09-23T12:37:21.545Z",
@@ -757,6 +758,954 @@
           "updatedAt": "2026-09-23T12:37:21.545Z"
         },
         "time": 1790167041545
+      }
+    ],
+    [
+      "ia6Wi9437mUesTtbIJbmiPrIsnN2",
+      {
+        "data": {
+          "id": "ia6Wi9437mUesTtbIJbmiPrIsnN2",
+          "uid": "ia6Wi9437mUesTtbIJbmiPrIsnN2",
+          "email": "rajadole34@gmail.com",
+          "displayName": "Raj Adole",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocLfVCaK0TmnGogF3F3wnM1nIy37R4ydgOJiRk9uPjox492asg=s96-c",
+          "role": "student",
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-27T12:45:35.040Z",
+          "balance": 0,
+          "lastActive": "2026-05-03T15:34:53.619Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "WNE6dOdFjYRDov7GwsMubgNrjHu1",
+      {
+        "data": {
+          "id": "WNE6dOdFjYRDov7GwsMubgNrjHu1",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocJXCRZFCHmfMVJAlY38RWJ1SgFatpx2H6R2p9SlhMJoMosLwl0=s96-c",
+          "uid": "WNE6dOdFjYRDov7GwsMubgNrjHu1",
+          "createdAt": "2026-07-07T07:50:48.666Z",
+          "role": "student",
+          "balance": 0,
+          "displayName": "Mdmahbub",
+          "email": "m0652820@gmail.com",
+          "updatedAt": "2026-07-07T07:50:48.666Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "Wehi2mo9fAWlwnsrv0Pjwq8QFVf1",
+      {
+        "data": {
+          "id": "Wehi2mo9fAWlwnsrv0Pjwq8QFVf1",
+          "uid": "Wehi2mo9fAWlwnsrv0Pjwq8QFVf1",
+          "email": "sahenajsukuabali@gmail.com",
+          "displayName": "Sahenaj Sukua bali78",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocK0GkmLAeGAO0sC2j7Fy551eSOua1KrdfwrQic21M_Hg68ViA=s96-c",
+          "role": "student",
+          "balance": 1,
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-28T09:39:27.310Z",
+          "lastActive": "2026-04-29T08:49:47.988Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "xNdatw4JZsUnjFLRA0JYvqLjDru1",
+      {
+        "data": {
+          "id": "xNdatw4JZsUnjFLRA0JYvqLjDru1",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocLc-TX9zzB6lJ2x4gqZ6xa_1peMlyY4JBfRLHJzhfx6Z3FNVw_y=s96-c",
+          "uid": "xNdatw4JZsUnjFLRA0JYvqLjDru1",
+          "createdAt": "2026-08-30T12:12:39.221Z",
+          "role": "student",
+          "displayName": "Md Meharban",
+          "email": "mda441233@gmail.com",
+          "balance": 0,
+          "updatedAt": "2026-08-30T12:15:33.178Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "VVtIPnaclSRtd0wPQV8GZNaklba2",
+      {
+        "data": {
+          "id": "VVtIPnaclSRtd0wPQV8GZNaklba2",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocJbBrL5EWY3hZhYkLHn_tufwOcj_g1LzeGm7tZG7xlioZrPtok=s96-c",
+          "uid": "VVtIPnaclSRtd0wPQV8GZNaklba2",
+          "createdAt": "2026-07-04T23:34:31.673Z",
+          "role": "student",
+          "balance": 0,
+          "displayName": "Ashwani Rai",
+          "email": "raiashwani298@gmail.com",
+          "updatedAt": "2026-07-04T23:34:31.673Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "LVmqO9Dg8wUlymMzk3ad2zY0vlH3",
+      {
+        "data": {
+          "id": "LVmqO9Dg8wUlymMzk3ad2zY0vlH3",
+          "uid": "LVmqO9Dg8wUlymMzk3ad2zY0vlH3",
+          "email": "alauddinansari37090@gmail.com",
+          "displayName": "Alauddin Ansari",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocJSxQoRbTDqRaEKjRX64YXcNsY6J84Wg7TTF6-MLJ9nACbomw=s96-c",
+          "role": "student",
+          "balance": 1,
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-29T12:37:25.039Z",
+          "lastActive": "2026-04-29T12:37:25.578Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "s7xc6vJB1rUHs2wms7DkPUQZCKZ2",
+      {
+        "data": {
+          "id": "s7xc6vJB1rUHs2wms7DkPUQZCKZ2",
+          "uid": "s7xc6vJB1rUHs2wms7DkPUQZCKZ2",
+          "email": "nadimboss681@gmail.com",
+          "displayName": "Nadim boss",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocLIA6gSONrwvmvCSQjfsd4OIgRDmtpE1cOB2vKrWARLgjS3fQ=s96-c",
+          "role": "student",
+          "createdAt": "2026-05-05T07:38:11.513Z",
+          "lastActive": "2026-05-05T07:38:11.833Z",
+          "balance": 0,
+          "lastOrderedAt": "2026-05-05T07:40:23.615Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "yknOCRc0GVQ1F8lZxNjrksStg7v1",
+      {
+        "data": {
+          "id": "yknOCRc0GVQ1F8lZxNjrksStg7v1",
+          "uid": "yknOCRc0GVQ1F8lZxNjrksStg7v1",
+          "email": "srushtibendre336@gmail.com",
+          "displayName": "Srushti Bendre",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocLlohUwSFH8ezjgojIfbZ3htViGwusdLCu3XOkxnHmTcrB7sQ=s96-c",
+          "role": "student",
+          "balance": 1,
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-26T14:58:14.673Z",
+          "lastActive": "2026-04-26T14:58:14.883Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "WfJ1bXhhFSOfLqqzHq5mYDSiopk1",
+      {
+        "data": {
+          "id": "WfJ1bXhhFSOfLqqzHq5mYDSiopk1",
+          "uid": "WfJ1bXhhFSOfLqqzHq5mYDSiopk1",
+          "email": "eavv711@gmail.com",
+          "displayName": "Eavv",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocI6PigZwgoJ0JPWYSMkhvTHsJ541dqa7SFQOX-jDyUoGAPZIg=s96-c",
+          "role": "student",
+          "createdAt": "2026-05-05T12:00:31.310Z",
+          "lastActive": "2026-05-05T12:00:32.281Z",
+          "balance": 0,
+          "lastOrderedAt": "2026-05-05T12:01:57.356Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "9twS6E0GrCaMbBvu8Q7L2zFm5w53",
+      {
+        "data": {
+          "id": "9twS6E0GrCaMbBvu8Q7L2zFm5w53",
+          "uid": "9twS6E0GrCaMbBvu8Q7L2zFm5w53",
+          "email": "valmikmali6515@gmail.com",
+          "displayName": "Valmik Mali",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocKr41Xie6G6dXwq47P_wZwZL27ZipwXPuQAYuM-LMLWjNAJBw=s96-c",
+          "role": "student",
+          "createdAt": "2026-05-05T07:20:06.998Z",
+          "lastActive": "2026-05-05T07:20:07.380Z",
+          "balance": 0,
+          "lastOrderedAt": "2026-05-05T07:21:07.649Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "gurH2YCU9cfHfJozSSl8QGmfK5s2",
+      {
+        "data": {
+          "id": "gurH2YCU9cfHfJozSSl8QGmfK5s2",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocJG6eZHTFLZoOet3IrO5uUPG6aiLOt-xJdpXEhqzmLt4QI62A=s96-c",
+          "uid": "gurH2YCU9cfHfJozSSl8QGmfK5s2",
+          "createdAt": "2026-07-05T00:33:25.338Z",
+          "role": "student",
+          "displayName": "Bhai please",
+          "email": "bhaiplease920@gmail.com",
+          "balance": 2,
+          "updatedAt": "2026-07-05T08:31:08.079Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "TJVmyYhf6yUi2BcbnaMmXImlots1",
+      {
+        "data": {
+          "id": "TJVmyYhf6yUi2BcbnaMmXImlots1",
+          "uid": "TJVmyYhf6yUi2BcbnaMmXImlots1",
+          "email": "rajputvishal998809@gmail.com",
+          "displayName": "Vishal",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocJn3UuLIr975Ko1febZRV6P-bwwXi-p6OjnbLMjdugVZiTufOQ=s96-c",
+          "role": "student",
+          "balance": 1,
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-29T09:50:13.404Z",
+          "lastActive": "2026-04-29T09:50:14.420Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "UlsK3PLAGHdiSZAhx58Cb23FXLq2",
+      {
+        "data": {
+          "id": "UlsK3PLAGHdiSZAhx58Cb23FXLq2",
+          "uid": "UlsK3PLAGHdiSZAhx58Cb23FXLq2",
+          "email": "mdtasvir888@gmail.com",
+          "displayName": "Md Tasvir",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocL1aiOvy79cmcqe1zqPdV3f2RfrT92-bU3YLVFTOkdCnzvfkA=s96-c",
+          "role": "student",
+          "createdAt": "2026-05-27T00:45:34.637Z",
+          "lastActive": "2026-05-27T00:45:35.282Z",
+          "balance": 0,
+          "lastOrderedAt": "2026-05-27T00:46:04.182Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "iiXHPtyU40V0xHAnHr0l5ZkrM5h1",
+      {
+        "data": {
+          "id": "iiXHPtyU40V0xHAnHr0l5ZkrM5h1",
+          "uid": "iiXHPtyU40V0xHAnHr0l5ZkrM5h1",
+          "email": "monuakhtar427@gmail.com",
+          "displayName": "monu akhtar",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocJwwp_0B4cD03mba1iZ7hKfbhaJr_Fcz4w6z2cH_31WQPyhvto=s96-c",
+          "role": "student",
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-05-01T09:13:39.869Z",
+          "balance": 0,
+          "lastActive": "2026-05-01T09:13:40.218Z",
+          "updatedAt": "2026-07-23T07:17:24.216Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "VJcE3u1dKqdqXWVCY8YMEbjRa1o1",
+      {
+        "data": {
+          "id": "VJcE3u1dKqdqXWVCY8YMEbjRa1o1",
+          "uid": "VJcE3u1dKqdqXWVCY8YMEbjRa1o1",
+          "email": "harshitverma8233549610@gmail.com",
+          "displayName": "harshit Verma",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocKQsq3qnX2G5W1FBolCK-bUP6kO9yJ2DuMwOYvt-nDVpPtNXgQ=s96-c",
+          "role": "student",
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-26T08:32:31.995Z",
+          "balance": 0,
+          "lastOrderedAt": "2026-05-10T10:03:59.289Z",
+          "lastActive": "2026-06-15T13:17:53.008Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "6yKl8pfClFV1OaVQTsVZcr3csF02",
+      {
+        "data": {
+          "id": "6yKl8pfClFV1OaVQTsVZcr3csF02",
+          "uid": "6yKl8pfClFV1OaVQTsVZcr3csF02",
+          "email": "afsaralam55517246@gmail.com",
+          "displayName": "Afsar Alam",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocJqAJWmvd3jmYMgmkY_G3fFucN1NMHY_GsLV7fOuZvo9eKGlDk=s96-c",
+          "role": "student",
+          "balance": 1,
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-29T13:39:10.743Z",
+          "lastActive": "2026-04-29T13:39:11.444Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "S9OzZdOdW4M2O6F1oIDaORroNWk2",
+      {
+        "data": {
+          "id": "S9OzZdOdW4M2O6F1oIDaORroNWk2",
+          "uid": "S9OzZdOdW4M2O6F1oIDaORroNWk2",
+          "email": "luckykumar78470@gmail.com",
+          "displayName": "Lucky Kumar",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocJ04Lk7Wz9ChM53dawA3y6xANqVyLA4iIjgUGXveis39QUPQg=s96-c",
+          "role": "student",
+          "createdAt": "2026-05-10T16:36:39.232Z",
+          "lastOrderedAt": "2026-05-28T06:29:47.928Z",
+          "updatedAt": "2026-06-03T10:37:14.730Z",
+          "balance": 11,
+          "lastActive": "2026-06-03T16:33:29.549Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "DmPHMmfOE5e2qpcqvuKhapBcbKa2",
+      {
+        "data": {
+          "id": "DmPHMmfOE5e2qpcqvuKhapBcbKa2",
+          "uid": "DmPHMmfOE5e2qpcqvuKhapBcbKa2",
+          "email": "jigarthakor15924@gmail.com",
+          "displayName": "Jigar Thakor",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocJfeTH-7KeX0CqzeiBqxaXXcRWsPUitBLHGQ6k-d7BFRRk5iQ=s96-c",
+          "role": "student",
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-28T13:34:20.787Z",
+          "balance": 0,
+          "lastActive": "2026-05-03T03:35:57.584Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "uDu7rwv4yLQaFdPbneasSLyo9V43",
+      {
+        "data": {
+          "id": "uDu7rwv4yLQaFdPbneasSLyo9V43",
+          "uid": "uDu7rwv4yLQaFdPbneasSLyo9V43",
+          "email": "princerazz1983@gmail.com",
+          "displayName": "Munna yadav",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocJuGwggl4MZ3nS7jpz2MvELCd9mySxP5rxznBCUQfnOrIBrwJsl=s96-c",
+          "role": "student",
+          "createdAt": "2026-05-05T05:53:28.560Z",
+          "lastActive": "2026-05-05T05:53:29.129Z",
+          "balance": 0.5,
+          "lastOrderedAt": "2026-05-05T06:28:38.419Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "X8xRenxyc8eZkTRrsdOi75jEA4H2",
+      {
+        "data": {
+          "id": "X8xRenxyc8eZkTRrsdOi75jEA4H2",
+          "uid": "X8xRenxyc8eZkTRrsdOi75jEA4H2",
+          "email": "ganeshbhagat4663@gmail.com",
+          "displayName": "Ganesh Bhagat",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocKqkmGNgqjllTtaMS64lj-f_oKrx96ewizvo8o9PhNjMYXo0A=s96-c",
+          "role": "student",
+          "createdAt": "2026-05-11T06:11:04.052Z",
+          "lastActive": "2026-05-11T06:11:04.642Z",
+          "balance": 0,
+          "lastOrderedAt": "2026-05-11T06:11:58.868Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "63Mf81NibqP3NFZGntUahtf6evo1",
+      {
+        "data": {
+          "id": "63Mf81NibqP3NFZGntUahtf6evo1",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIhMcsXcliW-GEiGCbl0f6rWO6pNcX4Uk142wvAD7zqo2F57w=s96-c",
+          "uid": "63Mf81NibqP3NFZGntUahtf6evo1",
+          "role": "student",
+          "displayName": "Md Saud Alam",
+          "email": "mdsaudalam5386@gmail.com",
+          "createdAt": "2026-07-12T21:10:37.868Z",
+          "balance": 486.17,
+          "updatedAt": "2026-07-23T02:20:46.887Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "JXgBc4QOUwXqu4CYBqLg4EQuivk2",
+      {
+        "data": {
+          "id": "JXgBc4QOUwXqu4CYBqLg4EQuivk2",
+          "uid": "JXgBc4QOUwXqu4CYBqLg4EQuivk2",
+          "email": "bhagwanbharti51@gmail.com",
+          "displayName": "Bhagwan Bharti",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocKKuzF9gq3AJJscxusnhHQvxTN3ZpJ0kECKjkvz_g0gPxWrlw=s96-c",
+          "role": "student",
+          "balance": 1,
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-26T14:47:45.100Z",
+          "lastActive": "2026-05-03T01:46:22.897Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "KceP1vuPn6g7vDE8OI0k1yL5vF13",
+      {
+        "data": {
+          "id": "KceP1vuPn6g7vDE8OI0k1yL5vF13",
+          "uid": "KceP1vuPn6g7vDE8OI0k1yL5vF13",
+          "email": "sautamraj576@gmail.com",
+          "displayName": "Sautam Raj",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocLUpoL7j6l6gRcTtPBQ4ILLGXdyWKmEEbGeSC5s8cye-Y6l5Cs=s96-c",
+          "role": "student",
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-27T11:40:56.307Z",
+          "balance": 0,
+          "lastOrderedAt": "2026-05-02T09:20:24.777Z",
+          "lastActive": "2026-05-04T10:43:41.646Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "ZweZMzKDypgwzUOTflL6dt7eUEA3",
+      {
+        "data": {
+          "id": "ZweZMzKDypgwzUOTflL6dt7eUEA3",
+          "uid": "ZweZMzKDypgwzUOTflL6dt7eUEA3",
+          "email": "ak48196579544@gmail.com",
+          "displayName": "Abhishek Kumar",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocLeE6Xzbd6OjSabybCUFcXlULhqUeOg9FKm3JF_NNzZb3jlLg=s96-c",
+          "role": "student",
+          "balance": 1,
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-29T13:03:24.907Z",
+          "lastActive": "2026-04-29T13:03:25.154Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "y1A8Dg7RccTsOAU8gHvHkZhGgkw1",
+      {
+        "data": {
+          "id": "y1A8Dg7RccTsOAU8gHvHkZhGgkw1",
+          "uid": "y1A8Dg7RccTsOAU8gHvHkZhGgkw1",
+          "email": "kolkatadeaf344@gmail.com",
+          "displayName": "Kolkata Deaf",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocK531yyivt9gJbXxNdAaioyyZPugnDJnhDMtdqejzhjr71lq0ygRA=s96-c",
+          "role": "student",
+          "balance": 1,
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-29T10:05:17.271Z",
+          "lastActive": "2026-04-30T18:52:16.145Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "An4K15t6r9P7ivkXQqZ8CwTqz313",
+      {
+        "data": {
+          "id": "An4K15t6r9P7ivkXQqZ8CwTqz313",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocJhS7Ok20AJ46YWdJr9QeuKGXNYKjcATWu1pBp33OjOYXDu6w=s96-c",
+          "uid": "An4K15t6r9P7ivkXQqZ8CwTqz313",
+          "role": "student",
+          "displayName": "Mohmad Alif",
+          "email": "mohmadalif2@gmail.com",
+          "createdAt": {
+            "_methodName": "serverTimestamp"
+          },
+          "balance": 0,
+          "updatedAt": "2026-09-12T11:09:15.360Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "1JsdeZvVEWWh6txoio9r5HxNBcl2",
+      {
+        "data": {
+          "id": "1JsdeZvVEWWh6txoio9r5HxNBcl2",
+          "uid": "1JsdeZvVEWWh6txoio9r5HxNBcl2",
+          "email": "ashishyadaventertainment274@gmail.com",
+          "displayName": "Ashish Yadav Entertainment",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocK8r-H3WwasBusw3P9gtTTpWfDx0RaiH8x7G-OC0QpFvSE3AQ=s96-c",
+          "role": "student",
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-26T02:53:58.257Z",
+          "balance": 0,
+          "lastActive": "2026-04-26T02:59:14.854Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "WzBTCQJ7xlVB9Eya6ShBMenAR0m1",
+      {
+        "data": {
+          "id": "WzBTCQJ7xlVB9Eya6ShBMenAR0m1",
+          "uid": "WzBTCQJ7xlVB9Eya6ShBMenAR0m1",
+          "email": "kumarhariram292@gmail.com",
+          "displayName": "Hariram Kumar",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocKSSiid2DP2tu2QDK9cr59C14oXX4hFqv1B5EbgzIUAt6ZeBQ=s96-c",
+          "role": "student",
+          "balance": 1,
+          "createdAt": "2026-05-05T10:21:40.887Z",
+          "lastActive": "2026-05-05T10:21:41.644Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "t3PgO0EiTjgCWJC35pB1YuBqbzC3",
+      {
+        "data": {
+          "id": "t3PgO0EiTjgCWJC35pB1YuBqbzC3",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocJoXLm1x-26lZ99SLDi5PJzW-AOMfJejD7lHsoCakojnesF-w=s96-c",
+          "uid": "t3PgO0EiTjgCWJC35pB1YuBqbzC3",
+          "createdAt": "2026-08-02T09:25:50.400Z",
+          "role": "student",
+          "balance": 1,
+          "displayName": "Taazeem Ansari",
+          "email": "taazeemansari863@gmail.com",
+          "updatedAt": "2026-08-02T09:25:50.400Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "jyryp81ZdEcdIM65TESzeHrKT1m2",
+      {
+        "data": {
+          "id": "jyryp81ZdEcdIM65TESzeHrKT1m2",
+          "uid": "jyryp81ZdEcdIM65TESzeHrKT1m2",
+          "email": "kranjeet04588@gmail.com",
+          "displayName": "Ranjeet Kumar",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocKu0rJ2iBcYFZ2MeoQulHoF2y3bd0U9SYRhsWQUV6eaysKgEuey=s96-c",
+          "role": "student",
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-26T06:54:47.892Z",
+          "lastActive": "2026-04-26T06:56:37.036Z",
+          "balance": 0
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "qhYwLYxXlfYinapmCi0XYgywRHD3",
+      {
+        "data": {
+          "id": "qhYwLYxXlfYinapmCi0XYgywRHD3",
+          "uid": "qhYwLYxXlfYinapmCi0XYgywRHD3",
+          "email": "rojinakhatunmallick268@gmail.com",
+          "displayName": "Rojina Khatun Mallick",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocLd8OJqtM--GtexcVy-IOWPRObUy21IZ5twTpZRbRySrVO-aw=s96-c",
+          "role": "student",
+          "createdAt": "2026-05-07T04:42:53.538Z",
+          "balance": 0,
+          "lastOrderedAt": "2026-05-07T04:46:08.645Z",
+          "lastActive": "2026-05-07T06:24:09.067Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "mXlgvxueWfc77Ymko4LeaFSxltm1",
+      {
+        "data": {
+          "id": "mXlgvxueWfc77Ymko4LeaFSxltm1",
+          "uid": "mXlgvxueWfc77Ymko4LeaFSxltm1",
+          "email": "rajk2575582@gmail.com",
+          "displayName": "Raj Kumar",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocL-UsKiRtEW1Q2yvEk726aXgdpcb6khOcRX3XfhwLaynJstVIIm=s96-c",
+          "role": "student",
+          "balance": 1,
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-28T09:32:32.899Z",
+          "lastActive": "2026-04-28T09:32:33.037Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "3gnA66LeWIO1JdXppxWfV0Euka42",
+      {
+        "data": {
+          "id": "3gnA66LeWIO1JdXppxWfV0Euka42",
+          "uid": "3gnA66LeWIO1JdXppxWfV0Euka42",
+          "email": "sabirmondal05599@gmail.com",
+          "displayName": "Sabir Mondal",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocLuiKfdyonojzlLbmTp8POf_xmv-mTW0qg5uc-9qCZnOorlIA=s96-c",
+          "role": "student",
+          "balance": 1,
+          "createdAt": "2026-05-05T13:16:36.146Z",
+          "lastActive": "2026-05-05T13:16:36.806Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "F2kyOtwm7dgdlK0djvKTSjeYnox1",
+      {
+        "data": {
+          "id": "F2kyOtwm7dgdlK0djvKTSjeYnox1",
+          "uid": "F2kyOtwm7dgdlK0djvKTSjeYnox1",
+          "email": "mdsalmanbhai91748682@gmail.com",
+          "displayName": "Md Salman",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocJ_O_Ti3FUUFtCf2Dw5B-BpoJukHHekrYXhYagi1LHdRLJl9Q=s96-c",
+          "role": "student",
+          "referredBy": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "referralEarnings": 0,
+          "createdAt": "2026-04-16T05:45:04.928Z",
+          "lastActive": "2026-04-16T05:45:05.166Z",
+          "balance": 1
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "K4K7kT9W4hbWoH1jwBFEg8jcQsw1",
+      {
+        "data": {
+          "id": "K4K7kT9W4hbWoH1jwBFEg8jcQsw1",
+          "uid": "K4K7kT9W4hbWoH1jwBFEg8jcQsw1",
+          "email": "shahidalam604842@gmail.com",
+          "displayName": "Shahid Alam",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIr0dAKTxPtEPQ8oJTfPwSoihh7U6ETGlWi9pjOFNm9SNv3pw=s96-c",
+          "role": "student",
+          "createdAt": "2026-05-05T05:56:59.361Z",
+          "lastActive": "2026-05-11T13:05:59.230Z",
+          "balance": 1,
+          "lastOrderedAt": "2026-05-11T13:39:20.201Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "JwGrBJZWspcZTqJ23a62P2LdIML2",
+      {
+        "data": {
+          "id": "JwGrBJZWspcZTqJ23a62P2LdIML2",
+          "uid": "JwGrBJZWspcZTqJ23a62P2LdIML2",
+          "email": "ronakkhatun2640@gmail.com",
+          "displayName": "Ronak Khatun",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocJi4Y1TQFpFiSH9KQ8o47Hq2TA6s_5udyGaHdu-y2GgB73g3g=s96-c",
+          "role": "student",
+          "createdAt": "2026-06-06T07:07:34.298Z",
+          "updatedAt": "2026-06-06T07:12:37.990Z",
+          "lastOrderedAt": "2026-06-06T07:13:10.646Z",
+          "balance": 191,
+          "lastActive": "2026-06-07T12:54:42.559Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "I2oDY0jT0LMlTi9FTFl60WuF2cj1",
+      {
+        "data": {
+          "id": "I2oDY0jT0LMlTi9FTFl60WuF2cj1",
+          "uid": "I2oDY0jT0LMlTi9FTFl60WuF2cj1",
+          "email": "pbprince4736@gmail.com",
+          "displayName": "Prince Singh",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocJgojFfnbWgR4gQwsAq339wFtOphwhBfHDxCD6PaXdXDdxKGA=s96-c",
+          "role": "student",
+          "balance": 1,
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-26T09:41:17.225Z",
+          "lastActive": "2026-04-26T09:41:17.440Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "HpAIUMtgWrXrOjeUdsOU26ac3fD2",
+      {
+        "data": {
+          "id": "HpAIUMtgWrXrOjeUdsOU26ac3fD2",
+          "uid": "HpAIUMtgWrXrOjeUdsOU26ac3fD2",
+          "email": "sakshambhargava0@gmail.com",
+          "displayName": "Saksham",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocJDOVAafQ_ZlZTXZyja9OaNEo6ewohvtEsfBX5TzQ2vXVw3CZ8a=s96-c",
+          "role": "student",
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-26T06:24:22.137Z",
+          "balance": 0,
+          "lastActive": "2026-04-29T07:53:28.809Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "0zacp2fy6mcT4HxQnDhnN8P03DL2",
+      {
+        "data": {
+          "id": "0zacp2fy6mcT4HxQnDhnN8P03DL2",
+          "uid": "0zacp2fy6mcT4HxQnDhnN8P03DL2",
+          "email": "sethisipun725@gmail.com",
+          "displayName": "Sipun Sethi",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocJ9uvdP9q1A3LufoSJXCAwX4Qk0rVR6zF5qTSBOGMG6Qk3uw5M5=s96-c",
+          "role": "student",
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-26T06:48:13.785Z",
+          "lastActive": "2026-04-26T06:48:13.973Z",
+          "balance": 0
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "KGL0fywHLpfyR1AzeO3LretIRQm1",
+      {
+        "data": {
+          "id": "KGL0fywHLpfyR1AzeO3LretIRQm1",
+          "uid": "KGL0fywHLpfyR1AzeO3LretIRQm1",
+          "email": "jfcgufcji@gmail.com",
+          "displayName": "Arif Ahmed",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocJro3n1Svc8Lhcj9iPmdm6vhpkpZTAUIyaQoR5Zs-Ue9KDxpQ=s96-c",
+          "role": "student",
+          "balance": 1,
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-28T12:32:06.533Z",
+          "lastActive": "2026-04-28T12:32:06.897Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "uIxB0K6XLCdz2ZSBtn5OyS54qgz2",
+      {
+        "data": {
+          "id": "uIxB0K6XLCdz2ZSBtn5OyS54qgz2",
+          "uid": "uIxB0K6XLCdz2ZSBtn5OyS54qgz2",
+          "email": "sahunabin2006@gmail.com",
+          "displayName": "Nabin Sahu",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIrPSY-chi7mVJ-NcdFA5w5Cd4iiZB73R7IKNWWlWg3LPekBg=s96-c",
+          "role": "student",
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-26T07:25:22.208Z",
+          "balance": 0,
+          "lastActive": "2026-05-12T09:09:42.315Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "heQIY0XYcZdH40WGt3QP13UltEL2",
+      {
+        "data": {
+          "id": "heQIY0XYcZdH40WGt3QP13UltEL2",
+          "uid": "heQIY0XYcZdH40WGt3QP13UltEL2",
+          "email": "harshitverma9216786980@gmail.com",
+          "displayName": "Harshit Verma",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocLWndnzcuyUbIas0mMXmZN54Jatl0vELfCjWdZpDOGJAwMUfdA=s96-c",
+          "role": "student",
+          "balance": 1,
+          "createdAt": "2026-05-11T12:57:52.184Z",
+          "lastActive": "2026-05-11T12:57:52.859Z",
+          "last_ordered_at": "2026-07-12T02:54:15.774Z",
+          "updatedAt": "2026-07-12T02:54:16.407Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "dUpQR9Te7KONTJ5Fo5evFsopSFT2",
+      {
+        "data": {
+          "id": "dUpQR9Te7KONTJ5Fo5evFsopSFT2",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIAc_KNkZ-xGSi3IU--6g9XHow_ScNVBKsuG3ZVRSBhQwBGsg=s96-c",
+          "uid": "dUpQR9Te7KONTJ5Fo5evFsopSFT2",
+          "createdAt": "2026-07-08T18:47:46.089Z",
+          "role": "student",
+          "displayName": "Md Saud alam",
+          "email": "mdsaudalam6824520@gmail.com",
+          "balance": 12,
+          "updatedAt": "2026-07-10T19:00:13.262Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "CYQ2WGCXVlRSpJY8uD7vKkKbpBo2",
+      {
+        "data": {
+          "id": "CYQ2WGCXVlRSpJY8uD7vKkKbpBo2",
+          "uid": "CYQ2WGCXVlRSpJY8uD7vKkKbpBo2",
+          "email": "arajbha599@gmail.com",
+          "displayName": "Ajay Rajbha",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIpmbRm9pe7Fs_lrjVwtUCXHrSS1wQoK41EJ38r2g13__Y-dlA=s96-c",
+          "role": "student",
+          "createdAt": "2026-05-05T02:02:08.703Z",
+          "lastActive": "2026-05-08T08:11:40.346Z",
+          "balance": 0,
+          "lastOrderedAt": "2026-05-08T08:13:36.368Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "Jql1B3nhzwbY5Zu7wO1EUumM8002",
+      {
+        "data": {
+          "id": "Jql1B3nhzwbY5Zu7wO1EUumM8002",
+          "uid": "Jql1B3nhzwbY5Zu7wO1EUumM8002",
+          "email": "labhlihalder@gmail.com",
+          "displayName": "Labhli Halder",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocLVgkSARwyhSFc9Qtuag4moLZUZUfTne_Eek4-CMCjubXEpHgFH=s96-c",
+          "role": "student",
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-26T06:48:36.321Z",
+          "balance": 0,
+          "lastActive": "2026-05-17T08:26:19.735Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "wY6XsYgFnJhdWtnGH5Hz4x46sXQ2",
+      {
+        "data": {
+          "id": "wY6XsYgFnJhdWtnGH5Hz4x46sXQ2",
+          "uid": "wY6XsYgFnJhdWtnGH5Hz4x46sXQ2",
+          "email": "bhargavas827@gmail.com",
+          "displayName": "Saksham Bhargava",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocJhUQ2i-pm6-34ydjx5ml730eBZEZKeiH42cbqzdlStJ3sFGA=s96-c",
+          "role": "student",
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-27T01:33:45.725Z",
+          "balance": 0,
+          "lastActive": "2026-04-27T12:42:12.300Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "hfrgIRFKTsVWAOVpDoe3WMywlrO2",
+      {
+        "data": {
+          "id": "hfrgIRFKTsVWAOVpDoe3WMywlrO2",
+          "uid": "hfrgIRFKTsVWAOVpDoe3WMywlrO2",
+          "email": "navinkumar93303@gmail.com",
+          "displayName": "Navin Kumar",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocI8Xrc-Zg1sndD_wwo6WbxYrFrPuQq1fkSKMRCc8x1KXq1srNC2=s96-c",
+          "role": "student",
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-26T04:49:19.514Z",
+          "lastOrderedAt": "2026-05-22T13:48:37.998Z",
+          "lastActive": "2026-06-11T05:30:55.137Z",
+          "balance": 10,
+          "updatedAt": "2026-06-11T05:59:16.564Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "ICPDf1w56zLAqJm87FDWJ0T24Zc2",
+      {
+        "data": {
+          "id": "ICPDf1w56zLAqJm87FDWJ0T24Zc2",
+          "uid": "ICPDf1w56zLAqJm87FDWJ0T24Zc2",
+          "email": "alfezshah321@gmail.com",
+          "displayName": "Alfez Shah",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocJ4ASYQi5RZxQ1oZBEU0qWLq4SMpZ2mfkFyM4v9T83bGwcNkw=s96-c",
+          "role": "student",
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-26T16:10:38.159Z",
+          "balance": 0,
+          "lastActive": "2026-04-28T08:39:44.367Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "0OONNvgEu8cVjJih7LrYV67pRV12",
+      {
+        "data": {
+          "id": "0OONNvgEu8cVjJih7LrYV67pRV12",
+          "uid": "0OONNvgEu8cVjJih7LrYV67pRV12",
+          "email": "krishnanishad6236@gmail.com",
+          "displayName": "Krishna Nishad",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIWWnMlxvRIVSN06qbCmkFl0h1eHRRRSi_C50CvzXbW1W2_pA=s96-c",
+          "role": "student",
+          "balance": 1,
+          "referredBy": null,
+          "referralEarnings": 0,
+          "referralCount": 0,
+          "createdAt": "2026-04-26T02:53:33.884Z",
+          "lastActive": "2026-04-26T02:53:34.089Z"
+        },
+        "time": 1790271323292
+      }
+    ],
+    [
+      "test_e2e_user",
+      {
+        "data": {
+          "id": "test_e2e_user",
+          "uid": "test_e2e_user",
+          "role": "student",
+          "createdAt": "2026-09-25T09:51:19.980Z",
+          "balance": 2,
+          "updatedAt": "2026-09-25T09:51:19.980Z"
+        },
+        "time": 1790329879980
       }
     ]
   ],
@@ -1165,6 +2114,694 @@
           "updatedAt": "2026-09-23T12:32:29.682Z"
         },
         "time": 1790166749682
+      }
+    ],
+    [
+      "dep_1790328070396_6qghi",
+      {
+        "data": {
+          "id": "dep_auto_pms216937283_1790328070396",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 1.01,
+          "baseAmount": 1,
+          "utr": "pms488340729",
+          "orderRef": "pms216937283",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-25T09:21:10.396Z",
+          "createdAt": "2026-09-25T09:21:10.396Z",
+          "updatedAt": "2026-09-25T09:21:10.396Z"
+        },
+        "time": 1790328070397
+      }
+    ],
+    [
+      "dep_auto_pms216937283_1790328070396",
+      {
+        "data": {
+          "id": "dep_auto_pms216937283_1790328070396",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 1.01,
+          "baseAmount": 1,
+          "utr": "pms488340729",
+          "orderRef": "pms216937283",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-25T09:21:10.396Z",
+          "createdAt": "2026-09-25T09:21:10.396Z"
+        },
+        "time": 1790328070567
+      }
+    ],
+    [
+      "dep_1790328339752_75ufh",
+      {
+        "data": {
+          "id": "dep_auto_670598970694_1790328339751",
+          "userId": "test_user_123",
+          "userEmail": "test@example.com",
+          "amount": 10,
+          "baseAmount": 10,
+          "utr": "439281726354",
+          "orderRef": "670598970694",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "ICICI Bank",
+          "verifiedAt": "2026-09-25T09:25:39.751Z",
+          "createdAt": "2026-09-25T09:25:39.751Z",
+          "updatedAt": "2026-09-25T09:25:39.752Z"
+        },
+        "time": 1790328339752
+      }
+    ],
+    [
+      "dep_auto_670598970694_1790328339751",
+      {
+        "data": {
+          "id": "dep_auto_670598970694_1790328339751",
+          "userId": "test_user_123",
+          "userEmail": "test@example.com",
+          "amount": 10,
+          "baseAmount": 10,
+          "utr": "439281726354",
+          "orderRef": "670598970694",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "ICICI Bank",
+          "verifiedAt": "2026-09-25T09:25:39.751Z",
+          "createdAt": "2026-09-25T09:25:39.751Z"
+        },
+        "time": 1790328339829
+      }
+    ],
+    [
+      "dep_1790328757626_5rq5k",
+      {
+        "data": {
+          "id": "dep_manual_intent_472719676827_1790328757626",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 1.01,
+          "baseAmount": 1,
+          "utr": "472719676827",
+          "orderRef": "472719676827",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "Admin Manual QR Approval",
+          "verifiedAt": "2026-09-25T09:32:37.626Z",
+          "createdAt": "2026-09-25T09:32:37.626Z",
+          "updatedAt": "2026-09-25T09:32:37.626Z"
+        },
+        "time": 1790328757626
+      }
+    ],
+    [
+      "dep_manual_intent_472719676827_1790328757626",
+      {
+        "data": {
+          "id": "dep_manual_intent_472719676827_1790328757626",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 1.01,
+          "baseAmount": 1,
+          "utr": "472719676827",
+          "orderRef": "472719676827",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "Admin Manual QR Approval",
+          "verifiedAt": "2026-09-25T09:32:37.626Z",
+          "createdAt": "2026-09-25T09:32:37.626Z"
+        },
+        "time": 1790328757710
+      }
+    ],
+    [
+      "dep_1790329880038_4ucjh",
+      {
+        "data": {
+          "id": "dep_auto_630536994778_1790329880038",
+          "userId": "test_e2e_user",
+          "userEmail": "e2e@example.com",
+          "amount": 2,
+          "baseAmount": 2,
+          "utr": "630536994778",
+          "orderRef": "630536994778",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-25T09:51:20.038Z",
+          "createdAt": "2026-09-25T09:51:20.038Z",
+          "updatedAt": "2026-09-25T09:51:20.038Z"
+        },
+        "time": 1790329880038
+      }
+    ],
+    [
+      "dep_auto_630536994778_1790329880038",
+      {
+        "data": {
+          "id": "dep_auto_630536994778_1790329880038",
+          "userId": "test_e2e_user",
+          "userEmail": "e2e@example.com",
+          "amount": 2,
+          "baseAmount": 2,
+          "utr": "630536994778",
+          "orderRef": "630536994778",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-25T09:51:20.038Z",
+          "createdAt": "2026-09-25T09:51:20.038Z"
+        },
+        "time": 1790329880126
+      }
+    ],
+    [
+      "dep_1790330126552_jj7y4",
+      {
+        "data": {
+          "id": "dep_auto_246832380034_1790330126551",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 1.01,
+          "baseAmount": 1,
+          "utr": "246832380034",
+          "orderRef": "246832380034",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-25T09:55:26.551Z",
+          "createdAt": "2026-09-25T09:55:26.551Z",
+          "updatedAt": "2026-09-25T09:55:26.552Z"
+        },
+        "time": 1790330126552
+      }
+    ],
+    [
+      "dep_auto_246832380034_1790330126551",
+      {
+        "data": {
+          "id": "dep_auto_246832380034_1790330126551",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 1.01,
+          "baseAmount": 1,
+          "utr": "246832380034",
+          "orderRef": "246832380034",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-25T09:55:26.551Z",
+          "createdAt": "2026-09-25T09:55:26.551Z"
+        },
+        "time": 1790330126744
+      }
+    ],
+    [
+      "dep_1790330589189_fb4c1",
+      {
+        "data": {
+          "id": "dep_auto_205829249303_1790330589188",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 2,
+          "baseAmount": 2,
+          "utr": "630536994778",
+          "orderRef": "205829249303",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-25T10:03:09.188Z",
+          "createdAt": "2026-09-25T10:03:09.188Z",
+          "updatedAt": "2026-09-25T10:03:09.189Z"
+        },
+        "time": 1790330589189
+      }
+    ],
+    [
+      "dep_auto_205829249303_1790330589188",
+      {
+        "data": {
+          "id": "dep_auto_205829249303_1790330589188",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 2,
+          "baseAmount": 2,
+          "utr": "630536994778",
+          "orderRef": "205829249303",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-25T10:03:09.188Z",
+          "createdAt": "2026-09-25T10:03:09.188Z"
+        },
+        "time": 1790330589364
+      }
+    ],
+    [
+      "dep_1790330590688_0096k",
+      {
+        "data": {
+          "id": "dep_auto_854271923759_1790330590688",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 2.01,
+          "baseAmount": 2,
+          "utr": "854271923759",
+          "orderRef": "854271923759",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-25T10:03:10.688Z",
+          "createdAt": "2026-09-25T10:03:10.688Z",
+          "updatedAt": "2026-09-25T10:03:10.688Z"
+        },
+        "time": 1790330590688
+      }
+    ],
+    [
+      "dep_auto_854271923759_1790330590688",
+      {
+        "data": {
+          "id": "dep_auto_854271923759_1790330590688",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 2.01,
+          "baseAmount": 2,
+          "utr": "854271923759",
+          "orderRef": "854271923759",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-25T10:03:10.688Z",
+          "createdAt": "2026-09-25T10:03:10.688Z"
+        },
+        "time": 1790330590750
+      }
+    ],
+    [
+      "dep_1790330592081_xsv3o",
+      {
+        "data": {
+          "id": "dep_auto_209909733631_1790330592081",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 1.01,
+          "baseAmount": 1,
+          "utr": "246832380034",
+          "orderRef": "209909733631",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-25T10:03:12.081Z",
+          "createdAt": "2026-09-25T10:03:12.081Z",
+          "updatedAt": "2026-09-25T10:03:12.081Z"
+        },
+        "time": 1790330592081
+      }
+    ],
+    [
+      "dep_auto_209909733631_1790330592081",
+      {
+        "data": {
+          "id": "dep_auto_209909733631_1790330592081",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 1.01,
+          "baseAmount": 1,
+          "utr": "246832380034",
+          "orderRef": "209909733631",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-25T10:03:12.081Z",
+          "createdAt": "2026-09-25T10:03:12.081Z"
+        },
+        "time": 1790330592125
+      }
+    ],
+    [
+      "dep_1790330652893_xw1fw",
+      {
+        "data": {
+          "id": "dep_auto_711447704740_1790330652892",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 5,
+          "baseAmount": 5,
+          "utr": "711447704740",
+          "orderRef": "711447704740",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-25T10:04:12.893Z",
+          "createdAt": "2026-09-25T10:04:12.893Z",
+          "updatedAt": "2026-09-25T10:04:12.893Z"
+        },
+        "time": 1790330652893
+      }
+    ],
+    [
+      "dep_auto_711447704740_1790330652892",
+      {
+        "data": {
+          "id": "dep_auto_711447704740_1790330652892",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 5,
+          "baseAmount": 5,
+          "utr": "711447704740",
+          "orderRef": "711447704740",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-25T10:04:12.893Z",
+          "createdAt": "2026-09-25T10:04:12.893Z"
+        },
+        "time": 1790330652971
+      }
+    ],
+    [
+      "dep_1790416748600_cfqrm",
+      {
+        "data": {
+          "id": "dep_auto_443818475218_1790416748600",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 1.1,
+          "baseAmount": 1.1,
+          "utr": "443818475218",
+          "orderRef": "443818475218",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-26T09:59:08.600Z",
+          "createdAt": "2026-09-26T09:59:08.600Z",
+          "updatedAt": "2026-09-26T09:59:08.600Z"
+        },
+        "time": 1790416748600
+      }
+    ],
+    [
+      "dep_auto_443818475218_1790416748600",
+      {
+        "data": {
+          "id": "dep_auto_443818475218_1790416748600",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 1.1,
+          "baseAmount": 1.1,
+          "utr": "443818475218",
+          "orderRef": "443818475218",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-26T09:59:08.600Z",
+          "createdAt": "2026-09-26T09:59:08.600Z"
+        },
+        "time": 1790416748677
+      }
+    ],
+    [
+      "dep_1790417036625_2phyd",
+      {
+        "data": {
+          "id": "dep_auto_975435806883_1790417036625",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 1.01,
+          "baseAmount": 1,
+          "utr": "975435806883",
+          "orderRef": "975435806883",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-26T10:03:56.625Z",
+          "createdAt": "2026-09-26T10:03:56.625Z",
+          "updatedAt": "2026-09-26T10:03:56.625Z"
+        },
+        "time": 1790417036625
+      }
+    ],
+    [
+      "dep_auto_975435806883_1790417036625",
+      {
+        "data": {
+          "id": "dep_auto_975435806883_1790417036625",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 1.01,
+          "baseAmount": 1,
+          "utr": "975435806883",
+          "orderRef": "975435806883",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-26T10:03:56.625Z",
+          "createdAt": "2026-09-26T10:03:56.625Z"
+        },
+        "time": 1790417036702
+      }
+    ],
+    [
+      "dep_1790417314030_ojwoc",
+      {
+        "data": {
+          "id": "dep_auto_914219770516_1790417314029",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "amount": 1.01,
+          "baseAmount": 1,
+          "utr": "975435806887",
+          "orderRef": "914219770516",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-26T10:08:34.029Z",
+          "createdAt": "2026-09-26T10:08:34.029Z",
+          "updatedAt": "2026-09-26T10:08:34.030Z"
+        },
+        "time": 1790417314030
+      }
+    ],
+    [
+      "dep_auto_914219770516_1790417314029",
+      {
+        "data": {
+          "id": "dep_auto_914219770516_1790417314029",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "amount": 1.01,
+          "baseAmount": 1,
+          "utr": "975435806887",
+          "orderRef": "914219770516",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-26T10:08:34.029Z",
+          "createdAt": "2026-09-26T10:08:34.029Z"
+        },
+        "time": 1790417314094
+      }
+    ],
+    [
+      "dep_1790417395194_h5by8",
+      {
+        "data": {
+          "id": "dep_auto_913130769044_1790417395194",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "amount": 1.01,
+          "baseAmount": 1,
+          "utr": "975435806883",
+          "orderRef": "913130769044",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-26T10:09:55.194Z",
+          "createdAt": "2026-09-26T10:09:55.194Z",
+          "updatedAt": "2026-09-26T10:09:55.194Z"
+        },
+        "time": 1790417395194
+      }
+    ],
+    [
+      "dep_auto_913130769044_1790417395194",
+      {
+        "data": {
+          "id": "dep_auto_913130769044_1790417395194",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "amount": 1.01,
+          "baseAmount": 1,
+          "utr": "975435806883",
+          "orderRef": "913130769044",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-26T10:09:55.194Z",
+          "createdAt": "2026-09-26T10:09:55.194Z"
+        },
+        "time": 1790417395302
+      }
+    ],
+    [
+      "dep_1790417396546_jkzvr",
+      {
+        "data": {
+          "id": "dep_auto_944589830607_1790417396546",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "amount": 2.01,
+          "baseAmount": 2,
+          "utr": "854271923759",
+          "orderRef": "944589830607",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-26T10:09:56.546Z",
+          "createdAt": "2026-09-26T10:09:56.546Z",
+          "updatedAt": "2026-09-26T10:09:56.546Z"
+        },
+        "time": 1790417396546
+      }
+    ],
+    [
+      "dep_auto_944589830607_1790417396546",
+      {
+        "data": {
+          "id": "dep_auto_944589830607_1790417396546",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "amount": 2.01,
+          "baseAmount": 2,
+          "utr": "854271923759",
+          "orderRef": "944589830607",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-26T10:09:56.546Z",
+          "createdAt": "2026-09-26T10:09:56.546Z"
+        },
+        "time": 1790417396641
+      }
+    ],
+    [
+      "dep_1790417890168_4exib",
+      {
+        "data": {
+          "id": "dep_auto_293128876397_1790417890168",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "amount": 3.01,
+          "baseAmount": 3,
+          "utr": "293128876397",
+          "orderRef": "293128876397",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-26T10:18:10.168Z",
+          "createdAt": "2026-09-26T10:18:10.168Z",
+          "updatedAt": "2026-09-26T10:18:10.168Z"
+        },
+        "time": 1790417890168
+      }
+    ],
+    [
+      "dep_auto_293128876397_1790417890168",
+      {
+        "data": {
+          "id": "dep_auto_293128876397_1790417890168",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "amount": 3.01,
+          "baseAmount": 3,
+          "utr": "293128876397",
+          "orderRef": "293128876397",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-26T10:18:10.168Z",
+          "createdAt": "2026-09-26T10:18:10.168Z"
+        },
+        "time": 1790417890237
+      }
+    ],
+    [
+      "dep_1790418049336_yphhh",
+      {
+        "data": {
+          "id": "dep_auto_500639295371_1790418049336",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "amount": 2.01,
+          "baseAmount": 2,
+          "utr": "482910482919",
+          "orderRef": "500639295371",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "State Bank of India (SBI)",
+          "verifiedAt": "2026-09-26T10:20:49.336Z",
+          "createdAt": "2026-09-26T10:20:49.336Z",
+          "updatedAt": "2026-09-26T10:20:49.337Z"
+        },
+        "time": 1790418049337
+      }
+    ],
+    [
+      "dep_auto_500639295371_1790418049336",
+      {
+        "data": {
+          "id": "dep_auto_500639295371_1790418049336",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "amount": 2.01,
+          "baseAmount": 2,
+          "utr": "482910482919",
+          "orderRef": "500639295371",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "State Bank of India (SBI)",
+          "verifiedAt": "2026-09-26T10:20:49.336Z",
+          "createdAt": "2026-09-26T10:20:49.336Z"
+        },
+        "time": 1790418049389
       }
     ]
   ],
@@ -2245,6 +3882,1041 @@
         },
         "time": 1789410993341
       }
+    ],
+    [
+      "ord_1790276919598_e431a",
+      {
+        "data": {
+          "id": "ord_1790276919598_e431a",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "serviceId": "tbnPbHdzQVi8IkKhlwAr",
+          "courseId": "tbnPbHdzQVi8IkKhlwAr",
+          "title": "Share reels/post",
+          "category": "Instagram",
+          "quantity": 100,
+          "targetLink": "paytmqr281005050101111956557626@paytm",
+          "totalPrice": 1.2,
+          "isCombo": false,
+          "comboItems": [],
+          "status": "Completed",
+          "providerOrderId": "2816469",
+          "needsProviderTransmission": false,
+          "providerTransmissionStatus": "completed",
+          "balanceAlreadyDeducted": true,
+          "updatedAt": "2026-09-24T19:08:41.480Z",
+          "createdAt": "2026-09-24T19:08:41.479Z",
+          "providerRawResponse": "{\"order\":2816469}"
+        },
+        "time": 1790276921481
+      }
+    ],
+    [
+      "ord_1790276925322_zd9kd",
+      {
+        "data": {
+          "id": "ord_1790276925322_zd9kd",
+          "status": "Failed",
+          "needsProviderTransmission": false,
+          "providerTransmissionStatus": "failed",
+          "error": "Provider Rejected Order (Current link already in work)",
+          "updatedAt": "2026-09-24T19:08:46.700Z"
+        },
+        "time": 1790276926700
+      }
+    ],
+    [
+      "ord_1790276930430_z98uv",
+      {
+        "data": {
+          "id": "ord_1790276930430_z98uv",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "serviceId": "tbnPbHdzQVi8IkKhlwAr",
+          "courseId": "tbnPbHdzQVi8IkKhlwAr",
+          "title": "Share reels/post",
+          "category": "Instagram",
+          "quantity": 100,
+          "targetLink": "paytmqrc281005050101111956557626@paytm",
+          "totalPrice": 1.2,
+          "isCombo": false,
+          "comboItems": [],
+          "status": "Completed",
+          "providerOrderId": "2816471",
+          "needsProviderTransmission": false,
+          "providerTransmissionStatus": "completed",
+          "balanceAlreadyDeducted": true,
+          "updatedAt": "2026-09-24T19:08:51.755Z",
+          "createdAt": "2026-09-24T19:08:51.755Z",
+          "providerRawResponse": "{\"order\":2816471}"
+        },
+        "time": 1790276931755
+      }
+    ],
+    [
+      "DaCdfO4bvzozXPFwruIf",
+      {
+        "data": {
+          "id": "DaCdfO4bvzozXPFwruIf",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "courseId": "9RJJQ79l92KtRYMLNiLA",
+          "courseTitle": "Reels Views (Lifetime ♻️)",
+          "category": "Instagram",
+          "quantity": 1000,
+          "targetLink": "Ssss",
+          "totalPrice": 1,
+          "createdAt": "2026-04-28T10:41:53.131Z",
+          "providerOrderId": "470987",
+          "updatedAt": "2026-09-26T10:12:50.090Z",
+          "status": "completed"
+        },
+        "time": 1790417570090
+      }
+    ],
+    [
+      "ord_1781617523870_17hjt",
+      {
+        "data": {
+          "id": "ord_1781617523870_17hjt",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "courseId": "x53hZs1cI2w5pos0YkV7",
+          "courseTitle": "Reels Views ♻️ ",
+          "category": "Instagram",
+          "quantity": 1000,
+          "targetLink": "648883759724",
+          "totalPrice": 1,
+          "createdAt": "2026-06-16T13:45:23.871Z",
+          "needsProviderTransmission": false,
+          "providerRawResponse": "{\"order\":1015294997}",
+          "providerOrderId": "1015294997",
+          "error": null,
+          "providerTransmissionStatus": "completed",
+          "status": "Completed",
+          "updatedAt": "2026-09-26T10:12:50.092Z"
+        },
+        "time": 1790417570092
+      }
+    ],
+    [
+      "ord_1781508836123_q53l1",
+      {
+        "data": {
+          "id": "ord_1781508836123_q53l1",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "courseId": "4JImtKjIzm1Gg5NjJhlN",
+          "courseTitle": "Reels/Post Share 🫴",
+          "category": "Instagram",
+          "quantity": 100,
+          "targetLink": "https://www.instagram.com/dc_rohit_15?igsh=MXZlNGg1YWdsOHh0Yg==",
+          "totalPrice": 1.5,
+          "createdAt": "2026-06-15T07:33:56.124Z",
+          "providerRawResponse": "{\"order\":2451354}",
+          "providerOrderId": "2451354",
+          "needsProviderTransmission": false,
+          "error": null,
+          "providerTransmissionStatus": "completed",
+          "status": "Completed",
+          "updatedAt": "2026-09-26T10:12:50.094Z"
+        },
+        "time": 1790417570094
+      }
+    ],
+    [
+      "ord_1788114295016_hcfzo",
+      {
+        "data": {
+          "id": "ord_1788114295016_hcfzo",
+          "updatedAt": "2026-09-26T10:12:50.095Z",
+          "quantity": 50,
+          "title": "Like (Lifetime ♻️) ",
+          "category": "Instagram",
+          "status": "Pending",
+          "targetLink": "https://Ffffgggggg.crcvv",
+          "createdAt": "2026-08-30T18:24:57.639Z",
+          "totalPrice": 0.75,
+          "providerOrderId": "1016744381",
+          "error": "",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "courseId": "EUEsSLoKiJziaepvTUpw",
+          "comboItems": [],
+          "isCombo": false,
+          "userEmail": "mdsaudalam621@gmail.com",
+          "serviceId": "EUEsSLoKiJziaepvTUpw"
+        },
+        "time": 1790417570096
+      }
+    ],
+    [
+      "KYuZiy0yWj9XzLNgT5zT",
+      {
+        "data": {
+          "id": "KYuZiy0yWj9XzLNgT5zT",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "courseId": "4JImtKjIzm1Gg5NjJhlN",
+          "courseTitle": "Reels/Post Share 🫴",
+          "category": "Instagram",
+          "quantity": 100,
+          "targetLink": "https://www.instagram.com/dc_rohit_15?igsh=MXZlNGg1YWdsOHh0Yg==",
+          "totalPrice": 1.5,
+          "needsProviderTransmission": false,
+          "createdAt": "2026-06-07T17:59:18.874Z",
+          "providerRawResponse": "{\"order\":2426418}",
+          "providerOrderId": "2426418",
+          "error": null,
+          "providerTransmissionStatus": "completed",
+          "status": "Completed",
+          "updatedAt": "2026-09-26T10:12:50.097Z"
+        },
+        "time": 1790417570097
+      }
+    ],
+    [
+      "ord_1781622695202_2k2s9",
+      {
+        "data": {
+          "id": "ord_1781622695202_2k2s9",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "courseId": "x53hZs1cI2w5pos0YkV7",
+          "courseTitle": "Reels Views ♻️ ",
+          "category": "Instagram",
+          "quantity": 1000,
+          "targetLink": "https://www.instagram.com/dc_rohit_15?igsh=MXZlNGg1YWdsOHh0Yg==",
+          "totalPrice": 1,
+          "createdAt": "2026-06-16T15:11:35.202Z",
+          "needsProviderTransmission": false,
+          "providerRawResponse": "{\"order\":1015296145}",
+          "providerOrderId": "1015296145",
+          "error": null,
+          "providerTransmissionStatus": "completed",
+          "status": "Completed",
+          "updatedAt": "2026-09-26T10:12:50.099Z"
+        },
+        "time": 1790417570099
+      }
+    ],
+    [
+      "01yeopE8o5e5LAhKtL57",
+      {
+        "data": {
+          "id": "01yeopE8o5e5LAhKtL57",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "courseId": "EUEsSLoKiJziaepvTUpw",
+          "courseTitle": "Like (Lifetime ♻️)",
+          "category": "Instagram",
+          "quantity": 100,
+          "targetLink": "https://www.instagram.com/dc_rohit_15?igsh=MXZlNGg1YWdsOHh0Yg==",
+          "totalPrice": 1.5,
+          "needsProviderTransmission": false,
+          "createdAt": "2026-06-06T13:45:19.622Z",
+          "error": "Provider Rejected Order (current link already in work)",
+          "providerTransmissionStatus": "failed",
+          "status": "Completed",
+          "updatedAt": "2026-09-26T10:12:50.101Z"
+        },
+        "time": 1790417570101
+      }
+    ],
+    [
+      "qkkCNJ9JJFGk8hK7oVFy",
+      {
+        "data": {
+          "id": "qkkCNJ9JJFGk8hK7oVFy",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "courseId": "21LfNHmOmnAmxOEEdnMk",
+          "courseTitle": "Followers indian 🇮🇳 (Lifetime ♻️)",
+          "category": "Instagram",
+          "quantity": 100,
+          "targetLink": "https://www.instagram.com/reel/DXtvdQage-A/?igsh=eDJqeXF4Y2dhcGZ1",
+          "totalPrice": 8.5,
+          "status": "pending",
+          "createdAt": "2026-05-01T12:35:44.576Z",
+          "updatedAt": "2026-09-26T10:12:50.102Z"
+        },
+        "time": 1790417570102
+      }
+    ],
+    [
+      "ord_1789036755368_imb9z",
+      {
+        "data": {
+          "id": "ord_1789036755368_imb9z",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "serviceId": "tbnPbHdzQVi8IkKhlwAr",
+          "courseId": "tbnPbHdzQVi8IkKhlwAr",
+          "title": "Share reels/post ",
+          "category": "Instagram",
+          "quantity": 100,
+          "targetLink": "Fxycxyxugcu",
+          "totalPrice": 12,
+          "isCombo": false,
+          "comboItems": [],
+          "status": "Pending",
+          "providerOrderId": "2764793",
+          "error": "",
+          "createdAt": "2026-09-10T10:39:16.464Z",
+          "updatedAt": "2026-09-26T10:12:50.104Z"
+        },
+        "time": 1790417570104
+      }
+    ],
+    [
+      "ord_1788103134900_pf3ck",
+      {
+        "data": {
+          "id": "ord_1788103134900_pf3ck",
+          "updatedAt": "2026-09-26T10:12:50.105Z",
+          "comboItems": [],
+          "isCombo": false,
+          "quantity": 50,
+          "userEmail": "mdsaudalam621@gmail.com",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "createdAt": "2026-08-30T15:18:57.478Z",
+          "courseId": "EUEsSLoKiJziaepvTUpw",
+          "title": "Like (Lifetime ♻️) ",
+          "category": "Instagram",
+          "targetLink": "https://instagram.com/Ddd bgdxagcyk",
+          "totalPrice": 0.75,
+          "error": "",
+          "providerOrderId": "1016741069",
+          "status": "Pending",
+          "serviceId": "EUEsSLoKiJziaepvTUpw"
+        },
+        "time": 1790417570105
+      }
+    ],
+    [
+      "6vt2xK5tM3eaYB2wJUtP",
+      {
+        "data": {
+          "id": "6vt2xK5tM3eaYB2wJUtP",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "courseId": "XaUhsixnw6D2sgRL75ig",
+          "courseTitle": "Comment Positive 🥰 ",
+          "category": "Instagram",
+          "quantity": 1000,
+          "targetLink": "Fff",
+          "totalPrice": 62,
+          "status": "Completed",
+          "createdAt": "2026-05-03T12:31:02.038Z",
+          "updatedAt": "2026-09-26T10:12:50.107Z"
+        },
+        "time": 1790417570107
+      }
+    ],
+    [
+      "ord_1781622648946_pye80",
+      {
+        "data": {
+          "id": "ord_1781622648946_pye80",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "courseId": "x53hZs1cI2w5pos0YkV7",
+          "courseTitle": "Reels Views ♻️ ",
+          "category": "Instagram",
+          "quantity": 1000,
+          "targetLink": "https://www.instagram.com/dc_rohit_15?igsh=MXZlNGg1YWdsOHh0Yg==",
+          "totalPrice": 1,
+          "createdAt": "2026-06-16T15:10:48.946Z",
+          "needsProviderTransmission": false,
+          "providerRawResponse": "{\"order\":1015296131}",
+          "providerOrderId": "1015296131",
+          "error": null,
+          "providerTransmissionStatus": "completed",
+          "status": "Completed",
+          "updatedAt": "2026-09-26T10:12:50.109Z"
+        },
+        "time": 1790417570109
+      }
+    ],
+    [
+      "bOzrRXLP1hzYZiqXUF5N",
+      {
+        "data": {
+          "id": "bOzrRXLP1hzYZiqXUF5N",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "courseId": "kZuLCxdvTWoiP17qwKGw",
+          "courseTitle": "Telegram mix positive reaction 😀🥰❤️🤪",
+          "category": "Telegram",
+          "quantity": 100,
+          "targetLink": "https://t.me/saudbhai/6",
+          "totalPrice": 1,
+          "status": "Completed",
+          "createdAt": "2026-05-03T04:29:48.854Z",
+          "updatedAt": "2026-09-26T10:12:50.110Z"
+        },
+        "time": 1790417570110
+      }
+    ],
+    [
+      "ord_1789508903180_ffrek",
+      {
+        "data": {
+          "id": "ord_1789508903180_ffrek",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "serviceId": "tbnPbHdzQVi8IkKhlwAr",
+          "courseId": "tbnPbHdzQVi8IkKhlwAr",
+          "title": "Share reels/post ",
+          "category": "Instagram",
+          "quantity": 100,
+          "targetLink": "Kggznvnvzvnz",
+          "totalPrice": 2400,
+          "isCombo": false,
+          "comboItems": [],
+          "status": "Pending",
+          "providerOrderId": "2783776",
+          "error": "",
+          "createdAt": "2026-09-15T21:48:25.022Z",
+          "updatedAt": "2026-09-26T10:12:50.111Z"
+        },
+        "time": 1790417570112
+      }
+    ],
+    [
+      "ord_1781609942208_tcsxm",
+      {
+        "data": {
+          "id": "ord_1781609942208_tcsxm",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "courseId": "x53hZs1cI2w5pos0YkV7",
+          "courseTitle": "Reels Views ♻️ ",
+          "category": "Instagram",
+          "quantity": 1000,
+          "targetLink": "326845808564",
+          "totalPrice": 1,
+          "createdAt": "2026-06-16T11:39:02.209Z",
+          "needsProviderTransmission": false,
+          "providerRawResponse": "{\"order\":1015293309}",
+          "providerOrderId": "1015293309",
+          "error": null,
+          "providerTransmissionStatus": "completed",
+          "status": "Completed",
+          "updatedAt": "2026-09-26T10:12:50.113Z"
+        },
+        "time": 1790417570113
+      }
+    ],
+    [
+      "ord_1784648414064_xymrp",
+      {
+        "data": {
+          "id": "ord_1784648414064_xymrp",
+          "quantity": 50,
+          "totalPrice": 2.45,
+          "providerOrderId": "",
+          "title": "Instagram save reals and post",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "createdAt": "2026-07-21T15:40:14.064Z",
+          "targetLink": "https://themainsmmprovider.com/api/v2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "serviceId": "56Ote1NAWq5rgyifmBTS",
+          "category": "Instagram",
+          "courseId": "56Ote1NAWq5rgyifmBTS",
+          "status": "Pending",
+          "updatedAt": "2026-09-26T10:12:50.115Z"
+        },
+        "time": 1790417570115
+      }
+    ],
+    [
+      "ord_1780915225936_oibzv",
+      {
+        "data": {
+          "id": "ord_1780915225936_oibzv",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "test-direct@example.com",
+          "courseId": "EUEsSLoKiJziaepvTUpw",
+          "courseTitle": "Like [Lifetime] test",
+          "category": "Instagram Likes",
+          "quantity": 100,
+          "targetLink": "https://www.instagram.com/dc_rohit_15",
+          "totalPrice": 1.5,
+          "createdAt": "2026-06-08T10:40:25.936Z",
+          "needsProviderTransmission": false,
+          "providerRawResponse": "{\"order\":2428488}",
+          "providerOrderId": "2428488",
+          "error": null,
+          "providerTransmissionStatus": "completed",
+          "status": "Completed",
+          "updatedAt": "2026-09-26T10:12:50.117Z"
+        },
+        "time": 1790417570117
+      }
+    ],
+    [
+      "ZHkfah1u84QBa7756JAW",
+      {
+        "data": {
+          "id": "ZHkfah1u84QBa7756JAW",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "courseId": "3IL9DJR60P0XTAjQWnW4",
+          "courseTitle": "Followers indian 🇮🇳 (Lifetime ♻️)",
+          "category": "Instagram",
+          "quantity": 100,
+          "targetLink": "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app/dashboard",
+          "totalPrice": 8.5,
+          "status": "Completed",
+          "createdAt": "2026-05-23T22:05:46.695Z",
+          "updatedAt": "2026-09-26T10:12:50.119Z"
+        },
+        "time": 1790417570119
+      }
+    ],
+    [
+      "ord_1789036851993_utgpm",
+      {
+        "data": {
+          "id": "ord_1789036851993_utgpm",
+          "quantity": 100,
+          "totalPrice": 12,
+          "providerOrderId": "2764808",
+          "balanceAlreadyDeducted": true,
+          "comboItems": [],
+          "isCombo": false,
+          "title": "Share reels/post",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "createdAt": "2026-09-10T10:40:53.674Z",
+          "providerRawResponse": "{\"order\":2764808}",
+          "targetLink": "Hndhkdjgdjgdjry",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "needsProviderTransmission": false,
+          "serviceId": "tbnPbHdzQVi8IkKhlwAr",
+          "category": "Instagram",
+          "courseId": "tbnPbHdzQVi8IkKhlwAr",
+          "providerTransmissionStatus": "completed",
+          "status": "Completed",
+          "updatedAt": "2026-09-26T10:12:50.120Z"
+        },
+        "time": 1790417570120
+      }
+    ],
+    [
+      "56JensZoLVyAI0Gr3cau",
+      {
+        "data": {
+          "id": "56JensZoLVyAI0Gr3cau",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "courseId": "x53hZs1cI2w5pos0YkV7",
+          "courseTitle": "Views ",
+          "category": "Instagram",
+          "quantity": 10008,
+          "targetLink": "https://pyaresmmpanel.online",
+          "totalPrice": 50.04,
+          "status": "Completed",
+          "createdAt": "2026-06-05T17:16:45.417Z",
+          "updatedAt": "2026-09-26T10:12:50.122Z"
+        },
+        "time": 1790417570122
+      }
+    ],
+    [
+      "ord_1788085054768_moh56",
+      {
+        "data": {
+          "id": "ord_1788085054768_moh56",
+          "quantity": 1520,
+          "totalPrice": 1.52,
+          "comboItems": [],
+          "isCombo": false,
+          "title": "Reels Views ♻️",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "createdAt": "2026-08-30T10:17:36.673Z",
+          "targetLink": "https://instagram.com/Bzbzbzzbzbzb",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "serviceId": "QqFbpGujCOyCkZLq5tBQ",
+          "category": "Instagram",
+          "courseId": "QqFbpGujCOyCkZLq5tBQ",
+          "providerRawResponse": "{\"order\":2719215}",
+          "providerOrderId": "2719215",
+          "needsProviderTransmission": false,
+          "providerTransmissionStatus": "completed",
+          "status": "Completed",
+          "updatedAt": "2026-09-26T10:12:50.124Z"
+        },
+        "time": 1790417570124
+      }
+    ],
+    [
+      "ord_1788289549935_exab7",
+      {
+        "data": {
+          "id": "ord_1788289549935_exab7",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "status": "Pending",
+          "isCombo": false,
+          "updatedAt": "2026-09-26T10:12:50.125Z",
+          "totalPrice": 1,
+          "courseId": "QqFbpGujCOyCkZLq5tBQ",
+          "comboItems": [],
+          "title": "Reels Views ♻️",
+          "providerOrderId": "2728992",
+          "error": "",
+          "category": "Instagram",
+          "serviceId": "QqFbpGujCOyCkZLq5tBQ",
+          "targetLink": "https://instagram.com/Ddd bgdxagykgg",
+          "quantity": 1000,
+          "createdAt": "2026-09-01T19:05:52.517Z",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2"
+        },
+        "time": 1790417570125
+      }
+    ],
+    [
+      "ord_1788207677229_yer8p",
+      {
+        "data": {
+          "id": "ord_1788207677229_yer8p",
+          "createdAt": "2026-08-31T20:21:20.571Z",
+          "category": "Instagram",
+          "title": "Reels Views ♻️",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "status": "Pending",
+          "quantity": 1000,
+          "courseId": "QqFbpGujCOyCkZLq5tBQ",
+          "error": "",
+          "targetLink": "https://youtube.com/watch?v=oRZ0cfZ9SeU&si=SGu5I-e_TfWkukSz",
+          "comboItems": [],
+          "updatedAt": "2026-09-26T10:12:50.126Z",
+          "providerOrderId": "2724957",
+          "serviceId": "QqFbpGujCOyCkZLq5tBQ",
+          "totalPrice": 1,
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "isCombo": false
+        },
+        "time": 1790417570126
+      }
+    ],
+    [
+      "ord_1789510022945_pvyo2",
+      {
+        "data": {
+          "id": "ord_1789510022945_pvyo2",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "serviceId": "tbnPbHdzQVi8IkKhlwAr",
+          "courseId": "tbnPbHdzQVi8IkKhlwAr",
+          "title": "Share reels/post ",
+          "category": "Instagram",
+          "quantity": 100,
+          "targetLink": "Gggvccxdd",
+          "totalPrice": 2400,
+          "isCombo": false,
+          "comboItems": [],
+          "status": "Pending",
+          "providerOrderId": "2783805",
+          "error": "",
+          "createdAt": "2026-09-15T22:07:05.114Z",
+          "updatedAt": "2026-09-26T10:12:50.128Z"
+        },
+        "time": 1790417570128
+      }
+    ],
+    [
+      "9MMte0RZoES1GaHYhdbK",
+      {
+        "data": {
+          "id": "9MMte0RZoES1GaHYhdbK",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "courseId": "kZuLCxdvTWoiP17qwKGw",
+          "courseTitle": "Telegram mix positive reaction 😀🥰❤️🤪",
+          "category": "Telegram",
+          "quantity": 100,
+          "targetLink": "https://t.me/saudbhai/6",
+          "totalPrice": 1,
+          "status": "Completed",
+          "createdAt": "2026-05-03T04:29:55.561Z",
+          "updatedAt": "2026-09-26T10:12:50.129Z"
+        },
+        "time": 1790417570129
+      }
+    ],
+    [
+      "ord_1783431901785_a9tp5",
+      {
+        "data": {
+          "id": "ord_1783431901785_a9tp5",
+          "quantity": 1000,
+          "totalPrice": 1,
+          "title": "Reels Views ♻️  ",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "createdAt": "2026-07-07T13:45:02.369Z",
+          "targetLink": "https://www.instagram.com/reel/DYKFJkIJQ-P/?igsh=aTR6azViZW1zYzNv",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "category": "Instagram",
+          "serviceId": "wylJzacKfTUddKbw28dq",
+          "courseId": "wylJzacKfTUddKbw28dq",
+          "status": "Completed",
+          "providerOrderId": "SENT",
+          "updatedAt": "2026-09-26T10:12:50.131Z"
+        },
+        "time": 1790417570131
+      }
+    ],
+    [
+      "ord_1783436111600_s90vh",
+      {
+        "data": {
+          "id": "ord_1783436111600_s90vh",
+          "quantity": 1000,
+          "totalPrice": 1,
+          "title": "Reels Views ♻️  ",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "createdAt": "2026-07-07T14:55:12.383Z",
+          "targetLink": "https:/bzbzbzbz/www.instagram.com/reel/DYKFJkIJQ-P/?igsh=aTR6azViZW1zYzNv",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "category": "Instagram",
+          "serviceId": "wylJzacKfTUddKbw28dq",
+          "courseId": "wylJzacKfTUddKbw28dq",
+          "status": "Completed",
+          "providerOrderId": "SENT",
+          "updatedAt": "2026-09-26T10:12:50.133Z"
+        },
+        "time": 1790417570133
+      }
+    ],
+    [
+      "ord_1784703268720_og9j9",
+      {
+        "data": {
+          "id": "ord_1784703268720_og9j9",
+          "quantity": 1000,
+          "totalPrice": 1,
+          "providerOrderId": "",
+          "title": "Reels Views ",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "targetLink": "https://www.tagram.com/dc_rohit_15?igsh=MXZlNGg1YWdsOHh0Yg==",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "serviceId": "QqFbpGujCOyCkZLq5tBQ",
+          "category": "Instagram",
+          "courseId": "QqFbpGujCOyCkZLq5tBQ",
+          "status": "Pending",
+          "createdAt": "2026-07-22T06:54:30.146Z",
+          "updatedAt": "2026-09-26T10:12:50.135Z"
+        },
+        "time": 1790417570135
+      }
+    ],
+    [
+      "ord_1788088127445_duwn3",
+      {
+        "data": {
+          "id": "ord_1788088127445_duwn3",
+          "quantity": 1000,
+          "totalPrice": 1,
+          "providerOrderId": "PENDING",
+          "comboItems": [],
+          "isCombo": false,
+          "title": "Reels Views ♻️",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "createdAt": "2026-08-30T11:08:49.379Z",
+          "targetLink": "https://Fffvfgggggg.crc",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "serviceId": "QqFbpGujCOyCkZLq5tBQ",
+          "category": "Instagram",
+          "courseId": "QqFbpGujCOyCkZLq5tBQ",
+          "error": "current link already in work",
+          "status": "Failed",
+          "updatedAt": "2026-09-26T10:12:50.136Z"
+        },
+        "time": 1790417570136
+      }
+    ],
+    [
+      "ord_1789739674019_qmxkp",
+      {
+        "data": {
+          "id": "ord_1789739674019_qmxkp",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "serviceId": "tbnPbHdzQVi8IkKhlwAr",
+          "courseId": "tbnPbHdzQVi8IkKhlwAr",
+          "title": "Share reels/post ♻️",
+          "category": "Instagram",
+          "quantity": 100,
+          "targetLink": "Uytrewwasdgfghkjoiyy.g",
+          "totalPrice": 0.9,
+          "isCombo": false,
+          "comboItems": [],
+          "status": "Pending",
+          "providerOrderId": "2791974",
+          "error": "",
+          "createdAt": "2026-09-18T13:54:36.605Z",
+          "updatedAt": "2026-09-26T10:12:50.138Z"
+        },
+        "time": 1790417570138
+      }
+    ],
+    [
+      "ord_1788173016842_ee3er",
+      {
+        "data": {
+          "id": "ord_1788173016842_ee3er",
+          "comboItems": [],
+          "category": "Instagram",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "quantity": 50,
+          "title": "Like (Lifetime ♻️) ",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "serviceId": "EUEsSLoKiJziaepvTUpw",
+          "isCombo": false,
+          "providerOrderId": "1016755216",
+          "updatedAt": "2026-09-26T10:12:50.139Z",
+          "courseId": "EUEsSLoKiJziaepvTUpw",
+          "totalPrice": 0.75,
+          "error": "",
+          "createdAt": "2026-08-31T10:43:39.277Z",
+          "status": "Pending",
+          "targetLink": "https://Ffffgggggg.crchhh"
+        },
+        "time": 1790417570139
+      }
+    ],
+    [
+      "ord_1788953583503_ros15",
+      {
+        "data": {
+          "id": "ord_1788953583503_ros15",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "serviceId": "tbnPbHdzQVi8IkKhlwAr",
+          "courseId": "tbnPbHdzQVi8IkKhlwAr",
+          "title": "Share reels/post ",
+          "category": "Instagram",
+          "quantity": 100,
+          "targetLink": "Fwngghffq",
+          "totalPrice": 12,
+          "isCombo": false,
+          "comboItems": [],
+          "status": "Pending",
+          "providerOrderId": "2761285",
+          "error": "",
+          "createdAt": "2026-09-09T11:33:11.400Z",
+          "updatedAt": "2026-09-26T10:12:50.140Z"
+        },
+        "time": 1790417570140
+      }
+    ],
+    [
+      "ord_1781508822846_2jey5",
+      {
+        "data": {
+          "id": "ord_1781508822846_2jey5",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "courseId": "4JImtKjIzm1Gg5NjJhlN",
+          "courseTitle": "Reels/Post Share 🫴",
+          "category": "Instagram",
+          "quantity": 100,
+          "targetLink": "https://youtu.be/AfT_7C0xTZk?si=bCQIajs0sZ5Er4pt",
+          "totalPrice": 1.5,
+          "createdAt": "2026-06-15T07:33:42.846Z",
+          "providerRawResponse": "{\"order\":2451348}",
+          "providerOrderId": "2451348",
+          "needsProviderTransmission": false,
+          "error": null,
+          "providerTransmissionStatus": "completed",
+          "status": "Completed",
+          "updatedAt": "2026-09-26T10:12:50.143Z"
+        },
+        "time": 1790417570143
+      }
+    ],
+    [
+      "ord_1781617509897_4qk0o",
+      {
+        "data": {
+          "id": "ord_1781617509897_4qk0o",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "courseId": "x53hZs1cI2w5pos0YkV7",
+          "courseTitle": "Reels Views ♻️ ",
+          "category": "Instagram",
+          "quantity": 1000,
+          "targetLink": "https://www.instagram.com/dc_rohit_15?igsh=MXZlNGg1YWdsOHh0Yg==",
+          "totalPrice": 1,
+          "createdAt": "2026-06-16T13:45:09.898Z",
+          "providerRawResponse": "{\"order\":1015296262}",
+          "providerOrderId": "1015296262",
+          "needsProviderTransmission": false,
+          "error": null,
+          "providerTransmissionStatus": "completed",
+          "status": "Completed",
+          "updatedAt": "2026-09-26T10:12:50.144Z"
+        },
+        "time": 1790417570144
+      }
+    ],
+    [
+      "ord_1789508939945_yy7el",
+      {
+        "data": {
+          "id": "ord_1789508939945_yy7el",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "serviceId": "tbnPbHdzQVi8IkKhlwAr",
+          "courseId": "tbnPbHdzQVi8IkKhlwAr",
+          "title": "Share reels/post ",
+          "category": "Instagram",
+          "quantity": 100,
+          "targetLink": "Fzgjzjvjv,jzjvjv",
+          "totalPrice": 2400,
+          "isCombo": false,
+          "comboItems": [],
+          "status": "Pending",
+          "providerOrderId": "2783781",
+          "error": "",
+          "createdAt": "2026-09-15T21:49:01.898Z",
+          "updatedAt": "2026-09-26T10:12:50.146Z"
+        },
+        "time": 1790417570146
+      }
+    ],
+    [
+      "YwS1IcVC52YdOTRHAc4G",
+      {
+        "data": {
+          "id": "YwS1IcVC52YdOTRHAc4G",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "courseId": "Nbh8gxjzqCUGD9WpAchF",
+          "courseTitle": "Reels Views ♻️",
+          "category": "Instagram",
+          "quantity": 1000,
+          "targetLink": "Ddrr",
+          "totalPrice": 1,
+          "status": "Processing",
+          "createdAt": "2026-05-04T05:26:17.131Z",
+          "updatedAt": "2026-09-26T10:12:50.148Z"
+        },
+        "time": 1790417570148
+      }
+    ],
+    [
+      "ord_1783376351988_1icig",
+      {
+        "data": {
+          "id": "ord_1783376351988_1icig",
+          "quantity": 1000,
+          "totalPrice": 1,
+          "title": "Reels Views ♻️  ",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "createdAt": "2026-07-06T22:19:12.153Z",
+          "targetLink": "85455555555522",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "category": "Instagram",
+          "serviceId": "wylJzacKfTUddKbw28dq",
+          "courseId": "wylJzacKfTUddKbw28dq",
+          "status": "Completed",
+          "providerOrderId": "SENT",
+          "updatedAt": "2026-09-26T10:12:50.150Z"
+        },
+        "time": 1790417570150
+      }
+    ],
+    [
+      "ord_1783431908643_pnbf3",
+      {
+        "data": {
+          "id": "ord_1783431908643_pnbf3",
+          "quantity": 1000,
+          "totalPrice": 1,
+          "title": "Reels Views ♻️  ",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "createdAt": "2026-07-07T13:45:08.875Z",
+          "targetLink": "Nrhdhddhdhdh",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "category": "Instagram",
+          "serviceId": "wylJzacKfTUddKbw28dq",
+          "courseId": "wylJzacKfTUddKbw28dq",
+          "status": "Completed",
+          "providerOrderId": "SENT",
+          "updatedAt": "2026-09-26T10:12:50.151Z"
+        },
+        "time": 1790417570151
+      }
+    ],
+    [
+      "ord_1784742887560_95l1f",
+      {
+        "data": {
+          "id": "ord_1784742887560_95l1f",
+          "quantity": 1000,
+          "totalPrice": 1,
+          "providerOrderId": "",
+          "title": "Reels Views ",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "targetLink": "httpsapp.com/channel/0029Vb7zsyi6RGJFemxpzy0b",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "serviceId": "QqFbpGujCOyCkZLq5tBQ",
+          "category": "Instagram",
+          "courseId": "QqFbpGujCOyCkZLq5tBQ",
+          "status": "Pending",
+          "createdAt": "2026-07-22T17:54:49.066Z",
+          "updatedAt": "2026-09-26T10:12:50.153Z"
+        },
+        "time": 1790417570153
+      }
+    ],
+    [
+      "ord_1788172530990_oi0er",
+      {
+        "data": {
+          "id": "ord_1788172530990_oi0er",
+          "category": "Instagram",
+          "createdAt": "2026-08-31T10:35:34.834Z",
+          "quantity": 1200,
+          "error": "",
+          "title": "Like (Lifetime ♻️) ",
+          "totalPrice": 18,
+          "updatedAt": "2026-09-26T10:12:50.154Z",
+          "providerOrderId": "1016755099",
+          "serviceId": "EUEsSLoKiJziaepvTUpw",
+          "targetLink": "https://instagram.com/1500ggcccc",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "status": "Pending",
+          "courseId": "EUEsSLoKiJziaepvTUpw",
+          "comboItems": [],
+          "isCombo": false,
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2"
+        },
+        "time": 1790417570154
+      }
+    ],
+    [
+      "ord_1783436057166_isqn3",
+      {
+        "data": {
+          "id": "ord_1783436057166_isqn3",
+          "quantity": 1000,
+          "totalPrice": 1,
+          "title": "Reels Views ♻️  ",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "createdAt": "2026-07-07T14:54:17.714Z",
+          "targetLink": "http/www.instagram.com/dc_rohit_15?igsh=MXZlNGg1YWdsOHh0Yg==",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "category": "Instagram",
+          "serviceId": "wylJzacKfTUddKbw28dq",
+          "courseId": "wylJzacKfTUddKbw28dq",
+          "status": "Completed",
+          "providerOrderId": "SENT",
+          "updatedAt": "2026-09-26T10:12:50.156Z"
+        },
+        "time": 1790417570156
+      }
     ]
   ],
   "received_gateway_payments": [
@@ -2291,9 +4963,141 @@
         "rawSms": "Payment of Rs 50 received from Customer UPI Ref 987654321098",
         "status": "available"
       }
+    ],
+    [
+      "987654321999",
+      {
+        "amount": 5,
+        "provider": "sms_forwarder",
+        "sender": "SMS Forwarder App",
+        "time": 1790327591014,
+        "rawSms": "A/c XX0953 credited by Rs. 5.00 on 25092026 via UPI from Test User via Ref No. 987654321999. -CBoI",
+        "status": "available"
+      }
+    ],
+    [
+      "439281726354",
+      {
+        "amount": 10,
+        "provider": "sms_forwarder",
+        "sender": "SMS Forwarder App",
+        "time": 1790328339661,
+        "rawSms": "A/c XX0953 credited by Rs. 10.00 on 25092026 via UPI from Customer via Ref No. 439281726354. Remark: 670598970694 -ICICI",
+        "status": "available"
+      }
+    ],
+    [
+      "854271923759",
+      {
+        "amount": 2.01,
+        "provider": "sms_forwarder",
+        "sender": "SMS Forwarder App",
+        "time": 1790329868812,
+        "rawSms": "Mr MD SAUD ALAM paid you ₹2.01\n854271923759",
+        "status": "available"
+      }
+    ],
+    [
+      "630536994778",
+      {
+        "amount": 2,
+        "provider": "sms_forwarder",
+        "sender": "SMS Forwarder App",
+        "time": 1790329879886,
+        "rawSms": "Mr MD SAUD ALAM paid you ₹2.00\n630536994778",
+        "status": "available"
+      }
+    ],
+    [
+      "711447704740",
+      {
+        "amount": 5,
+        "provider": "sms_forwarder",
+        "sender": "SMS Forwarder App",
+        "time": 1790330652796,
+        "rawSms": "Mr MD SAUD ALAM paid you ₹5.00\n711447704740",
+        "status": "available"
+      }
+    ],
+    [
+      "482910482919",
+      {
+        "amount": 2.01,
+        "provider": "sms_forwarder",
+        "sender": "VM-SBIUPI",
+        "time": 1790418049271,
+        "rawSms": "Dear UPI user, A/C 9901 credited by Rs.2.01 on 26-09-24 by transfer from Payer Ref No 482910482919 -State Bank of India",
+        "status": "available"
+      }
     ]
   ],
   "sms_forwarder_logs": [
+    {
+      "id": "sms_1790418049271_z4i2",
+      "timestamp": "2026-09-26T10:20:49.271Z",
+      "sender": "VM-SBIUPI",
+      "rawText": "Dear UPI user, A/C 9901 credited by Rs.2.01 on 26-09-24 by transfer from Payer Ref No 482910482919 -State Bank of India",
+      "isCredit": true,
+      "amount": 2.01,
+      "utr": "482910482919",
+      "valid": true,
+      "status": "available"
+    },
+    {
+      "id": "sms_1790330652796_9nlz",
+      "timestamp": "2026-09-25T10:04:12.796Z",
+      "sender": "SMS Forwarder App",
+      "rawText": "Mr MD SAUD ALAM paid you ₹5.00\n711447704740",
+      "isCredit": true,
+      "amount": 5,
+      "utr": "711447704740",
+      "valid": true,
+      "status": "available"
+    },
+    {
+      "id": "sms_1790329879886_cfyu",
+      "timestamp": "2026-09-25T09:51:19.886Z",
+      "sender": "SMS Forwarder App",
+      "rawText": "Mr MD SAUD ALAM paid you ₹2.00\n630536994778",
+      "isCredit": true,
+      "amount": 2,
+      "utr": "630536994778",
+      "valid": true,
+      "status": "available"
+    },
+    {
+      "id": "sms_1790329868812_9phu",
+      "timestamp": "2026-09-25T09:51:08.812Z",
+      "sender": "SMS Forwarder App",
+      "rawText": "Mr MD SAUD ALAM paid you ₹2.01\n854271923759",
+      "isCredit": true,
+      "amount": 2.01,
+      "utr": "854271923759",
+      "valid": true,
+      "status": "available"
+    },
+    {
+      "id": "sms_1790328339661_yzcf",
+      "timestamp": "2026-09-25T09:25:39.661Z",
+      "sender": "SMS Forwarder App",
+      "rawText": "A/c XX0953 credited by Rs. 10.00 on 25092026 via UPI from Customer via Ref No. 439281726354. Remark: 670598970694 -ICICI",
+      "isCredit": true,
+      "amount": 10,
+      "utr": "439281726354",
+      "valid": true,
+      "status": "available"
+    },
+    {
+      "id": "sms_1790327591014_jskc",
+      "timestamp": "2026-09-25T09:13:11.014Z",
+      "sender": "SMS Forwarder App",
+      "rawText": "A/c XX0953 credited by Rs. 5.00 on 25092026 via UPI from Test User via Ref No. 987654321999. -CBoI",
+      "isCredit": true,
+      "amount": 5,
+      "utr": "987654321999",
+      "valid": true,
+      "status": "available"
+    },
     {
       "id": "sms_1789969108064_yd79",
       "timestamp": "2026-09-21T05:38:28.064Z",

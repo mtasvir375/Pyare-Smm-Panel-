@@ -46,11 +46,12 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [intent, setIntent] = useState<PaymentIntentResponse | null>(null);
-  const [secondsRemaining, setSecondsRemaining] = useState<number>(300);
+  const [secondsRemaining, setSecondsRemaining] = useState<number>(1800);
   const [isSuccess, setIsSuccess] = useState(false);
   const [completedData, setCompletedData] = useState<{ amount: number; utr?: string; newBalance?: number } | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedRef, setCopiedRef] = useState(false);
+  const [checkingNow, setCheckingNow] = useState(false);
 
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -72,7 +73,7 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
         if (res.data?.success && isMounted) {
           setIntent(res.data);
           const rem = Math.max(0, Math.floor((res.data.expiresAt - Date.now()) / 1000));
-          setSecondsRemaining(rem > 0 ? rem : 300);
+          setSecondsRemaining(rem > 0 ? rem : 1800);
         } else if (isMounted) {
           setError(res.data?.error || "Failed to initialize automatic UPI gateway.");
         }
@@ -103,7 +104,6 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
       setSecondsRemaining((prev) => {
         if (prev <= 1) {
           if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-          if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
           return 0;
         }
         return prev - 1;
@@ -115,38 +115,46 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
     };
   }, [intent, isSuccess]);
 
+  const verifyStatus = async (showToast = false) => {
+    if (!intent || isSuccess) return;
+    if (showToast) setCheckingNow(true);
+    try {
+      const res = await axios.get(`/api/payments/check-intent/${intent.intentId}`, { timeout: 6000 });
+      if (res.data?.success && res.data.status === "completed") {
+        setIsSuccess(true);
+        setCompletedData({
+          amount: res.data.creditedAmount || intent.amount,
+          utr: res.data.utr,
+          newBalance: res.data.newBalance
+        });
+
+        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+        if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+
+        toast.success(`🎉 Payment Verified! ₹${res.data.creditedAmount || intent.amount} credited to your wallet!`);
+        onSuccess(res.data.creditedAmount || intent.amount, res.data.newBalance);
+      } else if (showToast) {
+        toast.info("Still awaiting bank SMS confirmation. Please allow a few seconds for the bank network to update.");
+      }
+    } catch (err) {
+      if (showToast) {
+        toast.error("Could not reach verification server. Please try again.");
+      }
+    } finally {
+      if (showToast) setCheckingNow(false);
+    }
+  };
+
   // 3. 2-Second Polling Loop to check verification status without asking UTR
   useEffect(() => {
-    if (!intent || isSuccess || secondsRemaining <= 0) return;
+    if (!intent || isSuccess) return;
 
-    const checkStatus = async () => {
-      try {
-        const res = await axios.get(`/api/payments/check-intent/${intent.intentId}`, { timeout: 4000 });
-        if (res.data?.success && res.data.status === "completed") {
-          setIsSuccess(true);
-          setCompletedData({
-            amount: res.data.creditedAmount || intent.amount,
-            utr: res.data.utr,
-            newBalance: res.data.newBalance
-          });
-
-          if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-          if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-
-          toast.success(`🎉 Payment Verified! ₹${res.data.creditedAmount || intent.amount} credited to your wallet!`);
-          onSuccess(res.data.creditedAmount || intent.amount, res.data.newBalance);
-        }
-      } catch (err) {
-        // Silently continue polling
-      }
-    };
-
-    pollIntervalRef.current = setInterval(checkStatus, 2000);
+    pollIntervalRef.current = setInterval(() => verifyStatus(false), 2000);
 
     return () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     };
-  }, [intent, isSuccess, secondsRemaining, onSuccess]);
+  }, [intent, isSuccess, onSuccess]);
 
   const formatTimer = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -254,24 +262,37 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
           <Clock className="w-6 h-6" />
         </div>
         <div className="space-y-1">
-          <h4 className="font-bold text-gray-900">Payment Window Expired</h4>
+          <h4 className="font-bold text-gray-900">Payment Timer Completed</h4>
           <p className="text-xs text-gray-500">
-            The 5-minute reservation expired to keep payment amounts unique. Please create a new QR or submit your UTR manually.
+            Did you already complete the UPI payment? Click below to immediately verify and credit your wallet.
           </p>
         </div>
         <div className="flex flex-col gap-2">
           <Button
+            onClick={() => verifyStatus(true)}
+            disabled={checkingNow}
+            className="w-full rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-11 shadow-md shadow-emerald-600/20"
+          >
+            {checkingNow ? (
+              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Zap className="w-4 h-4 mr-2 text-yellow-300 fill-yellow-300" />
+            )}
+            I Have Already Paid - Verify My Payment Now
+          </Button>
+          <Button
+            variant="outline"
             onClick={() => window.location.reload()}
-            className="w-full rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-11"
+            className="w-full rounded-2xl border-gray-200 text-gray-700 font-bold text-xs h-11"
           >
             <RefreshCw className="w-3.5 h-3.5 mr-2" />
             Generate Fresh QR
           </Button>
           {onCancelOrSwitchManual && (
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={onCancelOrSwitchManual}
-              className="w-full rounded-2xl border-gray-200 text-gray-700 font-bold text-xs h-11"
+              className="w-full rounded-2xl text-gray-500 font-semibold text-xs h-9"
             >
               Switch to Manual Deposit (Enter UTR)
             </Button>
@@ -327,13 +348,14 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
         {/* Order Ref & Payee Info */}
         <div className="mt-3 text-center space-y-1.5 w-full">
           <div className="flex items-center justify-center gap-2">
-            <span className="text-[11px] text-gray-500">Order Ref:</span>
+            <span className="text-[11px] font-semibold text-gray-600">Order Ref (12-Digit):</span>
             <button
               onClick={() => intent?.orderRef && copyRef(intent.orderRef)}
-              className="inline-flex items-center gap-1 font-mono text-xs font-bold bg-white px-2 py-0.5 rounded-md border border-gray-200 text-gray-800 hover:bg-gray-100"
+              className="inline-flex items-center gap-1.5 font-mono text-xs font-bold bg-blue-50 text-blue-800 px-2.5 py-1 rounded-lg border border-blue-200 hover:bg-blue-100 transition-colors shadow-xs"
+              title="Click to copy 12-digit Order Ref"
             >
-              {intent?.orderRef}
-              {copiedRef ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3 text-gray-400" />}
+              <span>{intent?.orderRef}</span>
+              {copiedRef ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-blue-500" />}
             </button>
           </div>
           <p className="text-[10px] text-gray-400 font-mono">
@@ -357,9 +379,16 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
       <div className="p-3 bg-blue-50/70 rounded-2xl border border-blue-200 flex items-center justify-between text-xs text-blue-900">
         <div className="flex items-center gap-2">
           <RefreshCw className="w-3.5 h-3.5 text-blue-600 animate-spin" />
-          <span className="font-semibold">Listening for payment alert...</span>
+          <span className="font-semibold">Auto-checking every 2s...</span>
         </div>
-        <span className="text-[10px] font-mono text-blue-600">Every 2s</span>
+        <button
+          type="button"
+          onClick={() => verifyStatus(true)}
+          disabled={checkingNow}
+          className="text-xs font-bold text-emerald-700 bg-white hover:bg-emerald-50 px-2.5 py-1 rounded-xl border border-emerald-200 shadow-xs transition-colors"
+        >
+          {checkingNow ? "Checking..." : "Paid? Verify Now"}
+        </button>
       </div>
 
       <div className="p-3 bg-emerald-50/50 rounded-2xl border border-emerald-100 text-[11px] text-emerald-900 space-y-1">

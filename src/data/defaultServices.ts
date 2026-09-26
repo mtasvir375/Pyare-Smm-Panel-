@@ -257,10 +257,12 @@ export const DEFAULT_SERVICES: ServiceItem[] = [
 ];
 
 export const DEFAULT_SETTINGS = {
-  upiId: "paytmqr281005050101111956557626@paytm",
+  upiId: "",
   merchantName: "Pyare SMM Panel",
   paymentQrUrl: "",
   qrAutoEnabled: false,
+  instantQrEnabled: true,
+  manualQrEnabled: true,
   selectedTheme: "charcoal",
   selectedFestivalTheme: "none",
   whatsappLink: "https://wa.me/919999999999",

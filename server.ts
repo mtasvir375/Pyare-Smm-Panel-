@@ -33,7 +33,10 @@ import {
   getPaymentIntent,
   getAllPaymentIntents,
   registerPaymentIntentCallback,
-  sendTelegramReply
+  sendTelegramReply,
+  tryMatchAndCompleteIntent,
+  reconcilePendingIntentsWithAlerts,
+  recordIncomingMessage
 } from "./telegramBotService";
 
 dotenv.config();
@@ -170,9 +173,27 @@ export async function startServer() {
   };
   initializeSystemToken().catch(e => console.warn("[STARTUP] Token init non-blocking warning:", e?.message));
   
-  app.use(express.json({ limit: "50mb" }));
+  app.use(express.json({
+    limit: "50mb",
+    verify: (req: any, res, buf) => {
+      req.rawBody = buf ? buf.toString() : "";
+    }
+  }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
   app.use(express.text({ type: ["text/plain", "text/*"], limit: "50mb" }));
+  
+  // Guard against malformed JSON from SMS forwarder apps (e.g. unescaped newlines/quotes in SMS)
+  app.use((err: any, req: any, res: any, next: any) => {
+    if (err instanceof SyntaxError && "body" in err) {
+      if (req.url?.includes("sms") || req.url?.includes("forwarder")) {
+        console.warn("[SMS-FORWARDER-RAW-RECOVERY] Malformed JSON recovered from raw body for SMS webhook");
+        req.body = req.rawBody || "";
+        return next();
+      }
+      return res.status(400).json({ error: "Invalid JSON format" });
+    }
+    next(err);
+  });
   
   // Custom CORS middleware to guarantee all custom domains (e.g. Vercel, custom domains) are permitted
   app.use((req, res, next) => {
@@ -612,6 +633,14 @@ export async function startServer() {
   // Initialize Telegram Bot & local bank alerts service (0 Firestore reads/writes)
   try {
     initTelegramBotService();
+    const savedUpi = serverCache.settings?.data?.upiId;
+    const savedMerchant = serverCache.settings?.data?.merchantName;
+    if (savedUpi && savedUpi !== "paytmqr281005050101111956557626@paytm") {
+      saveTelegramConfig({
+        upiId: savedUpi,
+        ...(savedMerchant ? { payeeName: savedMerchant } : {})
+      });
+    }
   } catch (tErr: any) {
     console.warn("[TELEGRAM-INIT-FAIL]", tErr.message);
   }
@@ -1123,6 +1152,15 @@ export async function startServer() {
     }
   });
 
+  // Reconcile any existing alerts with uncompleted intents right after callback registration
+  setTimeout(() => {
+    reconcilePendingIntentsWithAlerts()
+      .then((count) => {
+        if (count > 0) console.log(`[STARTUP-RECONCILE] Successfully auto-credited ${count} pending intents!`);
+      })
+      .catch((e) => console.warn("[STARTUP-RECONCILE-WARN]", e.message));
+  }, 1000);
+
   // Startup permissions test to enable automatic Firestore REST fallback before handling requests
   const initAdminSdk = async () => {
     if (process.env.VERCEL) {
@@ -1563,6 +1601,15 @@ export async function startServer() {
       serverCachedSettings = merged;
       serverCachedSettingsTime = Date.now();
       savePersistentCache();
+
+      if (merged.upiId || merged.merchantName) {
+        try {
+          saveTelegramConfig({
+            ...(merged.upiId ? { upiId: String(merged.upiId).trim() } : {}),
+            ...(merged.merchantName ? { payeeName: String(merged.merchantName).trim() } : {})
+          });
+        } catch (e) {}
+      }
     }
     if (col === "orders") {
       console.log(`[MEMORY-UPDATE] Syncing memory cache for order ${id}.`);
@@ -1615,6 +1662,15 @@ export async function startServer() {
       serverCachedSettings = merged;
       serverCachedSettingsTime = Date.now();
       savePersistentCache();
+
+      if (merged.upiId || merged.merchantName) {
+        try {
+          saveTelegramConfig({
+            ...(merged.upiId ? { upiId: String(merged.upiId).trim() } : {}),
+            ...(merged.merchantName ? { payeeName: String(merged.merchantName).trim() } : {})
+          });
+        } catch (e) {}
+      }
     }
     if (col === "orders") {
       console.log(`[MEMORY-SET] Syncing memory cache for order ${id}.`);
@@ -2111,7 +2167,7 @@ export async function startServer() {
       if (serverCachedSettings) return res.json(serverCachedSettings);
       if (serverCache.settings?.data) return res.json(serverCache.settings.data);
       res.json({
-        upiId: "paytmqr281005050101111956557626@paytm",
+        upiId: "",
         merchantName: "Pyare SMM Panel",
         selectedTheme: "charcoal"
       });
@@ -2581,6 +2637,26 @@ export async function startServer() {
         }
         if (Object.keys(updateObj).length > 0) {
           saveTelegramConfig(updateObj);
+
+          // Sync with Firestore settings/payment & settings/telegram_bot for permanent persistence across restarts
+          try {
+            const paymentDocUpdate: any = {};
+            if (updateObj.upiId) paymentDocUpdate.upiId = updateObj.upiId;
+            if (updateObj.payeeName) paymentDocUpdate.merchantName = updateObj.payeeName;
+            if (updateObj.botToken) paymentDocUpdate.telegramBotToken = updateObj.botToken;
+            if (updateObj.chatId) paymentDocUpdate.telegramChatId = updateObj.chatId;
+
+            if (Object.keys(paymentDocUpdate).length > 0) {
+              await setDocSafe("settings", "payment", paymentDocUpdate);
+              if (serverCache.settings?.data) {
+                serverCache.settings.data = { ...serverCache.settings.data, ...paymentDocUpdate };
+              }
+            }
+            await setDocSafe("settings", "telegram_bot", updateObj);
+            savePersistentCache();
+          } catch (dbErr: any) {
+            console.warn("[TELEGRAM-CONFIG-DB-WARN]", dbErr.message);
+          }
         }
       }
 
@@ -2707,10 +2783,13 @@ export async function startServer() {
       if (typeof b === "string") {
         rawText = b;
       } else if (typeof b === "object") {
-        rawText = b.text || b.message || b.body || b.content || b.sms || b.msg || b.data || "";
+        rawText = b.text || b.message || b.body || b.content || b.sms || b.msg || b.data || b.sms_body || b.smsContent || "";
       }
       if (!rawText && typeof q === "object") {
-        rawText = (q.text || q.message || q.body || q.content || q.sms || q.msg || "") as string;
+        rawText = (q.text || q.message || q.body || q.content || q.sms || q.msg || q.sms_body || "") as string;
+      }
+      if (!rawText && (req as any).rawBody) {
+        rawText = (req as any).rawBody;
       }
 
       const sender = (b.from || b.sender || b.number || b.phone || b.title || q.from || q.sender || "SMS Forwarder App") as string;
@@ -2727,6 +2806,13 @@ export async function startServer() {
       const parsed = parseBankSmsFromService(rawText, sender);
       if (!parsed.isValid || !parsed.utr || parsed.amount <= 0) {
         console.warn(`[SMS-FORWARDER-PARSE-FAIL] Reason: ${parsed.reason || "Invalid UTR/Amount"} for: ${rawText.slice(0, 80)}`);
+        recordIncomingMessage({
+          sender: sender || "SMS Forwarder Webhook",
+          chatId: "Direct Webhook",
+          text: rawText,
+          parsed: false,
+          reason: parsed.reason || "No valid 12-digit UTR and amount found in SMS"
+        });
         return res.json({
           success: true,
           captured: false,
@@ -2735,17 +2821,74 @@ export async function startServer() {
         });
       }
 
+      const cleanUtr = parsed.utr;
+      const amount = parsed.amount;
+
+      // Record in Live Ingestion Feed
+      recordIncomingMessage({
+        sender: sender || "SMS Forwarder Webhook",
+        chatId: "Direct Webhook",
+        text: rawText,
+        parsed: true,
+        utr: cleanUtr,
+        amount,
+        bank: parsed.bank,
+        reason: `Direct Webhook: Captured ₹${amount} (UTR: ${cleanUtr})`
+      });
+
       const result = addBankAlert({
-        utr: parsed.utr,
-        amount: parsed.amount,
+        utr: cleanUtr,
+        amount: amount,
         senderBank: parsed.bank,
         rawText: rawText
       });
 
-      if (result.success && result.alert) {
-        const cleanUtr = parsed.utr;
-        const amount = parsed.amount;
+      // 1. Also register in received_gateway_payments for instant verification
+      serverCache.received_gateway_payments.set(cleanUtr, {
+        amount,
+        provider: "sms_forwarder",
+        sender,
+        time: Date.now(),
+        rawSms: rawText,
+        status: "available"
+      });
 
+      // 2. Also record in sms_forwarder_logs
+      const logEntry = {
+        id: `sms_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        timestamp: new Date().toISOString(),
+        sender,
+        rawText,
+        isCredit: true,
+        amount,
+        utr: cleanUtr,
+        valid: true,
+        status: "available"
+      };
+      serverCache.sms_forwarder_logs.unshift(logEntry);
+      if (serverCache.sms_forwarder_logs.length > 200) serverCache.sms_forwarder_logs.pop();
+      savePersistentCache();
+
+      // 3. Save to Firestore sms_forwarder_pool
+      try {
+        await setDocSafe("sms_forwarder_pool", cleanUtr, {
+          utr: cleanUtr,
+          amount,
+          sender,
+          rawSms: rawText,
+          timestamp: new Date().toISOString(),
+          status: "available"
+        });
+      } catch (e) {}
+
+      // 4. Auto-reconcile with active 12-digit QR code payment intents instantly
+      try {
+        await reconcilePendingIntentsWithAlerts();
+      } catch (e: any) {
+        console.warn("[SMS-FORWARDER-RECONCILE-WARN]", e.message);
+      }
+
+      if (result.success && result.alert) {
         // Auto-match if user has pending UTR claim
         const pendingUser = serverCache.pending_user_utrs.get(cleanUtr);
         if (pendingUser && (amount >= pendingUser.amount || Math.abs(amount - pendingUser.amount) <= 1)) {
@@ -2776,6 +2919,18 @@ export async function startServer() {
       });
     } catch (err: any) {
       console.error("[SMS-FORWARDER-ERR]", err.message);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Get raw SMS Forwarder logs for Admin
+  app.get(["/api/admin/sms-forwarder-logs", "/api/sms-forwarder-logs"], (req, res) => {
+    try {
+      return res.json({
+        success: true,
+        logs: serverCache.sms_forwarder_logs || []
+      });
+    } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }
   });
@@ -2855,9 +3010,15 @@ export async function startServer() {
       }
 
       const cfg = getTelegramConfig();
-      // Ensure we use the latest UPI ID and Payee Name configured by admin
-      const upiId = cfg.upiId || (serverCache.settings?.data?.upiId) || "paytmqr281005050101111956557626@paytm";
-      const payeeName = cfg.payeeName || (serverCache.settings?.data?.merchantName) || "Pyare SMM Panel";
+      // Read active UPI ID: prioritize admin's saved UPI ID
+      const upiId = (
+        (cfg.upiId && cfg.upiId !== "paytmqr281005050101111956557626@paytm" ? cfg.upiId : "") ||
+        (serverCache.settings?.data?.upiId && serverCache.settings.data.upiId !== "paytmqr281005050101111956557626@paytm" ? serverCache.settings.data.upiId : "") ||
+        cfg.upiId ||
+        serverCache.settings?.data?.upiId ||
+        ""
+      ).trim();
+      const payeeName = (cfg.payeeName || serverCache.settings?.data?.merchantName || "Pyare SMM Panel").trim();
 
       const result = createPaymentIntent({
         baseAmount: numAmount,
@@ -2892,9 +3053,15 @@ export async function startServer() {
   app.get("/api/payments/check-intent/:intentId", async (req, res) => {
     try {
       const { intentId } = req.params;
-      const intent = getPaymentIntent(intentId);
+      let intent = getPaymentIntent(intentId);
       if (!intent) {
         return res.status(404).json({ success: false, error: "Payment intent not found or expired." });
+      }
+
+      // Proactively reconcile if not yet completed
+      if (intent.status !== "completed") {
+        await reconcilePendingIntentsWithAlerts();
+        intent = getPaymentIntent(intentId) || intent;
       }
 
       let userBalance: number | undefined;
@@ -2923,13 +3090,121 @@ export async function startServer() {
     }
   });
 
+  // 2b. Admin Payment Intents Dashboard (List all 12-digit QR requests - 0 Firestore reads)
+  app.get("/api/admin/payment-intents", (req, res) => {
+    try {
+      const allIntents = getAllPaymentIntents();
+      const now = Date.now();
+
+      // Sort newest first
+      const sorted = [...allIntents].sort((a, b) => b.createdAt - a.createdAt);
+
+      const stats = {
+        total: sorted.length,
+        pending: sorted.filter((i) => i.status === "pending" && i.expiresAt > now).length,
+        completed: sorted.filter((i) => i.status === "completed").length,
+        expired: sorted.filter((i) => i.status === "expired" || (i.status === "pending" && i.expiresAt <= now)).length,
+        totalVolume: sorted
+          .filter((i) => i.status === "completed")
+          .reduce((sum, i) => sum + (i.amount || 0), 0)
+      };
+
+      return res.json({
+        success: true,
+        stats,
+        intents: sorted.slice(0, 100) // return recent 100 intents
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 2c. Admin Manual 1-Click Approve Intent
+  app.post("/api/admin/payment-intents/approve", async (req, res) => {
+    try {
+      const { intentId, customUtr } = req.body || {};
+      if (!intentId) {
+        return res.status(400).json({ success: false, error: "Missing intentId" });
+      }
+
+      const intent = getPaymentIntent(intentId);
+      if (!intent) {
+        return res.status(404).json({ success: false, error: "Payment intent not found" });
+      }
+
+      if (intent.status === "completed") {
+        return res.status(400).json({ success: false, error: "Intent already completed and credited." });
+      }
+
+      intent.status = "completed";
+      intent.completedAt = Date.now();
+      intent.utr = customUtr || intent.orderRef;
+      intent.senderBank = "Admin Manual Approval";
+
+      // 1. Credit User Balance
+      const adjusted = await adjustUserBalanceSafe(intent.userId, intent.amount);
+      if (!adjusted) {
+        return res.status(500).json({ success: false, error: `Failed to credit ₹${intent.amount} to user balance.` });
+      }
+
+      // 2. Read new balance
+      let newBalance = 0;
+      try {
+        const uDoc = await getDocSafe("users", intent.userId);
+        newBalance = uDoc?.data()?.balance || 0;
+      } catch (e) {}
+
+      // 3. Save approved deposit record
+      const cleanUtr = intent.utr;
+      const depositId = `dep_manual_intent_${intent.orderRef}_${Date.now()}`;
+      const depositData = {
+        id: depositId,
+        userId: intent.userId,
+        userEmail: intent.userEmail || "customer",
+        amount: intent.amount,
+        baseAmount: intent.baseAmount,
+        utr: cleanUtr,
+        orderRef: intent.orderRef,
+        status: "approved",
+        type: "auto_zero_utr_upi",
+        paymentMethod: "auto_zero_utr_upi",
+        provider: "Admin Manual QR Approval",
+        verifiedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString()
+      };
+
+      try {
+        await addDocSafe("deposits", depositData);
+        serverCache.deposits.set(depositId, { data: depositData, time: Date.now() });
+        savePersistentCache();
+      } catch (e) {}
+
+      console.log(`[ADMIN-INTENT-APPROVED] Credited ₹${intent.amount} to user ${intent.userId} (Ref: ${intent.orderRef})`);
+
+      return res.json({
+        success: true,
+        message: `Successfully credited ₹${intent.amount} to user account!`,
+        intent,
+        newBalance
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // 3. Admin UPI Gateway Configuration (Get Config)
   app.get("/api/admin/upi-gateway-config", (req, res) => {
     try {
       const cfg = getTelegramConfig();
       const status = getTelegramStatus();
-      const upiId = cfg.upiId || (serverCache.settings?.data?.upiId) || "paytmqr281005050101111956557626@paytm";
-      const payeeName = cfg.payeeName || (serverCache.settings?.data?.merchantName) || "Pyare SMM Panel";
+      const upiId = (
+        (cfg.upiId && cfg.upiId !== "paytmqr281005050101111956557626@paytm" ? cfg.upiId : "") ||
+        (serverCache.settings?.data?.upiId && serverCache.settings.data.upiId !== "paytmqr281005050101111956557626@paytm" ? serverCache.settings.data.upiId : "") ||
+        cfg.upiId ||
+        serverCache.settings?.data?.upiId ||
+        ""
+      ).trim();
+      const payeeName = (cfg.payeeName || serverCache.settings?.data?.merchantName || "Pyare SMM Panel").trim();
 
       return res.json({
         success: true,
@@ -2939,6 +3214,8 @@ export async function startServer() {
         rawBotToken: cfg.botToken || "",
         chatId: cfg.chatId || "",
         enabled: cfg.enabled,
+        instantQrEnabled: serverCache.settings?.data?.instantQrEnabled !== false,
+        manualQrEnabled: serverCache.settings?.data?.manualQrEnabled !== false,
         running: status.running,
         botUsername: cfg.botUsername || status.botUsername || "",
         lastPolledAt: status.lastPolledAt,
@@ -2953,7 +3230,7 @@ export async function startServer() {
   // 4. Admin UPI Gateway Configuration (Save / Update / Start / Stop / Test Ping)
   app.post("/api/admin/upi-gateway-config", async (req, res) => {
     try {
-      const { upiId, payeeName, botToken, chatId, action } = req.body || {};
+      const { upiId, payeeName, botToken, chatId, instantQrEnabled, manualQrEnabled, action } = req.body || {};
       const updates: any = {};
 
       if (upiId !== undefined && String(upiId).trim().length > 0) {
@@ -2968,6 +3245,12 @@ export async function startServer() {
       if (botToken !== undefined && String(botToken).trim().length >= 35) {
         updates.botToken = String(botToken).replace(/\s+/g, "").trim();
       }
+      if (instantQrEnabled !== undefined) {
+        updates.instantQrEnabled = !!instantQrEnabled;
+      }
+      if (manualQrEnabled !== undefined) {
+        updates.manualQrEnabled = !!manualQrEnabled;
+      }
 
       if (Object.keys(updates).length > 0) {
         saveTelegramConfig(updates);
@@ -2979,14 +3262,16 @@ export async function startServer() {
           if (updates.payeeName) paymentDocUpdate.merchantName = updates.payeeName;
           if (updates.botToken) paymentDocUpdate.telegramBotToken = updates.botToken;
           if (updates.chatId) paymentDocUpdate.telegramChatId = updates.chatId;
+          if (updates.instantQrEnabled !== undefined) paymentDocUpdate.instantQrEnabled = updates.instantQrEnabled;
+          if (updates.manualQrEnabled !== undefined) paymentDocUpdate.manualQrEnabled = updates.manualQrEnabled;
 
           if (Object.keys(paymentDocUpdate).length > 0) {
-            await addDocSafe("settings", { ...paymentDocUpdate, id: "payment" });
+            await setDocSafe("settings", "payment", paymentDocUpdate);
             if (serverCache.settings?.data) {
               serverCache.settings.data = { ...serverCache.settings.data, ...paymentDocUpdate };
             }
           }
-          await addDocSafe("settings", { ...updates, id: "telegram_bot" });
+          await setDocSafe("settings", "telegram_bot", updates);
           savePersistentCache();
         } catch (dbErr: any) {
           console.warn("[UPI-GATEWAY-CONFIG-DB-WARN]", dbErr.message);
@@ -3113,6 +3398,15 @@ export async function startServer() {
         senderBank: parsed.bank,
         rawText: text
       });
+
+      // Also check if this matches any active zero-UTR payment intent
+      tryMatchAndCompleteIntent({
+        text,
+        utr: parsed.utr,
+        amount: parsed.amount,
+        bank: parsed.bank,
+        senderName: sender || "Admin Direct Ingest"
+      }).catch(() => {});
 
       if (!result.success) {
         return res.status(400).json({

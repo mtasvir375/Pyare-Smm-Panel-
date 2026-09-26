@@ -70,7 +70,7 @@ export const sortServicesList = (list: any[]): any[] => {
 
 // Helper to detect if settings are just the unconfigured defaults
 const isDefaultSettings = (s: any) => {
-  return s && s.whatsappChatNumber === "+919999999999" && (!s.updatedAt || s.upiId === "paytmqr281005050101111956557626@paytm");
+  return s && s.whatsappChatNumber === "+919999999999" && !s.updatedAt;
 };
 
 export const getCachedCourses = async (forceRefresh = false) => {
@@ -247,6 +247,8 @@ export const getCachedSettings = async (forceRefresh = false) => {
         whatsappChatNumber: res.data.whatsappChatNumber || DEFAULT_SETTINGS.whatsappChatNumber,
         backendApiUrl: res.data.backendApiUrl || "",
         qrAutoEnabled: !!res.data.qrAutoEnabled,
+        instantQrEnabled: res.data.instantQrEnabled !== undefined ? !!res.data.instantQrEnabled : true,
+        manualQrEnabled: res.data.manualQrEnabled !== undefined ? !!res.data.manualQrEnabled : true,
         selectedTheme: res.data.selectedTheme || "charcoal",
         selectedFestivalTheme: res.data.selectedFestivalTheme || "none",
       };
@@ -291,6 +293,8 @@ export const getCachedSettings = async (forceRefresh = false) => {
         whatsappChatNumber: data.whatsappChatNumber || DEFAULT_SETTINGS.whatsappChatNumber,
         backendApiUrl: data.backendApiUrl || "",
         qrAutoEnabled: !!data.qrAutoEnabled,
+        instantQrEnabled: data.instantQrEnabled !== undefined ? !!data.instantQrEnabled : true,
+        manualQrEnabled: data.manualQrEnabled !== undefined ? !!data.manualQrEnabled : true,
         selectedTheme: data.selectedTheme || "charcoal",
         selectedFestivalTheme: data.selectedFestivalTheme || "none",
       };

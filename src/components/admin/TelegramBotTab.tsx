@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { dbClient } from "@/lib/dbClient";
@@ -24,12 +24,39 @@ import {
   Smartphone,
   Radio,
   ArrowRight,
-  ExternalLink
+  ExternalLink,
+  QrCode
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+
+export interface AdminPaymentIntent {
+  intentId: string;
+  orderRef: string; // 12-digit numeric code
+  baseAmount: number;
+  amount: number;
+  userId: string;
+  userEmail?: string;
+  upiId: string;
+  payeeName: string;
+  upiLink: string;
+  status: "pending" | "completed" | "expired";
+  createdAt: number;
+  expiresAt: number;
+  completedAt?: number;
+  utr?: string;
+  senderBank?: string;
+}
+
+export interface PaymentIntentStats {
+  total: number;
+  pending: number;
+  completed: number;
+  expired: number;
+  totalVolume: number;
+}
 
 interface BankAlert {
   id: string;
@@ -81,8 +108,9 @@ export const TelegramBotTab: React.FC = () => {
   const [config, setConfig] = useState<TelegramConfigStatus | null>(null);
   const [botToken, setBotToken] = useState("");
   const [chatId, setChatId] = useState("");
-  const [upiId, setUpiId] = useState("paytmqr281005050101111956557626@paytm");
+  const [upiId, setUpiId] = useState("");
   const [payeeName, setPayeeName] = useState("Pyare SMM Panel");
+  const isUserEditingRef = useRef(false);
   const [showToken, setShowToken] = useState(false);
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [savingAction, setSavingAction] = useState<"start" | "stop" | "save" | null>(null);
@@ -102,12 +130,64 @@ export const TelegramBotTab: React.FC = () => {
   const [lastSimulatedAlert, setLastSimulatedAlert] = useState<BankAlert | null>(null);
 
   // Direct SMS Ingest State
+  const [forwarderMode, setForwarderMode] = useState<"webhook" | "telegram">("webhook");
   const [directSmsText, setDirectSmsText] = useState("");
   const [isIngestingSms, setIsIngestingSms] = useState(false);
   const [isTestingWebhook, setIsTestingWebhook] = useState(false);
   const [isTestingTgProxy, setIsTestingTgProxy] = useState(false);
   const [copiedWebhook, setCopiedWebhook] = useState(false);
+  const [copiedPayload, setCopiedPayload] = useState(false);
   const [copiedHost, setCopiedHost] = useState(false);
+  const [viewingAlertSms, setViewingAlertSms] = useState<BankAlert | null>(null);
+
+  // 12-Digit QR Payment Intents State (Live User Requests)
+  const [intents, setIntents] = useState<AdminPaymentIntent[]>([]);
+  const [intentStats, setIntentStats] = useState<PaymentIntentStats>({
+    total: 0,
+    pending: 0,
+    completed: 0,
+    expired: 0,
+    totalVolume: 0
+  });
+  const [loadingIntents, setLoadingIntents] = useState(false);
+  const [intentFilter, setIntentFilter] = useState<"all" | "pending" | "completed" | "expired">("all");
+  const [approvingIntentId, setApprovingIntentId] = useState<string | null>(null);
+  const [copiedIntentRef, setCopiedIntentRef] = useState<string | null>(null);
+
+  const fetchIntents = async () => {
+    setLoadingIntents(true);
+    try {
+      const res = await axios.get("/api/admin/payment-intents", { timeout: 4000 });
+      if (res.data && res.data.success) {
+        setIntents(res.data.intents || []);
+        if (res.data.stats) setIntentStats(res.data.stats);
+      }
+    } catch (e) {
+      console.warn("[FETCH-INTENTS-ERR]", e);
+    } finally {
+      setLoadingIntents(false);
+    }
+  };
+
+  const handleApproveIntent = async (intentId: string, orderRef: string, amount: number) => {
+    if (!window.confirm(`Kya aap Order Ref ${orderRef} (₹${amount}) ko user ke wallet me turant credit karna chahte hain?`)) {
+      return;
+    }
+    setApprovingIntentId(intentId);
+    try {
+      const res = await axios.post("/api/admin/payment-intents/approve", { intentId });
+      if (res.data && res.data.success) {
+        toast.success(`₹${amount} safaltapoorvak user account me credit kar diya gaya!`);
+        fetchIntents();
+      } else {
+        toast.error(res.data?.error || "Approval failed.");
+      }
+    } catch (err: any) {
+      toast.error(extractErrorMessage(err));
+    } finally {
+      setApprovingIntentId(null);
+    }
+  };
 
   const extractErrorMessage = (err: any): string => {
     if (!err) return "Unknown error";
@@ -137,8 +217,8 @@ export const TelegramBotTab: React.FC = () => {
         if (res.data && res.data.success) {
           setConfig(res.data);
           if (res.data.chatId && !chatId) setChatId(res.data.chatId);
-          if (res.data.upiId) setUpiId(res.data.upiId);
-          if (res.data.payeeName) setPayeeName(res.data.payeeName);
+          if (res.data.upiId && !isUserEditingRef.current) setUpiId(res.data.upiId);
+          if (res.data.payeeName && !isUserEditingRef.current) setPayeeName(res.data.payeeName);
           loaded = true;
           break;
         }
@@ -157,10 +237,12 @@ export const TelegramBotTab: React.FC = () => {
         const cId = tgDoc?.chatId || paymentDoc?.telegramChatId || "";
         const username = tgDoc?.botUsername || paymentDoc?.telegramBotUsername || "";
         const isEnabled = tgDoc?.enabled ?? paymentDoc?.telegramBotEnabled ?? false;
-        const uId = paymentDoc?.upiId || tgDoc?.upiId || "paytmqr281005050101111956557626@paytm";
+        const uId = paymentDoc?.upiId || tgDoc?.upiId || "";
         const pName = paymentDoc?.merchantName || tgDoc?.payeeName || "Pyare SMM Panel";
-        setUpiId(uId);
-        setPayeeName(pName);
+        if (!isUserEditingRef.current) {
+          if (uId) setUpiId(uId);
+          if (pName) setPayeeName(pName);
+        }
 
         let masked = "";
         if (rawToken && rawToken.length > 8) {
@@ -266,15 +348,16 @@ export const TelegramBotTab: React.FC = () => {
   useEffect(() => {
     fetchConfig();
     fetchAlerts();
+    fetchIntents();
 
-    // Auto-poll every 5 seconds so received Telegram messages appear on the website automatically
+    // Auto-poll alerts & intents every 5 seconds so new SMS/Telegram payments and QR requests show up automatically
     const pollInterval = setInterval(() => {
-      fetchConfig();
       fetchAlerts();
+      fetchIntents();
     }, 5000);
 
     return () => clearInterval(pollInterval);
-  }, [filter]);
+  }, [filter, intentFilter]);
 
   const handleIngestDirectSms = async () => {
     const text = directSmsText.trim();
@@ -312,8 +395,10 @@ export const TelegramBotTab: React.FC = () => {
       }, { timeout: 6000 });
 
       if (res.data?.success) {
-        toast.success(`Success! Webhook captured ₹50 with UTR ${mockUtr}!`);
+        toast.success(`🎉 Webhook Verified! Captured ₹50 with 12-Digit UTR ${mockUtr} in 0.1s!`);
         fetchAlerts();
+        fetchConfig();
+        fetchIntents();
       } else {
         toast.error(res.data?.error || "Webhook test failed");
       }
@@ -431,7 +516,7 @@ export const TelegramBotTab: React.FC = () => {
         dbClient.saveDoc("settings", "telegram_bot", docUpdate),
         dbClient.saveDoc("settings", "payment", {
           ...(cleanToken && { telegramBotToken: cleanToken }),
-          telegramChatId: cleanChatId,
+          ...(cleanChatId && { telegramChatId: cleanChatId }),
           telegramBotUsername: botUsername || config?.botUsername || "",
           telegramBotEnabled: isEnabled,
           upiId: upiId.trim(),
@@ -453,6 +538,12 @@ export const TelegramBotTab: React.FC = () => {
         toast.success(action === "start" ? "UPI Gateway & Bot started successfully!" : (action === "stop" ? "UPI Gateway & Bot stopped." : "UPI Gateway settings saved!"));
       }
       setBotToken(""); // Clear raw token
+      isUserEditingRef.current = false;
+      try {
+        const cacheMod = await import("@/lib/cache");
+        cacheMod.clearCache();
+        await cacheMod.getCachedSettings(true);
+      } catch (e) {}
       fetchConfig();
     } catch (fsErr: any) {
       console.error("[TELEGRAM-SAVE-FIRESTORE-ERR]", fsErr);
@@ -815,9 +906,12 @@ export const TelegramBotTab: React.FC = () => {
                   </label>
                   <Input
                     type="text"
-                    placeholder="e.g. paytmqr...@paytm or name@okaxis"
+                    placeholder="e.g. yourname@upi or name@okaxis"
                     value={upiId}
-                    onChange={(e) => setUpiId(e.target.value.trim())}
+                    onChange={(e) => {
+                      isUserEditingRef.current = true;
+                      setUpiId(e.target.value.trim());
+                    }}
                     className="rounded-2xl h-12 text-xs border-gray-200 focus:border-blue-500 font-mono"
                   />
                   <p className="text-[11px] text-gray-400">
@@ -834,7 +928,10 @@ export const TelegramBotTab: React.FC = () => {
                     type="text"
                     placeholder="e.g. Pyare SMM Panel"
                     value={payeeName}
-                    onChange={(e) => setPayeeName(e.target.value)}
+                    onChange={(e) => {
+                      isUserEditingRef.current = true;
+                      setPayeeName(e.target.value);
+                    }}
                     className="rounded-2xl h-12 text-xs border-gray-200 focus:border-blue-500"
                   />
                   <p className="text-[11px] text-gray-400">
@@ -1008,173 +1105,260 @@ export const TelegramBotTab: React.FC = () => {
             </CardContent>
           </Card>
 
-          {/* Telegram Bot Automatic SMS Forwarder Setup Card */}
-          <Card className="rounded-3xl border-sky-300 shadow-md bg-gradient-to-b from-sky-50/70 via-blue-50/40 to-white overflow-hidden">
-            <CardHeader className="pb-3 border-b border-sky-100 bg-sky-100/40">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base font-bold flex items-center gap-2 text-sky-950">
-                  <Send className="w-5 h-5 text-sky-600" />
-                  Telegram Bot Se Automatic SMS Forwarder (100% Background)
-                </CardTitle>
-                <Badge className="bg-sky-600 text-white text-[10px] font-semibold">
-                  Aapke Telegram Me Bhi Aayega + Website Me Bhi
-                </Badge>
+          {/* Automatic SMS Forwarder Setup Card (Dual Mode: Direct Webhook vs Telegram) */}
+          <Card className="rounded-3xl border-blue-200 shadow-md bg-white overflow-hidden">
+            <CardHeader className="p-5 border-b border-gray-100 bg-gradient-to-r from-blue-50/80 via-indigo-50/40 to-white">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <CardTitle className="text-base sm:text-lg font-bold flex items-center gap-2 text-gray-900">
+                    <Smartphone className="w-5 h-5 text-blue-600" />
+                    SMS Forwarder App Setup (Website Server Ingest)
+                  </CardTitle>
+                  <CardDescription className="text-xs text-gray-500 mt-0.5">
+                    Apne phone ke SMS Forwarder app se SMS seedha website mein bhejein ya Telegram ke through.
+                  </CardDescription>
+                </div>
+
+                {/* Mode Selector Toggle */}
+                <div className="flex items-center p-1 bg-gray-100 rounded-2xl w-fit">
+                  <button
+                    type="button"
+                    onClick={() => setForwarderMode("webhook")}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
+                      forwarderMode === "webhook"
+                        ? "bg-blue-600 text-white shadow-sm"
+                        : "text-gray-600 hover:text-gray-900"
+                    }`}
+                  >
+                    <Radio className="w-3.5 h-3.5" />
+                    Option 1: Direct Webhook (Bina Telegram)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForwarderMode("telegram")}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
+                      forwarderMode === "telegram"
+                        ? "bg-sky-600 text-white shadow-sm"
+                        : "text-gray-600 hover:text-gray-900"
+                    }`}
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    Option 2: Telegram Bot
+                  </button>
+                </div>
               </div>
-              <CardDescription className="text-xs text-sky-900/80">
-                Aapko manually Telegram me forward karne ki zaroorat nahi hai. Apne phone ke SMS Forwarder app me Telegram hi use karein — message Telegram me bhi aayega aur website par bhi turant capture ho jayega!
-              </CardDescription>
             </CardHeader>
 
             <CardContent className="p-5 space-y-4">
-              {/* How it works box */}
-              <div className="p-3.5 bg-sky-50/90 rounded-2xl border border-sky-200 text-xs text-sky-950 space-y-1.5">
-                <div className="font-bold flex items-center gap-1.5 text-sky-900">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-                  Yeh Kaise Kaam Karta Hai? (Telegram Bot System)
-                </div>
-                <p className="text-[11px] text-sky-900/90 leading-relaxed">
-                  Aapke phone ka SMS Forwarder app Telegram format me hi SMS bhejega. Hamari website SMS ko <strong>0.1 second me capture karke UTR & Amount save kar legi</strong>, aur sath hi sath <strong>Real Telegram Bot Chat me bhi deliver kar degi!</strong> Aapka Telegram bot chat me SMS bhi show hoga aur website par auto-credit bhi hoga!
-                </p>
-              </div>
-
-              {/* Telegram Proxy Configuration Fields */}
-              <div className="space-y-3 p-4 bg-white rounded-2xl border border-sky-200 shadow-xs">
-                <div className="font-bold text-xs text-gray-900 flex items-center justify-between">
-                  <span className="flex items-center gap-1.5">
-                    <Radio className="w-4 h-4 text-sky-600" />
-                    SMS Forwarder App me Telegram Settings:
-                  </span>
-                  <span className="text-[10px] font-mono bg-sky-100 text-sky-800 px-2 py-0.5 rounded-md font-semibold">Target: Telegram</span>
-                </div>
-
-                {/* 1. Chat ID */}
-                <div className="space-y-1">
-                  <label className="text-[11px] font-semibold text-gray-600 flex items-center justify-between">
-                    <span>1. Chat ID (Aapka Telegram ID)</span>
-                  </label>
-                  <Input
-                    readOnly
-                    value="8307658312"
-                    className="font-mono text-xs bg-gray-50 h-9 rounded-xl border-gray-200 text-gray-900 font-semibold"
-                  />
-                </div>
-
-                {/* 2. Custom Telegram Server URL / Host */}
-                <div className="space-y-1">
-                  <label className="text-[11px] font-semibold text-gray-600 flex items-center justify-between">
-                    <span>2. Custom Telegram Server Host / API Address (SmsForwarder App me)</span>
-                    <span className="text-[10px] text-sky-600 font-bold">Recommended</span>
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      readOnly
-                      value={typeof window !== "undefined" ? window.location.origin : ""}
-                      className="font-mono text-xs bg-sky-50/50 h-10 rounded-xl border-sky-200 text-sky-900 font-semibold"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => {
-                        if (typeof window !== "undefined") {
-                          navigator.clipboard.writeText(window.location.origin);
-                          setCopiedHost(true);
-                          toast.success("Telegram Server Host copied! Paste in SMS Forwarder app.");
-                          setTimeout(() => setCopiedHost(false), 2500);
-                        }
-                      }}
-                      className="h-10 px-3.5 rounded-xl border-sky-300 hover:bg-sky-100/60 font-semibold text-xs flex items-center gap-1 text-sky-800"
-                    >
-                      {copiedHost ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                      {copiedHost ? "Copied" : "Copy"}
-                    </Button>
+              {forwarderMode === "webhook" ? (
+                /* OPTION 1: DIRECT WEBSITE WEBHOOK */
+                <div className="space-y-4">
+                  {/* How it works banner */}
+                  <div className="p-4 bg-blue-50/80 rounded-2xl border border-blue-200 text-xs text-blue-950 space-y-2">
+                    <div className="font-bold flex items-center justify-between text-blue-900">
+                      <span className="flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        Seedha Website Server Par SMS Forwarding (Direct Webhook)
+                      </span>
+                      <Badge className="bg-emerald-600 text-white text-[10px] font-bold">
+                        ⚡ 0.1s Instant Auto-Credit
+                      </Badge>
+                    </div>
+                    <p className="text-[11px] text-blue-900/90 leading-relaxed">
+                      Telegram ki zaroorat nahi hai! Apne Android phone me koi bhi SMS Forwarder app (jaise <strong>SMS Forwarder by fritools</strong>, <strong>Lanrens SMSForwarder</strong>, <strong>MacroDroid</strong>, ya <strong>Tasker</strong>) me yeh <strong>Webhook URL</strong> daal dijiye. Jaise hi phone par payment SMS aayega, yeh server instant 0.1s mein 12-digit UTR & Amount read karke user ka balance add kar dega!
+                    </p>
                   </div>
-                  <p className="text-[10px] text-gray-500">
-                    SmsForwarder app me Telegram select karke <strong>Custom API Domain</strong> ya <strong>Server Host</strong> me yeh paste karein.
-                  </p>
-                </div>
 
-                {/* 3. Full Telegram Proxy URL (If app supports custom full URL) */}
-                <div className="space-y-1">
-                  <label className="text-[11px] font-semibold text-gray-600 flex items-center justify-between">
-                    <span>3. Ya phir ApiToken field me Full Proxy URL:</span>
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      readOnly
-                      value={typeof window !== "undefined" ? `${window.location.origin}/bot${botToken.trim() || "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0"}/sendMessage` : ""}
-                      className="font-mono text-[11px] bg-gray-50 h-9 rounded-xl border-gray-200 text-gray-800"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => {
-                        if (typeof window !== "undefined") {
-                          const fullUrl = `${window.location.origin}/bot${botToken.trim() || "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0"}/sendMessage`;
-                          navigator.clipboard.writeText(fullUrl);
-                          setCopiedWebhook(true);
-                          toast.success("Full Telegram Proxy URL copied!");
-                          setTimeout(() => setCopiedWebhook(false), 2500);
-                        }
-                      }}
-                      className="h-9 px-3 rounded-xl border-gray-300 hover:bg-gray-100 font-semibold text-xs flex items-center gap-1 text-gray-700"
-                    >
-                      {copiedWebhook ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                      {copiedWebhook ? "Copied" : "Copy"}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Live Test Telegram Proxy Button */}
-              <div className="pt-1">
-                <Button
-                  onClick={handleTestTgProxy}
-                  disabled={isTestingTgProxy}
-                  className="w-full h-11 rounded-2xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs shadow-md shadow-sky-600/20"
-                >
-                  {isTestingTgProxy ? (
-                    <RefreshCw className="w-4 h-4 animate-spin mr-2" />
-                  ) : (
-                    <Send className="w-4 h-4 mr-2" />
-                  )}
-                  {isTestingTgProxy ? "Sending Test Alert..." : "Test Telegram Bot (Send ₹10 to Telegram + Capture on Website)"}
-                </Button>
-              </div>
-
-              {/* Alternative: Direct Webhook */}
-              <div className="pt-2 border-t border-gray-100">
-                <details className="group text-xs">
-                  <summary className="cursor-pointer font-bold text-gray-600 hover:text-gray-900 flex items-center justify-between list-none py-1">
-                    <span className="flex items-center gap-1.5">
-                      <Smartphone className="w-3.5 h-3.5 text-gray-500" />
-                      Option B: Direct Webhook URL (Bina Telegram ke seedha website bhejne ke liye)
-                    </span>
-                    <span className="text-[10px] text-blue-600 font-medium group-open:rotate-180 transition-transform">▼</span>
-                  </summary>
-                  <div className="mt-2 space-y-2 p-3 bg-gray-50 rounded-xl border border-gray-200">
+                  {/* 1. Direct Webhook URL */}
+                  <div className="space-y-1.5 p-4 bg-gray-50 rounded-2xl border border-gray-200">
+                    <label className="text-xs font-bold text-gray-800 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center">1</span>
+                        Webhook URL (SMS Forwarder app me Target URL me dalein):
+                      </span>
+                      <span className="text-[10px] text-blue-600 font-mono font-bold bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                        Method: POST
+                      </span>
+                    </label>
                     <div className="flex items-center gap-2">
                       <Input
                         readOnly
                         value={typeof window !== "undefined" ? `${window.location.origin}/api/sms-forwarder` : "/api/sms-forwarder"}
-                        className="font-mono text-xs bg-white h-9 rounded-lg border-gray-200 text-gray-800"
+                        className="font-mono text-xs bg-white h-11 rounded-xl border-blue-300 font-bold text-blue-900 selection:bg-blue-100"
+                      />
+                      <Button
+                        type="button"
+                        onClick={() => {
+                          if (typeof window !== "undefined") {
+                            navigator.clipboard.writeText(`${window.location.origin}/api/sms-forwarder`);
+                            setCopiedWebhook(true);
+                            toast.success("Direct Webhook URL copied! Paste in SMS Forwarder app.");
+                            setTimeout(() => setCopiedWebhook(false), 2500);
+                          }
+                        }}
+                        className="h-11 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shrink-0 shadow-sm"
+                      >
+                        {copiedWebhook ? <Check className="w-4 h-4 text-emerald-300" /> : <Copy className="w-4 h-4" />}
+                        {copiedWebhook ? "Copied!" : "Copy Webhook URL"}
+                      </Button>
+                    </div>
+                    <p className="text-[10px] text-gray-500">
+                      Alternative endpoints: <code>{typeof window !== "undefined" ? `${window.location.origin}/api/sms-webhook` : "/api/sms-webhook"}</code>
+                    </p>
+                  </div>
+
+                  {/* 2. POST Body / Data Template */}
+                  <div className="space-y-1.5 p-4 bg-gray-50 rounded-2xl border border-gray-200">
+                    <label className="text-xs font-bold text-gray-800 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center">2</span>
+                        JSON Body Template (SMS Forwarder app me Payload / Post Data me):
+                      </span>
+                      <span className="text-[10px] text-gray-500 font-mono">Content-Type: application/json</span>
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        readOnly
+                        value='{"text": "[sms_body]", "from": "[from]"}'
+                        className="font-mono text-xs bg-white h-10 rounded-xl border-gray-300 text-gray-900 font-semibold"
                       />
                       <Button
                         type="button"
                         variant="outline"
                         onClick={() => {
-                          if (typeof window !== "undefined") {
-                            navigator.clipboard.writeText(`${window.location.origin}/api/sms-forwarder`);
-                            toast.success("Webhook URL copied!");
-                          }
+                          navigator.clipboard.writeText('{"text": "[sms_body]", "from": "[from]"}');
+                          setCopiedPayload(true);
+                          toast.success("Payload template copied!");
+                          setTimeout(() => setCopiedPayload(false), 2000);
                         }}
-                        className="h-9 px-3 rounded-lg border-gray-300 text-xs font-semibold"
+                        className="h-10 px-3 rounded-xl border-gray-300 font-semibold text-xs flex items-center gap-1 shrink-0"
                       >
-                        Copy
+                        {copiedPayload ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                        {copiedPayload ? "Copied" : "Copy Template"}
                       </Button>
                     </div>
+                    <p className="text-[10px] text-gray-500 leading-tight">
+                      Note: Agar app me sirf <code>message</code> ya <code>content</code> field hai ya raw text bhejna hai, website server automatically sabhi formats ko detect kar leti hai.
+                    </p>
                   </div>
-                </details>
-              </div>
+
+                  {/* Test Button */}
+                  <Button
+                    onClick={handleTestWebhook}
+                    disabled={isTestingWebhook}
+                    className="w-full h-11 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-600/20"
+                  >
+                    {isTestingWebhook ? (
+                      <RefreshCw className="w-4 h-4 animate-spin mr-2" />
+                    ) : (
+                      <Zap className="w-4 h-4 fill-white mr-2" />
+                    )}
+                    {isTestingWebhook ? "Sending Test SMS to Webhook..." : "⚡ Test Direct SMS Webhook (Simulate Phone Forwarding in 0.1s)"}
+                  </Button>
+                </div>
+              ) : (
+                /* OPTION 2: TELEGRAM BOT PROXY */
+                <div className="space-y-4">
+                  <div className="p-3.5 bg-sky-50/90 rounded-2xl border border-sky-200 text-xs text-sky-950 space-y-1.5">
+                    <div className="font-bold flex items-center gap-1.5 text-sky-900">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      Telegram Bot Proxy System
+                    </div>
+                    <p className="text-[11px] text-sky-900/90 leading-relaxed">
+                      Aapke phone ka SMS Forwarder app Telegram format me SMS bhejega. Website <strong>0.1s me UTR & Amount save karke wallet credit karegi</strong> aur sath me <strong>Aapke Telegram Chat me bhi deliver kar degi!</strong>
+                    </p>
+                  </div>
+
+                  <div className="space-y-3 p-4 bg-gray-50 rounded-2xl border border-sky-200">
+                    {/* Chat ID */}
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-gray-600">
+                        1. Telegram Chat ID (Aapka Telegram ID)
+                      </label>
+                      <Input
+                        readOnly
+                        value={chatId.trim() || "8307658312"}
+                        className="font-mono text-xs bg-white h-9 rounded-xl border-gray-200 text-gray-900 font-semibold"
+                      />
+                    </div>
+
+                    {/* Custom Telegram Server Host */}
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-gray-600 flex items-center justify-between">
+                        <span>2. Custom Telegram Server Host (SMS Forwarder App me)</span>
+                        <span className="text-[10px] text-sky-600 font-bold">Recommended</span>
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          readOnly
+                          value={typeof window !== "undefined" ? window.location.origin : ""}
+                          className="font-mono text-xs bg-white h-10 rounded-xl border-sky-200 text-sky-900 font-semibold"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => {
+                            if (typeof window !== "undefined") {
+                              navigator.clipboard.writeText(window.location.origin);
+                              setCopiedHost(true);
+                              toast.success("Telegram Server Host copied!");
+                              setTimeout(() => setCopiedHost(false), 2500);
+                            }
+                          }}
+                          className="h-10 px-3.5 rounded-xl border-sky-300 hover:bg-sky-50 font-semibold text-xs flex items-center gap-1 text-sky-800"
+                        >
+                          {copiedHost ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                          {copiedHost ? "Copied" : "Copy"}
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Full Telegram Proxy URL */}
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-gray-600">
+                        3. Full Telegram Proxy URL (agar app custom full URL maangti hai):
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          readOnly
+                          value={typeof window !== "undefined" ? `${window.location.origin}/bot${botToken.trim() || "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0"}/sendMessage` : ""}
+                          className="font-mono text-[11px] bg-white h-9 rounded-xl border-gray-200 text-gray-800"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => {
+                            if (typeof window !== "undefined") {
+                              const fullUrl = `${window.location.origin}/bot${botToken.trim() || "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0"}/sendMessage`;
+                              navigator.clipboard.writeText(fullUrl);
+                              setCopiedWebhook(true);
+                              toast.success("Full Telegram Proxy URL copied!");
+                              setTimeout(() => setCopiedWebhook(false), 2500);
+                            }
+                          }}
+                          className="h-9 px-3 rounded-xl border-gray-300 font-semibold text-xs flex items-center gap-1 text-gray-700"
+                        >
+                          {copiedWebhook ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                          {copiedWebhook ? "Copied" : "Copy"}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <Button
+                    onClick={handleTestTgProxy}
+                    disabled={isTestingTgProxy}
+                    className="w-full h-11 rounded-2xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs shadow-md shadow-sky-600/20"
+                  >
+                    {isTestingTgProxy ? (
+                      <RefreshCw className="w-4 h-4 animate-spin mr-2" />
+                    ) : (
+                      <Send className="w-4 h-4 mr-2" />
+                    )}
+                    {isTestingTgProxy ? "Sending Test Alert..." : "Test Telegram Bot (Send ₹10 to Telegram + Capture on Website)"}
+                  </Button>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -1334,6 +1518,257 @@ export const TelegramBotTab: React.FC = () => {
         </div>
       </div>
 
+      {/* ======================================================== */}
+      {/* LIVE QR CODE PAYMENT REQUESTS (12-DIGIT INTENT ENGINE)   */}
+      {/* ======================================================== */}
+      <Card className="rounded-3xl border-amber-200/80 shadow-md bg-white overflow-hidden">
+        <CardHeader className="p-5 sm:p-6 border-b border-amber-100 bg-gradient-to-r from-amber-50/60 via-orange-50/30 to-white">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center">
+                  <Zap className="w-5 h-5 fill-amber-500" />
+                </div>
+                <div>
+                  <CardTitle className="text-base sm:text-lg font-bold text-gray-900 flex items-center gap-2">
+                    Live QR Code Requests (12-Digit Unique Code Engine)
+                    <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-[10px] font-bold">
+                      Zero-Collision
+                    </Badge>
+                  </CardTitle>
+                  <CardDescription className="text-xs text-gray-500">
+                    Har QR code ka alag 12-digit numeric code (jaise <b>252525383637</b>) generate hota hai. Telegram SMS aate hi instant auto-verify hota hai!
+                  </CardDescription>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={fetchIntents}
+                disabled={loadingIntents}
+                className="h-9 rounded-xl border-amber-200 text-amber-900 hover:bg-amber-50 text-xs font-bold"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loadingIntents ? "animate-spin" : ""}`} />
+                Refresh Requests
+              </Button>
+            </div>
+          </div>
+
+          {/* Quick Metrics Bar */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4">
+            <div className="p-3 bg-white rounded-2xl border border-gray-100 shadow-xs">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Total QR Generated</p>
+              <p className="text-xl font-black text-gray-900 mt-0.5">{intentStats.total}</p>
+            </div>
+
+            <div className="p-3 bg-amber-50/70 rounded-2xl border border-amber-200/60 shadow-xs">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-amber-700">Active Pending</p>
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+              </div>
+              <p className="text-xl font-black text-amber-900 mt-0.5">{intentStats.pending}</p>
+            </div>
+
+            <div className="p-3 bg-emerald-50/70 rounded-2xl border border-emerald-200/60 shadow-xs">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">Auto-Completed</p>
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              </div>
+              <p className="text-xl font-black text-emerald-900 mt-0.5">{intentStats.completed}</p>
+            </div>
+
+            <div className="p-3 bg-purple-50/70 rounded-2xl border border-purple-200/60 shadow-xs">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-purple-700">Completed Volume</p>
+              <p className="text-xl font-black text-purple-900 mt-0.5">₹{intentStats.totalVolume.toFixed(2)}</p>
+            </div>
+          </div>
+        </CardHeader>
+
+        {/* Filter Navigation */}
+        <div className="p-4 sm:px-6 border-b border-gray-100 flex items-center justify-between gap-2 overflow-x-auto">
+          <div className="flex items-center gap-1.5">
+            <Button
+              variant={intentFilter === "all" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setIntentFilter("all")}
+              className={`h-8 rounded-xl text-xs font-bold ${
+                intentFilter === "all" ? "bg-gray-900 text-white" : "text-gray-600 hover:bg-gray-100"
+              }`}
+            >
+              All Requests ({intents.length})
+            </Button>
+            <Button
+              variant={intentFilter === "pending" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setIntentFilter("pending")}
+              className={`h-8 rounded-xl text-xs font-bold ${
+                intentFilter === "pending" ? "bg-amber-600 text-white" : "text-amber-700 hover:bg-amber-50"
+              }`}
+            >
+              Pending ({intents.filter((i) => i.status === "pending" && i.expiresAt > Date.now()).length})
+            </Button>
+            <Button
+              variant={intentFilter === "completed" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setIntentFilter("completed")}
+              className={`h-8 rounded-xl text-xs font-bold ${
+                intentFilter === "completed" ? "bg-emerald-600 text-white" : "text-emerald-700 hover:bg-emerald-50"
+              }`}
+            >
+              Completed ({intents.filter((i) => i.status === "completed").length})
+            </Button>
+            <Button
+              variant={intentFilter === "expired" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setIntentFilter("expired")}
+              className={`h-8 rounded-xl text-xs font-bold ${
+                intentFilter === "expired" ? "bg-gray-600 text-white" : "text-gray-500 hover:bg-gray-100"
+              }`}
+            >
+              Expired ({intents.filter((i) => i.status === "expired" || (i.status === "pending" && i.expiresAt <= Date.now())).length})
+            </Button>
+          </div>
+
+          <span className="text-[11px] text-gray-400 hidden sm:inline">
+            ⚡ 0 Firestore reads (Server Memory)
+          </span>
+        </div>
+
+        {/* Requests List */}
+        <CardContent className="p-0">
+          {(() => {
+            const now = Date.now();
+            const filteredIntents = intents.filter((i) => {
+              if (intentFilter === "pending") return i.status === "pending" && i.expiresAt > now;
+              if (intentFilter === "completed") return i.status === "completed";
+              if (intentFilter === "expired") return i.status === "expired" || (i.status === "pending" && i.expiresAt <= now);
+              return true;
+            });
+
+            if (filteredIntents.length === 0) {
+              return (
+                <div className="py-12 text-center space-y-2">
+                  <div className="w-12 h-12 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center mx-auto">
+                    <QrCode className="w-6 h-6" />
+                  </div>
+                  <p className="text-sm font-bold text-gray-700">No QR Code Requests found in this filter.</p>
+                  <p className="text-xs text-gray-400 max-w-sm mx-auto">
+                    Jaise hi koi user Add Fund me jaakar amount select karega, unka 12-digit QR code yahan live save ho jayega.
+                  </p>
+                </div>
+              );
+            }
+
+            return (
+              <div className="divide-y divide-gray-100">
+                {filteredIntents.map((item) => {
+                  const isPending = item.status === "pending" && item.expiresAt > now;
+                  const isCompleted = item.status === "completed";
+                  const isExpired = item.status === "expired" || (item.status === "pending" && item.expiresAt <= now);
+                  const isCopied = copiedIntentRef === item.orderRef;
+
+                  return (
+                    <div
+                      key={item.intentId}
+                      className={`p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-3 transition-colors ${
+                        isPending ? "bg-amber-50/20 hover:bg-amber-50/40" : isCompleted ? "bg-emerald-50/10 hover:bg-emerald-50/20" : "hover:bg-gray-50/50"
+                      }`}
+                    >
+                      {/* Left: 12-Digit Code & Amount */}
+                      <div className="space-y-1.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(item.orderRef);
+                              setCopiedIntentRef(item.orderRef);
+                              toast.success(`12-Digit Code copied: ${item.orderRef}`);
+                              setTimeout(() => setCopiedIntentRef(null), 2000);
+                            }}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 hover:bg-blue-50 text-gray-900 hover:text-blue-700 font-mono text-xs font-bold rounded-lg border border-gray-200 transition-colors shadow-2xs"
+                            title="Click to copy 12-digit unique code"
+                          >
+                            <QrCode className="w-3.5 h-3.5 text-blue-600" />
+                            <span>{item.orderRef}</span>
+                            {isCopied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3 text-gray-400" />}
+                          </button>
+
+                          <span className="text-sm font-black text-gray-900 bg-white px-2 py-0.5 rounded-md border border-gray-200 shadow-2xs">
+                            ₹{item.amount.toFixed(2)}
+                          </span>
+
+                          {item.amount !== item.baseAmount && (
+                            <span className="text-[10px] text-amber-700 font-semibold bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                              Base: ₹{item.baseAmount}
+                            </span>
+                          )}
+
+                          {isPending && (
+                            <Badge className="bg-amber-100 text-amber-800 border-amber-200 text-[10px] font-bold flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
+                              PENDING WAITING
+                            </Badge>
+                          )}
+
+                          {isCompleted && (
+                            <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 text-[10px] font-bold flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                              AUTO-CREDITED
+                            </Badge>
+                          )}
+
+                          {isExpired && (
+                            <Badge className="bg-gray-100 text-gray-600 border-gray-200 text-[10px] font-bold">
+                              EXPIRED
+                            </Badge>
+                          )}
+                        </div>
+
+                        {/* User & Bank Info */}
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
+                          <span>User: <b className="text-gray-700 font-mono">{item.userEmail || item.userId}</b></span>
+                          <span>Time: <b className="text-gray-700">{new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</b></span>
+                          {item.utr && (
+                            <span>Bank UTR: <b className="text-emerald-700 font-mono font-bold">{item.utr}</b></span>
+                          )}
+                          {item.senderBank && (
+                            <span>Bank: <b className="text-gray-700">{item.senderBank}</b></span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Right: Actions */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        {isPending && (
+                          <Button
+                            size="sm"
+                            onClick={() => handleApproveIntent(item.intentId, item.orderRef, item.amount)}
+                            disabled={approvingIntentId === item.intentId}
+                            className="h-8 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm shadow-emerald-600/20"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
+                            {approvingIntentId === item.intentId ? "Crediting..." : `⚡ 1-Click Approve ₹${item.amount.toFixed(2)}`}
+                          </Button>
+                        )}
+
+                        {isCompleted && (
+                          <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-xl border border-emerald-200 flex items-center gap-1">
+                            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                            Wallet Credited
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </CardContent>
+      </Card>
+
       {/* Live Telegram Bot Ingestion Feed */}
       <Card className="rounded-3xl border-gray-100 shadow-sm bg-white overflow-hidden">
         <CardHeader className="p-5 sm:p-6 border-b border-gray-100">
@@ -1430,10 +1865,10 @@ export const TelegramBotTab: React.FC = () => {
             <div>
               <CardTitle className="text-base sm:text-lg font-bold text-gray-900 flex items-center gap-2">
                 <ShieldCheck className="w-5 h-5 text-emerald-600" />
-                Live Received Bank Alerts & UTR Registry
+                All Forwarded SMS & Bank Alerts Registry (Live Amount & 12-Digit UTR)
               </CardTitle>
               <CardDescription className="text-xs text-gray-500">
-                All parsed payments from Telegram. Unused UTRs are instantly claimable by users.
+                Direct Webhook aur Telegram Bot dono se aane wale sabhi payment SMS ka live data. 12-digit UTR aur amount match hote hi user ka wallet instant credit ho jata hai.
               </CardDescription>
             </div>
 
@@ -1488,18 +1923,19 @@ export const TelegramBotTab: React.FC = () => {
                   <th className="py-3 px-4">Amount</th>
                   <th className="py-3 px-4">12-Digit UTR</th>
                   <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4">Claimed By</th>
+                  <th className="py-3 px-4">Claimed / User</th>
+                  <th className="py-3 px-4 text-right">Raw SMS</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 font-medium">
                 {alerts.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="text-center py-10 text-gray-400">
+                    <td colSpan={7} className="text-center py-10 text-gray-400">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <Smartphone className="w-8 h-8 opacity-40 text-gray-400" />
                         <p className="text-xs">No bank alerts found for current filter.</p>
                         <p className="text-[11px] text-gray-400">
-                          Click "Generate Simulated Bank SMS" above to test or forward SMS to your bot.
+                          Click "Test Direct SMS Webhook" above to test or forward bank SMS from your phone.
                         </p>
                       </div>
                     </td>
@@ -1575,6 +2011,18 @@ export const TelegramBotTab: React.FC = () => {
                           <span className="text-gray-400 italic">Waiting for user claim</span>
                         )}
                       </td>
+
+                      <td className="py-3 px-4 text-right whitespace-nowrap">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setViewingAlertSms(alert)}
+                          className="h-7 px-2 text-xs font-semibold text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg inline-flex items-center gap-1"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          View SMS
+                        </Button>
+                      </td>
                     </tr>
                   ))
                 )}
@@ -1583,6 +2031,80 @@ export const TelegramBotTab: React.FC = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* Raw SMS View Modal */}
+      {viewingAlertSms && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-gray-100 space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+              <div className="space-y-0.5">
+                <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                  <Smartphone className="w-4 h-4 text-blue-600" />
+                  Forwarded Bank SMS Details
+                </h3>
+                <p className="text-xs text-gray-500">
+                  Received at {new Date(viewingAlertSms.timestamp).toLocaleString("en-IN")}
+                </p>
+              </div>
+              <button
+                onClick={() => setViewingAlertSms(null)}
+                className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 flex items-center justify-center font-bold text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div className="p-3 bg-gray-50 rounded-xl border border-gray-200">
+                <span className="text-gray-400 block text-[10px] font-semibold uppercase">Extracted Amount</span>
+                <span className="text-base font-black text-emerald-700">₹{viewingAlertSms.amount}</span>
+              </div>
+              <div className="p-3 bg-gray-50 rounded-xl border border-gray-200">
+                <span className="text-gray-400 block text-[10px] font-semibold uppercase">12-Digit UTR</span>
+                <span className="text-xs font-mono font-bold text-gray-900">{viewingAlertSms.utr}</span>
+              </div>
+              <div className="p-3 bg-gray-50 rounded-xl border border-gray-200">
+                <span className="text-gray-400 block text-[10px] font-semibold uppercase">Bank / Source</span>
+                <span className="font-semibold text-gray-800">{viewingAlertSms.senderBank}</span>
+              </div>
+              <div className="p-3 bg-gray-50 rounded-xl border border-gray-200">
+                <span className="text-gray-400 block text-[10px] font-semibold uppercase">Status</span>
+                <span className="font-bold text-xs">
+                  {viewingAlertSms.isUsed ? "✅ Claimed / Credited" : "🟢 Available"}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-gray-700 uppercase tracking-wider">
+                Full Original Raw SMS:
+              </label>
+              <div className="p-3.5 bg-gray-50 rounded-2xl border border-gray-200 font-mono text-xs text-gray-800 whitespace-pre-wrap break-words leading-relaxed max-h-48 overflow-y-auto">
+                {viewingAlertSms.rawText || "No raw text recorded"}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  navigator.clipboard.writeText(viewingAlertSms.rawText);
+                  toast.success("Raw SMS copied!");
+                }}
+                className="rounded-xl text-xs"
+              >
+                Copy SMS Text
+              </Button>
+              <Button
+                onClick={() => setViewingAlertSms(null)}
+                className="rounded-xl bg-gray-900 text-white text-xs font-bold px-5"
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

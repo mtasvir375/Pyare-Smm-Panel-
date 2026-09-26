@@ -161,6 +161,8 @@ export default function Admin() {
   const [guideVideoUrl, setGuideVideoUrl] = useState("");
   const [selectedTheme, setSelectedTheme] = useState("charcoal");
   const [selectedFestivalTheme, setSelectedFestivalTheme] = useState("none");
+  const [instantQrEnabled, setInstantQrEnabled] = useState(true);
+  const [manualQrEnabled, setManualQrEnabled] = useState(true);
   const [razorpayEnabled, setRazorpayEnabled] = useState(false);
   const [razorpayKeyId, setRazorpayKeyId] = useState("");
   const [razorpayKeySecret, setRazorpayKeySecret] = useState("");
@@ -347,6 +349,8 @@ export default function Admin() {
           setGuideVideoUrl(settingsData.guideVideoUrl || "");
           setSelectedTheme(settingsData.selectedTheme || "charcoal");
           setSelectedFestivalTheme(settingsData.selectedFestivalTheme || "none");
+          setInstantQrEnabled(settingsData.instantQrEnabled !== false);
+          setManualQrEnabled(settingsData.manualQrEnabled !== false);
           setRazorpayEnabled(settingsData.razorpayEnabled || false);
           setRazorpayKeyId(settingsData.razorpayKeyId || "");
           setRazorpayKeySecret(settingsData.razorpayKeySecret || "");
@@ -579,6 +583,8 @@ export default function Admin() {
         guideVideoUrl: guideVideoUrl.trim(),
         selectedTheme: selectedTheme,
         selectedFestivalTheme: selectedFestivalTheme,
+        instantQrEnabled: instantQrEnabled,
+        manualQrEnabled: manualQrEnabled,
         razorpayEnabled: razorpayEnabled,
         razorpayKeyId: razorpayKeyId.trim(),
         razorpayKeySecret: razorpayKeySecret.trim(),
@@ -615,6 +621,20 @@ export default function Admin() {
       setProviderApiKey(cleanKey);
       setBackendApiUrl(cleanBackend);
       setQrFile(null);
+
+      // Sync UPI ID with backend UPI Gateway / Telegram Bot service
+      if (upiId.trim()) {
+        try {
+          await axios.post("/api/admin/upi-gateway-config", {
+            action: "save",
+            upiId: upiId.trim(),
+            payeeName: merchantName.trim(),
+            instantQrEnabled,
+            manualQrEnabled
+          });
+        } catch (e) {}
+      }
+
       const cacheMod = await import("@/lib/cache");
       cacheMod.clearCache();
       await cacheMod.getCachedSettings(true);
@@ -2618,6 +2638,91 @@ export default function Admin() {
                     }
                     return null;
                   })()}
+
+                  {/* QR Payment Methods Toggle: Instant Auto QR vs Manual UPI QR */}
+                  <div className="border border-blue-100 bg-gradient-to-br from-blue-50/50 via-white to-emerald-50/40 p-4 rounded-3xl shadow-xs space-y-4">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 bg-blue-600 text-white rounded-xl shadow-xs">
+                        <QrCode className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-sm text-gray-900">QR Payment Methods Control (भुगतान विकल्प चालू / बंद करें)</h3>
+                        <p className="text-[11px] text-gray-500">
+                          अपनी पसंद के अनुसार "Instant Auto QR" या "Manual UPI QR" को On/Off करें। Off करने पर वह ऑप्शन Add Funds screen में ग्राहक को नहीं दिखेगा।
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {/* 1. Instant Auto QR Toggle */}
+                      <div className="p-3.5 rounded-2xl border bg-white flex flex-col justify-between space-y-3 shadow-xs">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-1.5">
+                              <Zap className="w-4 h-4 text-emerald-600 fill-emerald-600" />
+                              <h4 className="font-bold text-xs text-gray-900">Instant Auto QR (Zero-UTR)</h4>
+                            </div>
+                            <p className="text-[10px] text-gray-500 leading-relaxed">
+                              ग्राहक dynamic QR स्कैन करता है और 2 सेकंड में बिना 12-digit UTR डाले बैलेंस ऑटो-क्रेडिट हो जाता है।
+                            </p>
+                          </div>
+                          <div 
+                            className={cn(
+                              "w-12 h-6 rounded-full p-1 cursor-pointer transition-colors duration-200 shrink-0",
+                              instantQrEnabled ? "bg-emerald-600" : "bg-gray-200"
+                            )}
+                            onClick={() => setInstantQrEnabled(!instantQrEnabled)}
+                          >
+                            <div className={cn(
+                              "w-4 h-4 bg-white rounded-full transition-transform duration-200 shadow-xs",
+                              instantQrEnabled ? "translate-x-6" : "translate-x-0"
+                            )} />
+                          </div>
+                        </div>
+                        <div className="text-[10px] font-bold">
+                          {instantQrEnabled ? (
+                            <span className="text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-md">✓ ON (Customer ko dikhega)</span>
+                          ) : (
+                            <span className="text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md">✕ OFF (Hidden from payment screen)</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* 2. Manual UPI QR Toggle */}
+                      <div className="p-3.5 rounded-2xl border bg-white flex flex-col justify-between space-y-3 shadow-xs">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-1.5">
+                              <QrCode className="w-4 h-4 text-blue-600" />
+                              <h4 className="font-bold text-xs text-gray-900">Manual UPI QR (12-Digit UTR)</h4>
+                            </div>
+                            <p className="text-[10px] text-gray-500 leading-relaxed">
+                              ग्राहक QR स्कैन करने के बाद 12-अंकों का UTR नंबर डालकर बैलेंस कन्फर्म करता है।
+                            </p>
+                          </div>
+                          <div 
+                            className={cn(
+                              "w-12 h-6 rounded-full p-1 cursor-pointer transition-colors duration-200 shrink-0",
+                              manualQrEnabled ? "bg-blue-600" : "bg-gray-200"
+                            )}
+                            onClick={() => setManualQrEnabled(!manualQrEnabled)}
+                          >
+                            <div className={cn(
+                              "w-4 h-4 bg-white rounded-full transition-transform duration-200 shadow-xs",
+                              manualQrEnabled ? "translate-x-6" : "translate-x-0"
+                            )} />
+                          </div>
+                        </div>
+                        <div className="text-[10px] font-bold">
+                          {manualQrEnabled ? (
+                            <span className="text-blue-700 bg-blue-100/80 px-2 py-0.5 rounded-md">✓ ON (Customer ko dikhega)</span>
+                          ) : (
+                            <span className="text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md">✕ OFF (Hidden from payment screen)</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
 
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
