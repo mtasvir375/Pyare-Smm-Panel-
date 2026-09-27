@@ -1,57 +1,5 @@
 {
-  "settings": {
-    "data": {
-      "smsForwarderSecret": "",
-      "providerApiKey": "",
-      "instantQrEnabled": true,
-      "customGateway1Url": "",
-      "whatsappChatNumber": "9942653865",
-      "telegramBotEnabled": true,
-      "razorpayKeySecret": "",
-      "telegramBotToken": "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0",
-      "updatedAt": "2026-09-25T08:53:19.531Z",
-      "guideVideoUrl": "",
-      "razorpayEnabled": false,
-      "telegramBotUsername": "BbbSmart_bot",
-      "upiId": "mdsaudalam621@okicici",
-      "paytmMerchantKey": "",
-      "customGateway2Key": "",
-      "paytmEnv": "sandbox",
-      "customGateway1Secret": "",
-      "selectedTheme": "amber",
-      "qrAutoUrl": "",
-      "phonepeMerchantId": "",
-      "phonepeSaltIndex": "1",
-      "customGateway1Name": "",
-      "customGateway2Name": "",
-      "razorpayKeyId": "",
-      "autoApproveDeposits": false,
-      "paymentQrUrl": "",
-      "qrAutoEnabled": false,
-      "manualQrEnabled": false,
-      "qrAutoProvider": "smmqr",
-      "customGateway1Key": "",
-      "providerApiUrl": "",
-      "selectedFestivalTheme": "none",
-      "smsForwarderEnabled": true,
-      "backendApiUrl": "",
-      "paytmMid": "",
-      "customGateway2Secret": "",
-      "customGateway1Enabled": false,
-      "whatsappLink": "https://wa.me/919999999999",
-      "telegramChatId": "12345678",
-      "merchantName": "Pyare SMM Panel",
-      "phonepeEnabled": false,
-      "phonepeEnv": "sandbox",
-      "qrAutoApiKey": "",
-      "customGateway2Enabled": false,
-      "phonepeSaltKey": "",
-      "customGateway2Url": "",
-      "paytmEnabled": false,
-      "qrAutoToken": ""
-    },
-    "time": 1790417442814
-  },
+  "settings": null,
   "providers": [
     [
       "z9lfdj7ByNCeGNO6WbGZ",
@@ -654,19 +602,19 @@
       "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
       {
         "data": {
-          "role": "student",
-          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIVDCPXKVjVCP0jqcCpWx5c759WFIsH20U7smDKXtVCJQmldT5A=s96-c",
-          "last_ordered_at": "2026-07-12T20:24:51.921Z",
-          "lastOrderedAt": "2026-09-25T10:29:57.109Z",
-          "email": "mtasvir375@gmail.com",
           "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-          "displayName": "Md Saad Alam",
-          "lastActive": "2026-06-17T09:24:31.827Z",
+          "balance": 475034.18,
+          "role": "student",
           "createdAt": "2026-09-14T13:39:37.418Z",
-          "balance": 475027.22,
-          "updatedAt": "2026-09-26T10:03:56.486Z"
+          "updatedAt": "2026-09-27T16:27:34.994Z",
+          "lastOrderedAt": "2026-09-27T16:18:25.218Z",
+          "lastActive": "2026-06-17T09:24:31.827Z",
+          "displayName": "Md Saad Alam",
+          "last_ordered_at": "2026-07-12T20:24:51.921Z",
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIVDCPXKVjVCP0jqcCpWx5c759WFIsH20U7smDKXtVCJQmldT5A=s96-c",
+          "email": "mtasvir375@gmail.com"
         },
-        "time": 1790417603823
+        "time": 1790533802547
       }
     ],
     [
@@ -685,6 +633,7 @@
       "w1VAF0MJoYducsSTQtMRW907OBX2",
       {
         "data": {
+          "id": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "displayName": "Md Saud alam",
           "balance": 202.96,
           "lastOrderedAt": "2026-09-18T20:49:43.838Z",

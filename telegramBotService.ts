@@ -80,6 +80,30 @@ let memoryIntents: Map<string, PaymentIntent> = new Map();
 const notifiedIntents: Set<string> = new Set();
 let intentMatchCallback: PaymentIntentCallback | null = null;
 
+const INSTANCE_ID = `inst_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+let isLeader = false;
+
+export async function checkOrAcquirePollingLock(): Promise<boolean> {
+  try {
+    const lockDoc = await getRestDoc("settings", "telegram_bot_lock");
+    const now = Date.now();
+    if (lockDoc && lockDoc.holder && lockDoc.expiresAt && lockDoc.expiresAt > now && lockDoc.holder !== INSTANCE_ID) {
+      isLeader = false;
+      return false;
+    }
+    await setRestDoc("settings", "telegram_bot_lock", {
+      holder: INSTANCE_ID,
+      expiresAt: now + 25000,
+      renewedAt: new Date().toISOString()
+    });
+    isLeader = true;
+    return true;
+  } catch {
+    isLeader = true;
+    return true;
+  }
+}
+
 let memoryConfig: TelegramBotConfig = {
   botToken: "",
   chatId: "",
@@ -234,6 +258,27 @@ export function findMatchingIntent(params: {
   all12Digits?: string[];
 }): PaymentIntent | null {
   const now = Date.now();
+  // Ensure disk intents are synced into memory
+  try {
+    if (fs.existsSync(INTENTS_FILE)) {
+      const diskIntents: PaymentIntent[] = JSON.parse(fs.readFileSync(INTENTS_FILE, "utf-8"));
+      if (Array.isArray(diskIntents)) {
+        for (const it of diskIntents) {
+          if (!memoryIntents.has(it.intentId)) {
+            memoryIntents.set(it.intentId, it);
+          } else {
+            const mem = memoryIntents.get(it.intentId)!;
+            if (it.status === "completed" && mem.status !== "completed") {
+              mem.status = "completed";
+              mem.completedAt = it.completedAt;
+              mem.utr = it.utr;
+            }
+          }
+        }
+      }
+    }
+  } catch {}
+
   const allIntents = Array.from(memoryIntents.values());
   // Candidates that are NOT yet completed (pending or recently expired within 24 hours)
   const uncompleted = allIntents.filter(
@@ -850,6 +895,38 @@ export async function tryMatchAndCompleteIntent(params: {
 export async function reconcilePendingIntentsWithAlerts(): Promise<number> {
   let reconciled = 0;
   const now = Date.now();
+
+  // Sync disk alerts into memoryAlerts
+  try {
+    if (fs.existsSync(ALERTS_FILE)) {
+      const diskAlerts: BankAlert[] = JSON.parse(fs.readFileSync(ALERTS_FILE, "utf-8"));
+      if (Array.isArray(diskAlerts)) {
+        for (const da of diskAlerts) {
+          const idx = memoryAlerts.findIndex((ma) => ma.utr === da.utr || ma.id === da.id);
+          if (idx === -1) {
+            memoryAlerts.unshift(da);
+          } else if (da.isUsed && !memoryAlerts[idx].isUsed) {
+            memoryAlerts[idx].isUsed = true;
+          }
+        }
+      }
+    }
+  } catch {}
+
+  // Sync disk intents into memoryIntents
+  try {
+    if (fs.existsSync(INTENTS_FILE)) {
+      const diskIntents: PaymentIntent[] = JSON.parse(fs.readFileSync(INTENTS_FILE, "utf-8"));
+      if (Array.isArray(diskIntents)) {
+        for (const it of diskIntents) {
+          if (!memoryIntents.has(it.intentId)) {
+            memoryIntents.set(it.intentId, it);
+          }
+        }
+      }
+    }
+  } catch {}
+
   const uncompleted = Array.from(memoryIntents.values()).filter(
     (i) => i.status !== "completed" && (now - i.createdAt < 24 * 60 * 60 * 1000)
   );
@@ -1303,18 +1380,29 @@ export async function startTelegramPolling(): Promise<{ success: boolean; messag
 
   // Polling loop with strictly 1 active loop per epoch
   (async () => {
-    console.log(`[TELEGRAM-SERVICE] Telegram polling loop started (epoch: ${thisEpoch}) with native fetch.`);
+    console.log(`[TELEGRAM-SERVICE] Telegram polling loop started (epoch: ${thisEpoch}, instance: ${INSTANCE_ID}) with native fetch.`);
     let consecutiveErrors = 0;
 
     while (isPolling && thisEpoch === currentLoopEpoch) {
       try {
+        // Leader election: Only ONE instance polls Telegram at a time across ais-dev and ais-pre
+        const hasLease = await checkOrAcquirePollingLock();
+        if (!hasLease) {
+          // Another instance holds active lock, wait in quiet standby
+          saveTelegramConfig({ lastPolledAt: new Date().toISOString(), lastError: undefined });
+          // Even in standby, periodically reconcile pending intents with database alerts
+          await reconcilePendingIntentsWithAlerts().catch(() => {});
+          await new Promise((r) => setTimeout(r, 6000));
+          continue;
+        }
+
         const offset = (memoryConfig.lastUpdateId || 0) + 1;
-        const url = `https://api.telegram.org/bot${token}/getUpdates?offset=${offset}&timeout=8&allowed_updates=["message","channel_post","edited_message","business_message"]`;
+        const url = `https://api.telegram.org/bot${token}/getUpdates?offset=${offset}&timeout=3&allowed_updates=["message","channel_post","edited_message","business_message"]`;
 
         const reqAbort = new AbortController();
         const pollTimer = setTimeout(() => {
           try { reqAbort.abort(); } catch {}
-        }, 12000);
+        }, 8000);
 
         let resJson: any = null;
         try {
@@ -1354,6 +1442,12 @@ export async function startTelegramPolling(): Promise<{ success: boolean; messag
             await processTelegramUpdate(update, token);
           }
         }
+
+        // Auto-reconcile pending intents with alerts
+        await reconcilePendingIntentsWithAlerts().catch(() => {});
+
+        // Brief 400ms pause to ensure polite socket termination
+        await new Promise((r) => setTimeout(r, 400));
       } catch (err: any) {
         if (!isPolling || thisEpoch !== currentLoopEpoch) break;
 
@@ -1369,18 +1463,12 @@ export async function startTelegramPolling(): Promise<{ success: boolean; messag
         consecutiveErrors++;
         console.warn(`[TELEGRAM-POLL-NOTICE] #${consecutiveErrors}:`, errMsg);
 
-        // Auto-heal 409 Conflict: wait 4 seconds before retrying so stale connection closes
+        // Auto-heal 409 Conflict with randomized jitter so instances don't retry in lockstep
         if (errMsg && (errMsg.toLowerCase().includes("deletewebhook") || errMsg.toLowerCase().includes("conflict"))) {
-          console.log("[TELEGRAM-SERVICE] 409 Conflict detected. Deleting webhook & waiting 4s...");
-          try {
-            await fetch(`https://api.telegram.org/bot${token}/deleteWebhook`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", "Connection": "close" },
-              body: JSON.stringify({ drop_pending_updates: false })
-            });
-          } catch {}
+          const jitterMs = 5000 + Math.floor(Math.random() * 5000);
+          console.log(`[TELEGRAM-SERVICE] 409 Conflict detected. Backing off ${jitterMs}ms...`);
           saveTelegramConfig({ lastError: "Conflict: Waiting for other connection to close..." });
-          await new Promise((r) => setTimeout(r, 4000));
+          await new Promise((r) => setTimeout(r, jitterMs));
           continue;
         }
 
@@ -1538,6 +1626,8 @@ export function getTelegramStatus() {
     lastPolledAt: memoryConfig.lastPolledAt,
     lastPolledAgeSeconds,
     lastError: memoryConfig.lastError,
+    isLeader,
+    instanceId: INSTANCE_ID,
     totalAlertsCount: totalAlerts,
     unusedAlertsCount: unusedAlerts,
     totalIntentsCount: memoryIntents.size,

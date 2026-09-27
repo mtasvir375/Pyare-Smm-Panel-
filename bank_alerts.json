@@ -1,62 +1,11 @@
 [
   {
-    "id": "alert_482910482919_1790418049266",
-    "utr": "482910482919",
-    "amount": 2.01,
+    "id": "alert_675858517416_1790526357750",
+    "utr": "675858517416",
+    "amount": 6,
     "senderBank": "State Bank of India (SBI)",
-    "rawText": "Dear UPI user, A/C 9901 credited by Rs.2.01 on 26-09-24 by transfer from Payer Ref No 482910482919 -State Bank of India",
-    "timestamp": "2026-09-26T10:20:49.266Z",
-    "isUsed": true,
-    "usedBy": "w1VAF0MJoYducsSTQtMRW907OBX2",
-    "usedByEmail": "mdsaudalam621@gmail.com",
-    "usedAt": "2026-09-26T10:20:49.270Z"
-  },
-  {
-    "id": "alert_intent_pi_1790417446132_8xbin",
-    "utr": "293128876397",
-    "amount": 3.01,
-    "senderBank": "UPI Payment",
-    "rawText": "Mr MD SAUD ALAM paid you ₹3.01\n293128876397",
-    "timestamp": "2026-09-26T10:18:11.601Z",
-    "isUsed": true,
-    "usedBy": "w1VAF0MJoYducsSTQtMRW907OBX2",
-    "usedByEmail": "mdsaudalam621@gmail.com",
-    "usedAt": "2026-09-26T10:18:11.601Z"
-  },
-  {
-    "id": "alert_975435806883_1790417350058",
-    "utr": "975435806883",
-    "amount": 1.01,
-    "senderBank": "UPI Payment",
-    "rawText": "Mr MD SAUD ALAM paid you ₹1.01\n975435806883",
-    "timestamp": "2026-09-26T10:09:10.058Z",
-    "isUsed": true,
-    "usedBy": "w1VAF0MJoYducsSTQtMRW907OBX2",
-    "usedByEmail": "mdsaudalam621@gmail.com",
-    "usedAt": "2026-09-26T10:09:55.076Z"
-  },
-  {
-    "id": "alert_intent_pi_1790417266261_jof5h",
-    "utr": "975435806887",
-    "amount": 1.01,
-    "senderBank": "UPI Payment",
-    "rawText": "Mr MD SAUD ALAM paid you ₹1.01\n975435806887",
-    "timestamp": "2026-09-26T10:08:35.012Z",
-    "isUsed": true,
-    "usedBy": "w1VAF0MJoYducsSTQtMRW907OBX2",
-    "usedByEmail": "mdsaudalam621@gmail.com",
-    "usedAt": "2026-09-26T10:08:35.012Z"
-  },
-  {
-    "id": "alert_854271923759_1790417198768",
-    "utr": "854271923759",
-    "amount": 2.01,
-    "senderBank": "UPI Payment",
-    "rawText": "Mr MD SAUD ALAM paid you ₹2.01\n854271923759",
-    "timestamp": "2026-09-26T10:06:38.768Z",
-    "isUsed": true,
-    "usedBy": "w1VAF0MJoYducsSTQtMRW907OBX2",
-    "usedByEmail": "mdsaudalam621@gmail.com",
-    "usedAt": "2026-09-26T10:09:56.459Z"
+    "rawText": "Dear UPI User, A/C 9901 credited by Rs.6.00 on 27-09-26 transfer from Payer Ref No 675858517416 -State Bank of India",
+    "timestamp": "2026-09-27T16:25:57.750Z",
+    "isUsed": false
   }
 ]
