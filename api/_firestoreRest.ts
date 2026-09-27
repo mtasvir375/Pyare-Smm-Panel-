@@ -121,3 +121,5 @@ export async function listRestDocs(collection: string, pageSize = 100): Promise<
     return [];
   }
 }
+
+export const getRestCollection = listRestDocs;

@@ -47,7 +47,7 @@ export default async function handler(req: any, res: any) {
     const response = await axios.get(url, { timeout: 6000 });
     const data = unwrapFirestoreFields(response.data.fields);
 
-    res.setHeader("Cache-Control", "public, s-maxage=300, stale-while-revalidate=600");
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     return res.status(200).json(data);
   } catch (err: any) {
     console.error("[VERCEL-API-SETTINGS] Error:", err.message);

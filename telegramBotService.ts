@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import axios from "axios";
-import { setRestDoc, getRestDoc } from "./api/_firestoreRest";
+import { setRestDoc, getRestDoc, getRestCollection } from "./api/_firestoreRest";
 
 export interface BankAlert {
   id: string;
@@ -242,6 +242,7 @@ export function createPaymentIntent(params: {
 
   memoryIntents.set(intentId, intent);
   savePaymentIntents();
+  setRestDoc("payment_intents", intentId, intent).catch(() => {});
 
   console.log(`[PAYMENT-INTENT-CREATED] Created 12-digit numeric intent ${intentId}: ₹${finalAmount} (Ref: ${orderRef}) for user ${params.userId}`);
 
@@ -825,6 +826,7 @@ export async function tryMatchAndCompleteIntent(params: {
     matchedIntent.utr = (detectedUtr && detectedUtr.length === 12) ? detectedUtr : (other12 || matchedIntent.orderRef);
     matchedIntent.senderBank = detectedBank;
     savePaymentIntents();
+    setRestDoc("payment_intents", matchedIntent.intentId, matchedIntent).catch(() => {});
 
     // Mark corresponding bank alert as used in memoryAlerts & persist
     const targetAlert = memoryAlerts.find(
@@ -921,6 +923,27 @@ export async function reconcilePendingIntentsWithAlerts(): Promise<number> {
         for (const it of diskIntents) {
           if (!memoryIntents.has(it.intentId)) {
             memoryIntents.set(it.intentId, it);
+          }
+        }
+      }
+    }
+  } catch {}
+
+  // Sync recent intents from Firestore (e.g. created on Vercel)
+  try {
+    const remoteIntents = await getRestCollection("payment_intents", 50);
+    if (Array.isArray(remoteIntents)) {
+      for (const it of remoteIntents) {
+        if (it && it.intentId) {
+          if (!memoryIntents.has(it.intentId)) {
+            memoryIntents.set(it.intentId, it as PaymentIntent);
+          } else {
+            const mem = memoryIntents.get(it.intentId)!;
+            if (it.status === "completed" && mem.status !== "completed") {
+              mem.status = "completed";
+              mem.completedAt = it.completedAt;
+              mem.utr = it.utr;
+            }
           }
         }
       }
@@ -1073,6 +1096,7 @@ export async function processTelegramUpdate(update: any, token: string): Promise
     matchedIntent.utr = (detectedUtr && detectedUtr.length === 12) ? detectedUtr : (other12 || matchedIntent.orderRef);
     matchedIntent.senderBank = detectedBank;
     savePaymentIntents();
+    setRestDoc("payment_intents", matchedIntent.intentId, matchedIntent).catch(() => {});
 
     recordIncomingMessage({
       sender: senderName,
