@@ -1,5 +1,57 @@
 {
-  "settings": null,
+  "settings": {
+    "data": {
+      "backendApiUrl": "",
+      "customGateway1Secret": "",
+      "qrAutoProvider": "smmqr",
+      "qrAutoToken": "",
+      "telegramBotUsername": "BbbSmart_bot",
+      "upiId": "mdsaudalam621@okicici",
+      "qrAutoApiKey": "",
+      "manualQrEnabled": false,
+      "instantQrEnabled": true,
+      "providerApiUrl": "",
+      "phonepeEnabled": false,
+      "phonepeSaltIndex": "1",
+      "customGateway1Key": "",
+      "razorpayKeyId": "",
+      "paytmEnabled": false,
+      "telegramBotToken": "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0",
+      "customGateway1Url": "",
+      "whatsappChatNumber": "9942658657",
+      "paymentQrUrl": "",
+      "paytmEnv": "sandbox",
+      "customGateway1Name": "",
+      "razorpayKeySecret": "",
+      "providerApiKey": "",
+      "qrAutoEnabled": false,
+      "whatsappLink": "https://whatsapp.com/channel/0029Vb7zsyi6RGJFemxpzy0b",
+      "telegramChatId": "-1004483507103",
+      "autoApproveDeposits": false,
+      "qrAutoUrl": "",
+      "updatedAt": "2026-09-27T18:47:10.621Z",
+      "customGateway2Secret": "",
+      "customGateway2Url": "",
+      "selectedFestivalTheme": "none",
+      "customGateway1Enabled": false,
+      "customGateway2Enabled": false,
+      "smsForwarderSecret": "",
+      "paytmMid": "",
+      "razorpayEnabled": false,
+      "customGateway2Key": "",
+      "phonepeMerchantId": "",
+      "phonepeEnv": "sandbox",
+      "telegramBotEnabled": true,
+      "paytmMerchantKey": "",
+      "phonepeSaltKey": "",
+      "merchantName": "Pyare SMM Panel",
+      "guideVideoUrl": "",
+      "smsForwarderEnabled": true,
+      "customGateway2Name": "",
+      "selectedTheme": "amber"
+    },
+    "time": 1790550381696
+  },
   "providers": [
     [
       "z9lfdj7ByNCeGNO6WbGZ",
@@ -603,18 +655,18 @@
       {
         "data": {
           "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-          "balance": 475034.18,
-          "role": "student",
-          "createdAt": "2026-09-14T13:39:37.418Z",
-          "updatedAt": "2026-09-27T16:27:34.994Z",
-          "lastOrderedAt": "2026-09-27T16:18:25.218Z",
-          "lastActive": "2026-06-17T09:24:31.827Z",
-          "displayName": "Md Saad Alam",
-          "last_ordered_at": "2026-07-12T20:24:51.921Z",
           "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIVDCPXKVjVCP0jqcCpWx5c759WFIsH20U7smDKXtVCJQmldT5A=s96-c",
-          "email": "mtasvir375@gmail.com"
+          "balance": 475038.03,
+          "last_ordered_at": "2026-07-12T20:24:51.921Z",
+          "lastActive": "2026-06-17T09:24:31.827Z",
+          "updatedAt": "2026-09-27T23:20:25.931Z",
+          "lastOrderedAt": "2026-09-27T23:20:26.347Z",
+          "displayName": "Md Saad Alam",
+          "email": "mtasvir375@gmail.com",
+          "createdAt": "2026-09-14T13:39:37.418Z",
+          "role": "student"
         },
-        "time": 1790533802547
+        "time": 1790551227204
       }
     ],
     [
@@ -633,24 +685,23 @@
       "w1VAF0MJoYducsSTQtMRW907OBX2",
       {
         "data": {
-          "id": "w1VAF0MJoYducsSTQtMRW907OBX2",
-          "displayName": "Md Saud alam",
-          "balance": 202.96,
-          "lastOrderedAt": "2026-09-18T20:49:43.838Z",
-          "referralCount": 68,
-          "last_ordered_at": "2026-07-12T20:25:19.570Z",
-          "email": "mdsaudalam621@gmail.com",
-          "updatedAt": "2026-09-26T10:20:49.270Z",
-          "uid": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "referralEarnings": 26875,
+          "balance": 205.98,
+          "lastOrderedAt": "2026-09-18T20:49:43.838Z",
+          "displayName": "Md Saud alam",
+          "lastActive": "2026-06-19T17:34:46.827Z",
+          "uid": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "createdAt": {
             "_methodName": "serverTimestamp"
           },
-          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIUTpZ85iklK5gQBo-8WZW4pbsWDEuag3g-3zNEAbq7K1wBaw=s96-c",
-          "lastActive": "2026-06-19T17:34:46.827Z",
-          "role": "student"
+          "updatedAt": "2026-09-27T23:05:07.227Z",
+          "role": "student",
+          "last_ordered_at": "2026-07-12T20:25:19.570Z",
+          "email": "mdsaudalam621@gmail.com",
+          "referralCount": 68,
+          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIUTpZ85iklK5gQBo-8WZW4pbsWDEuag3g-3zNEAbq7K1wBaw=s96-c"
         },
-        "time": 1790418049270
+        "time": 1790550309684
       }
     ],
     [
@@ -2751,6 +2802,92 @@
           "createdAt": "2026-09-26T10:20:49.336Z"
         },
         "time": 1790418049389
+      }
+    ],
+    [
+      "dep_1790550307263_nax87",
+      {
+        "data": {
+          "id": "dep_auto_623181720918_1790550307262",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "amount": 2.01,
+          "baseAmount": 2,
+          "utr": "623181720918",
+          "orderRef": "623181720918",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-27T23:05:07.262Z",
+          "createdAt": "2026-09-27T23:05:07.263Z",
+          "updatedAt": "2026-09-27T23:05:07.263Z"
+        },
+        "time": 1790550307263
+      }
+    ],
+    [
+      "dep_auto_623181720918_1790550307262",
+      {
+        "data": {
+          "id": "dep_auto_623181720918_1790550307262",
+          "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
+          "userEmail": "mdsaudalam621@gmail.com",
+          "amount": 2.01,
+          "baseAmount": 2,
+          "utr": "623181720918",
+          "orderRef": "623181720918",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-27T23:05:07.262Z",
+          "createdAt": "2026-09-27T23:05:07.263Z"
+        },
+        "time": 1790550307294
+      }
+    ],
+    [
+      "dep_1790550564680_xd2nz",
+      {
+        "data": {
+          "id": "dep_auto_579164877946_1790550564680",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 1.01,
+          "baseAmount": 1,
+          "utr": "579164877946",
+          "orderRef": "579164877946",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-27T23:09:24.680Z",
+          "createdAt": "2026-09-27T23:09:24.680Z",
+          "updatedAt": "2026-09-27T23:09:24.680Z"
+        },
+        "time": 1790550564680
+      }
+    ],
+    [
+      "dep_auto_579164877946_1790550564680",
+      {
+        "data": {
+          "id": "dep_auto_579164877946_1790550564680",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "amount": 1.01,
+          "baseAmount": 1,
+          "utr": "579164877946",
+          "orderRef": "579164877946",
+          "status": "approved",
+          "type": "auto_zero_utr_upi",
+          "paymentMethod": "auto_zero_utr_upi",
+          "provider": "UPI Payment",
+          "verifiedAt": "2026-09-27T23:09:24.680Z",
+          "createdAt": "2026-09-27T23:09:24.680Z"
+        },
+        "time": 1790550564713
       }
     ]
   ],
@@ -4865,6 +5002,34 @@
           "updatedAt": "2026-09-26T10:12:50.156Z"
         },
         "time": 1790417570156
+      }
+    ],
+    [
+      "ord_1790551224956_3we14",
+      {
+        "data": {
+          "id": "ord_1790551224956_3we14",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "serviceId": "tbnPbHdzQVi8IkKhlwAr",
+          "courseId": "tbnPbHdzQVi8IkKhlwAr",
+          "title": "Share reels/post",
+          "category": "Instagram",
+          "quantity": 100,
+          "targetLink": "Bav hsngsmwyjwnh",
+          "totalPrice": 1.2,
+          "isCombo": false,
+          "comboItems": [],
+          "status": "Completed",
+          "providerOrderId": "2827543",
+          "needsProviderTransmission": false,
+          "providerTransmissionStatus": "completed",
+          "balanceAlreadyDeducted": true,
+          "updatedAt": "2026-09-27T23:20:26.719Z",
+          "createdAt": "2026-09-27T23:20:26.718Z",
+          "providerRawResponse": "{\"order\":2827543}"
+        },
+        "time": 1790551226719
       }
     ]
   ],
