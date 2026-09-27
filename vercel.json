@@ -4,7 +4,7 @@
   "outputDirectory": "dist",
   "rewrites": [
     { "source": "/__/auth/:path*", "destination": "https://gen-lang-client-0629912823.firebaseapp.com/__/auth/:path*" },
-    { "source": "/api/payments/check-intent/:intentId", "destination": "/api/payments/check-intent?intentId=:intentId" },
+    { "source": "/api/(.*)", "destination": "/api" },
     { "source": "/((?!api/|__).*)", "destination": "/index.html" }
   ]
 }
