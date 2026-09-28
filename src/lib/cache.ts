@@ -199,14 +199,15 @@ export const getCachedSettings = async (forceRefresh = false) => {
       localStorage.removeItem("cached_settings_time");
     } catch(e) {}
   } else {
-    if (cachedSettings && !isDefaultSettings(cachedSettings) && (now - lastSettingsFetch < CACHE_DURATION)) {
+    const SETTINGS_CACHE_DURATION = 10 * 1000; // 10 seconds cache for settings to update instantly across the site
+    if (cachedSettings && !isDefaultSettings(cachedSettings) && (now - lastSettingsFetch < SETTINGS_CACHE_DURATION)) {
       return cachedSettings;
     }
     
     // Check localStorage
     try {
       const lsTime = localStorage.getItem("cached_settings_time");
-      if (lsTime && (now - parseInt(lsTime) < CACHE_DURATION)) {
+      if (lsTime && (now - parseInt(lsTime) < SETTINGS_CACHE_DURATION)) {
         const lsData = localStorage.getItem("cached_settings");
         if (lsData) {
           const parsed = JSON.parse(lsData);
