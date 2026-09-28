@@ -340,24 +340,27 @@ export function findMatchingIntent(params: {
     }
   }
 
-  // 2. SECONDARY MATCH: Match by EXACT Decimal Amount (e.g. 2.01, 1.01)
+  // 2. SECONDARY MATCH: Match strictly by UNIQUE ASSIGNED DECIMAL AMOUNT (e.g., 1.01 vs 1.02)
+  // NEVER match by baseAmount (e.g. 1.00) to prevent cross-user payment stealing!
   if (params.amount && params.amount > 0) {
-    const targetAmt = params.amount;
-    // Check pending intents
-    const matchByExactAmt = uncompleted.find(
+    const targetAmt = Number(params.amount.toFixed(2));
+
+    // Active pending intents (created in last 15 mins) where assigned final amount EXACTLY matches targetAmt
+    const matchActiveByExactAmt = uncompleted.find(
       (i) =>
         i.status === "pending" &&
-        (Math.abs(i.amount - targetAmt) < 0.005 || Math.abs(i.baseAmount - targetAmt) < 0.005)
+        now - i.createdAt < 15 * 60 * 1000 &&
+        Math.abs(i.amount - targetAmt) < 0.005
     );
-    if (matchByExactAmt) return matchByExactAmt;
+    if (matchActiveByExactAmt) return matchActiveByExactAmt;
 
-    // Check all uncompleted intents created in the last 60 minutes
-    const matchRecentAmt = uncompleted.find(
+    // Uncompleted recent intents (created in last 30 mins) matching exact assigned final amount
+    const matchRecentByExactAmt = uncompleted.find(
       (i) =>
-        now - i.createdAt < 60 * 60 * 1000 &&
-        (Math.abs(i.amount - targetAmt) < 0.005 || Math.abs(i.baseAmount - targetAmt) < 0.005)
+        now - i.createdAt < 30 * 60 * 1000 &&
+        Math.abs(i.amount - targetAmt) < 0.005
     );
-    if (matchRecentAmt) return matchRecentAmt;
+    if (matchRecentByExactAmt) return matchRecentByExactAmt;
   }
 
   // 3. By UTR if already mapped

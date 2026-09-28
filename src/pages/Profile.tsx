@@ -571,9 +571,7 @@ export default function Profile() {
             <DialogDescription className="text-xs font-medium text-gray-500">
               {paymentStep === "amount" 
                 ? "Enter the amount you want to add to your wallet." 
-                : (paymentSettings?.qrAutoEnabled && paymentMethod === "manual" 
-                    ? "Scan, Pay & Enter 12-digit UTR for instant credit."
-                    : "Scan the QR code to pay ₹" + amount + " and submit details.")}
+                : "Scan the QR code to pay ₹" + amount + " instantly."}
             </DialogDescription>
           </DialogHeader>
 

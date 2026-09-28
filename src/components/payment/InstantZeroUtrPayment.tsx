@@ -365,55 +365,7 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
         </div>
       </div>
 
-      {/* Pay via UPI App direct button on Mobile */}
-      {intent?.upiLink && (
-        <a
-          href={intent.upiLink}
-          className="w-full h-12 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 transition-all"
-        >
-          <ExternalLink className="w-4 h-4" />
-          Pay via UPI App (GPay / PhonePe / Paytm)
-        </a>
-      )}
-
-      {/* Status Bar */}
-      <div className="p-3 bg-blue-50/70 rounded-2xl border border-blue-200 flex items-center justify-between text-xs text-blue-900">
-        <div className="flex items-center gap-2">
-          <RefreshCw className="w-3.5 h-3.5 text-blue-600 animate-spin" />
-          <span className="font-semibold">Auto-checking every 2s...</span>
-        </div>
-        <button
-          type="button"
-          onClick={() => verifyStatus(true)}
-          disabled={checkingNow}
-          className="text-xs font-bold text-emerald-700 bg-white hover:bg-emerald-50 px-2.5 py-1 rounded-xl border border-emerald-200 shadow-xs transition-colors"
-        >
-          {checkingNow ? "Checking..." : "Paid? Verify Now"}
-        </button>
-      </div>
-
-      <div className="p-3 bg-emerald-50/50 rounded-2xl border border-emerald-100 text-[11px] text-emerald-900 space-y-1">
-        <p className="font-bold flex items-center gap-1 text-emerald-700">
-          <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-          <span>Zero-UTR Automatic Guarantee:</span>
-        </p>
-        <p className="text-gray-600 leading-relaxed">
-          You <strong>DO NOT</strong> need to enter any 12-digit UTR! Once paid, our 24/7 Telegram Engine captures the bank alert and credits your balance automatically in seconds.
-        </p>
-      </div>
-
-      {/* Option to switch to manual deposit */}
-      {onCancelOrSwitchManual && (
-        <div className="pt-1 text-center">
-          <button
-            type="button"
-            onClick={onCancelOrSwitchManual}
-            className="text-xs text-gray-500 hover:text-gray-800 underline font-medium"
-          >
-            Want to enter 12-digit UTR manually instead? Click here
-          </button>
-        </div>
-      )}
+      {/* Clean compact bottom - background verification happens automatically */}
     </div>
   );
 };
