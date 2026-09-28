@@ -95,33 +95,32 @@ export const dbClient = {
 
   async setDoc(table: string, id: string, data: any): Promise<void> {
     try {
-      // Direct single authoritative write via server proxy (0 extra reads, exact 1 write)
-      const res = await axios.post('/api/db/set', { collection: table, id, data });
-      if (res.data && res.data.success !== false) {
-        return;
-      }
-    } catch (proxyErr: any) {
-      console.warn(`[DB-CLIENT] Proxy setDoc failed for ${table}/${id}, attempting direct write...`);
+      const docRef = doc(db, table, id);
+      await setDoc(docRef, { ...data, updatedAt: serverTimestamp() }, { merge: true });
+    } catch (fsErr: any) {
+      console.warn(`[DB-CLIENT] Direct SDK setDoc failed for ${table}/${id}:`, fsErr.message);
     }
 
-    const docRef = doc(db, table, id);
-    await setDoc(docRef, { ...data, updatedAt: serverTimestamp() }, { merge: true });
+    try {
+      await axios.post('/api/db/set', { collection: table, id, data });
+    } catch (proxyErr: any) {
+      console.warn(`[DB-CLIENT] Proxy setDoc failed for ${table}/${id}:`, proxyErr.message);
+    }
   },
 
   async updateDoc(table: string, id: string, data: any): Promise<void> {
     try {
-      // Direct single authoritative update via server proxy (0 extra reads, exact 1 write)
-      const res = await axios.post('/api/db/update', { collection: table, id, data });
-      if (res.data && res.data.success !== false) {
-        return;
-      }
-    } catch (e: any) {
-      console.warn(`[DB-CLIENT] Proxy update failed for ${table}/${id}, attempting direct update...`);
+      const docRef = doc(db, table, id);
+      await setDoc(docRef, { ...data, updatedAt: serverTimestamp() }, { merge: true });
+    } catch (fsErr: any) {
+      console.warn(`[DB-CLIENT] Direct SDK updateDoc failed for ${table}/${id}:`, fsErr.message);
     }
 
-    const docRef = doc(db, table, id);
-    // Use setDoc with merge: true to avoid "No document to update" error if doc was newly added or not present in Firestore
-    await setDoc(docRef, { ...data, updatedAt: serverTimestamp() }, { merge: true });
+    try {
+      await axios.post('/api/db/update', { collection: table, id, data });
+    } catch (e: any) {
+      console.warn(`[DB-CLIENT] Proxy update failed for ${table}/${id}:`, e.message);
+    }
   },
 
   async addDoc(table: string, data: any): Promise<any> {

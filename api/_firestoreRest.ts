@@ -79,10 +79,26 @@ export async function getRestDoc(collection: string, docId: string): Promise<any
 }
 
 export async function setRestDoc(collection: string, docId: string, data: any): Promise<any> {
-  const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}?key=${FIREBASE_API_KEY}`;
-  const fields = wrapFirestoreFields(data);
-  const res = await axios.patch(url, { fields }, { timeout: 8000 });
-  return res.data ? unwrapFirestoreFields(res.data.fields) : null;
+  const fields = wrapFirestoreFields(data || {});
+  const keys = Object.keys(data || {});
+  const maskQuery = keys.map((k) => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
+  const queryStr = maskQuery ? `${maskQuery}&key=${FIREBASE_API_KEY}` : `key=${FIREBASE_API_KEY}`;
+  const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}?${queryStr}`;
+  
+  try {
+    const res = await axios.patch(url, { fields }, { timeout: 10000 });
+    return res.data ? unwrapFirestoreFields(res.data.fields) : null;
+  } catch (patchErr: any) {
+    console.error(`[REST-PATCH-ERR] Failed for ${collection}/${docId}:`, patchErr.response?.data || patchErr.message);
+    try {
+      const fallbackUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}?key=${FIREBASE_API_KEY}`;
+      const res = await axios.patch(fallbackUrl, { fields }, { timeout: 10000 });
+      return res.data ? unwrapFirestoreFields(res.data.fields) : null;
+    } catch (fallbackErr: any) {
+      console.error(`[REST-PATCH-FALLBACK-ERR] Failed for ${collection}/${docId}:`, fallbackErr.response?.data || fallbackErr.message);
+      throw patchErr;
+    }
+  }
 }
 
 export async function deleteRestDoc(collection: string, docId: string): Promise<boolean> {
