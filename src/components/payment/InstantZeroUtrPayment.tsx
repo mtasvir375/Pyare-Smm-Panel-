@@ -222,14 +222,14 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
             ✅ VERIFIED AUTOMATICALLY
           </Badge>
           <h3 className="text-2xl font-black text-gray-900">
-            ₹{completedData.amount.toFixed(2)} Credited!
+            ₹{Number(completedData.amount || 0).toFixed(2)} Credited!
           </h3>
           <p className="text-xs text-gray-500">
             Payment confirmed via Telegram SMS alert without UTR entry!
           </p>
           {completedData.newBalance !== undefined && (
             <p className="text-xs font-bold text-emerald-600 pt-1">
-              New Wallet Balance: ₹{completedData.newBalance.toFixed(2)}
+              New Wallet Balance: ₹{Number(completedData.newBalance || 0).toFixed(2)}
             </p>
           )}
         </div>
@@ -323,11 +323,11 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
           <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Pay Exact Amount</p>
           <div className="text-3xl font-black text-gray-900 tracking-tight flex items-baseline justify-center gap-0.5">
             <span className="text-xl text-emerald-600 font-bold">₹</span>
-            <span>{intent?.amount.toFixed(2)}</span>
+            <span>{Number(intent?.amount || amount || 0).toFixed(2)}</span>
           </div>
           {intent && intent.amount !== intent.baseAmount && (
             <p className="text-[10px] text-amber-700 font-medium bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md mt-1">
-              ⚠️ Pay exact ₹{intent.amount.toFixed(2)} (decimal ensures instant zero-collision credit)
+              ⚠️ Pay exact ₹{Number(intent?.amount || amount || 0).toFixed(2)} (decimal ensures instant zero-collision credit)
             </p>
           )}
         </div>

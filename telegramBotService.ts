@@ -198,7 +198,11 @@ export function createPaymentIntent(params: {
   const finalAmount = Number((selectedPaise / 100).toFixed(2));
 
   // Generate unique 12-digit numeric Order Ref: e.g. 252525383637 (exactly 12 numeric digits, no pms prefix)
-  const existingRefs = new Set(Array.from(memoryIntents.values()).map((i) => i.orderRef.toLowerCase()));
+  const existingRefs = new Set(
+    Array.from(memoryIntents.values())
+      .filter((i) => i && typeof i.orderRef === "string")
+      .map((i) => i.orderRef.toLowerCase())
+  );
   let orderRef = "";
   for (let attempt = 0; attempt < 50; attempt++) {
     const part1 = Math.floor(100000 + Math.random() * 900000).toString(); // 6 digits

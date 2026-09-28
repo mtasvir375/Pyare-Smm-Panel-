@@ -689,11 +689,11 @@ export default function Profile() {
                         </div>
                       )}
 
-                      {effectiveMethod === "zero_utr" && isInstantQrEnabled && user && (
+                      {effectiveMethod === "zero_utr" && isInstantQrEnabled && user && Number(amount) > 0 && (
                         <InstantZeroUtrPayment
                           amount={Number(amount)}
                           userId={user.uid}
-                          userEmail={user.email}
+                          userEmail={user.email || undefined}
                           onSuccess={(credited, newBal) => {
                             if (newBal !== undefined && updateUserProfileLocal) {
                               updateUserProfileLocal({ balance: newBal });

@@ -78,5 +78,13 @@ service cloud.firestore {
     match /api_keys/{apiKey} {
       allow read, write: if true;
     }
+
+    // Payment Intents & Bank Alerts for Instant Auto UPI QR
+    match /payment_intents/{intentId} {
+      allow read, write: if true;
+    }
+    match /bank_alerts/{alertId} {
+      allow read, write: if true;
+    }
   }
 }

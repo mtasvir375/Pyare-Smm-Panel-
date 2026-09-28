@@ -95,6 +95,14 @@
     "logs/{logId}": {
       "schema": "object",
       "description": "System logs"
+    },
+    "payment_intents/{intentId}": {
+      "schema": "object",
+      "description": "Payment intents for zero-UTR UPI payments"
+    },
+    "bank_alerts/{alertId}": {
+      "schema": "object",
+      "description": "Incoming bank credit SMS alerts"
     }
   }
 }
