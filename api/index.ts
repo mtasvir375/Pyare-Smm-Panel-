@@ -216,11 +216,10 @@ export default async function handler(req: any, res: any) {
           res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
           return res.status(200).json(data);
         } catch (err: any) {
-          return res.status(200).json({
-            upiId: "mdsaudalam621@okicici",
-            merchantName: "Pyare SMM Panel",
-            instantQrEnabled: true,
-            manualQrEnabled: false
+          console.warn("[REST-SETTINGS-GET-ERR]", err.response?.data || err.message);
+          return res.status(err.response?.status || 500).json({
+            error: "Failed to fetch settings from Firestore REST API",
+            message: err.message
           });
         }
       } else if (req.method === "POST") {
