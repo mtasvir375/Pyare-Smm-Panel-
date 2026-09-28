@@ -133,15 +133,20 @@ const KNOWN_PROVIDERS: Record<string, { apiUrl: string; apiKey: string; name: st
     apiUrl: "https://wholesalesmmstore.com/api/v2",
     apiKey: "e88f2599c82bf15a44b759e61f63673ceae954b8"
   },
+  "3eaZMZbSKVvMUbRI4kei": {
+    name: "The main smm provider ♥️♥️",
+    apiUrl: "https://themainsmmprovider.com/api/v2",
+    apiKey: "a10c05a0cacf6ed5c83b55e374e690495b727586"
+  },
   "z4luhVVgYKgHULKPXj8j": {
     name: "The main smm provider",
     apiUrl: "https://themainsmmprovider.com/api/v2",
-    apiKey: "e104906e7686a6177f614c7ddbe0a240124a1795"
+    apiKey: "a10c05a0cacf6ed5c83b55e374e690495b727586"
   },
   "k7IIPgA8QcpGmZGul3Pw": {
     name: "The main smm provider",
     apiUrl: "https://themainsmmprovider.com/api/v2",
-    apiKey: "e104906e7686a6177f614c7ddbe0a240124a1795"
+    apiKey: "a10c05a0cacf6ed5c83b55e374e690495b727586"
   },
   "z9lfdj7ByNCeGNO6WbGZ": {
     name: "Smm bin",
@@ -152,6 +157,11 @@ const KNOWN_PROVIDERS: Record<string, { apiUrl: string; apiKey: string; name: st
     name: "Smm bin",
     apiUrl: "https://smmbin.com/api/v2",
     apiKey: "f55bb2dfdc035f9c3c9e737bb72922a51d64309f"
+  },
+  "1RmzJhc5ZeyOCU23uZMy": {
+    name: "MainSMMpanel ♥️",
+    apiUrl: "https://mainsmmpanel.in/api/v2",
+    apiKey: "5a2749e1fdafdf50cd81f2137f9b5806"
   }
 };
 
@@ -261,16 +271,35 @@ export default async function handler(req: any, res: any) {
 
     // 5. Proxy Provider: /api/proxy-provider
     if (pathname === "/api/proxy-provider" || pathname === "/api/proxy") {
-      const { providerId, action, service, link, quantity, runs, interval } = body || {};
+      const {
+        providerId,
+        service,
+        providerServiceId,
+        link,
+        targetLink,
+        target_link,
+        quantity,
+        totalPrice,
+        total_price,
+        userId,
+        user_id,
+        userEmail,
+        orderId,
+        orderData,
+        runs,
+        interval
+      } = body || {};
+
       let apiUrl = "";
       let apiKey = "";
 
-      if (providerId && KNOWN_PROVIDERS[providerId]) {
-        apiUrl = KNOWN_PROVIDERS[providerId].apiUrl;
-        apiKey = KNOWN_PROVIDERS[providerId].apiKey;
-      } else if (providerId) {
+      const resolvedProviderId = providerId || orderData?.providerId || "";
+      if (resolvedProviderId && KNOWN_PROVIDERS[resolvedProviderId]) {
+        apiUrl = KNOWN_PROVIDERS[resolvedProviderId].apiUrl;
+        apiKey = KNOWN_PROVIDERS[resolvedProviderId].apiKey;
+      } else if (resolvedProviderId) {
         try {
-          const pDoc = await getRestDoc("providers", providerId);
+          const pDoc = await getRestDoc("providers", resolvedProviderId);
           if (pDoc) {
             apiUrl = pDoc.apiUrl || pDoc.url;
             apiKey = pDoc.apiKey || pDoc.key;
@@ -283,23 +312,140 @@ export default async function handler(req: any, res: any) {
         apiKey = "f55bb2dfdc035f9c3c9e737bb72922a51d64309f";
       }
 
+      const finalService = String(service || providerServiceId || orderData?.providerServiceId || "").trim();
+      const finalLink = String(link || targetLink || target_link || orderData?.targetLink || "").trim();
+      const finalQty = String(quantity || orderData?.quantity || "1000").trim();
+      const finalUserId = String(userId || user_id || orderData?.userId || "").trim();
+      const finalPrice = Number(totalPrice || total_price || orderData?.totalPrice || 0);
+
+      // Verify user has sufficient balance before placing order
+      let currentUserBal = 0;
+      let userDoc: any = null;
+      if (finalUserId) {
+        try {
+          userDoc = await getRestDoc("users", finalUserId);
+          if (userDoc) {
+            currentUserBal = Number(userDoc.balance || 0);
+          }
+        } catch (uErr) {}
+
+        if (finalPrice > 0 && currentUserBal < finalPrice) {
+          return res.status(400).json({
+            success: false,
+            error: `Insufficient balance (₹${currentUserBal.toFixed(2)}). Required: ₹${finalPrice.toFixed(2)}`,
+            currentBalance: currentUserBal
+          });
+        }
+      }
+
       const params = new URLSearchParams();
       params.append("key", apiKey);
-      params.append("action", action || "add");
-      if (service) params.append("service", String(service));
-      if (link) params.append("link", String(link));
-      if (quantity) params.append("quantity", String(quantity));
+      params.append("action", "add");
+      if (finalService) params.append("service", finalService);
+      if (finalLink) params.append("link", finalLink);
+      if (finalQty) params.append("quantity", finalQty);
       if (runs) params.append("runs", String(runs));
       if (interval) params.append("interval", String(interval));
+      params.append("terms", "1");
+      params.append("agree", "1");
 
       try {
         const provRes = await axios.post(apiUrl, params.toString(), {
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          timeout: 30000
+          timeout: 35000
         });
-        return res.status(200).json(provRes.data);
+
+        let resData = provRes.data;
+        if (typeof resData === "string") {
+          try {
+            resData = JSON.parse(resData);
+          } catch (e) {}
+        }
+
+        const providerOrderId =
+          resData?.order ||
+          resData?.order_id ||
+          resData?.orderid ||
+          resData?.orderId ||
+          resData?.id ||
+          resData?.ID ||
+          (typeof resData === "number" ? String(resData) : null);
+
+        const isSuccess =
+          !!providerOrderId ||
+          resData?.status === "success" ||
+          resData?.success === true ||
+          String(resData?.message || "").toLowerCase().includes("success");
+
+        if (isSuccess) {
+          const finalOId = providerOrderId ? String(providerOrderId) : "SUCCESS";
+          let newBal = currentUserBal;
+
+          // Deduct user balance
+          if (finalUserId && finalPrice > 0) {
+            newBal = Math.max(0, Number((currentUserBal - finalPrice).toFixed(2)));
+            try {
+              await setRestDoc("users", finalUserId, {
+                ...userDoc,
+                balance: newBal,
+                lastOrderedAt: new Date().toISOString()
+              });
+            } catch (deductErr: any) {
+              console.warn("[BALANCE-DEDUCT-WARN]", deductErr.message);
+            }
+          }
+
+          // Save order in Firestore orders collection
+          const finalOrderId = orderId || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+          try {
+            await setRestDoc("orders", finalOrderId, {
+              id: finalOrderId,
+              userId: finalUserId,
+              userEmail: userEmail || orderData?.userEmail || "",
+              serviceId: orderData?.serviceId || finalService,
+              title: orderData?.title || "SMM Order",
+              category: orderData?.category || "Other",
+              quantity: Number(finalQty),
+              targetLink: finalLink,
+              totalPrice: finalPrice,
+              status: "Completed",
+              providerOrderId: finalOId,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            });
+          } catch (ordSaveErr: any) {
+            console.warn("[ORDER-SAVE-WARN]", ordSaveErr.message);
+          }
+
+          return res.status(200).json({
+            success: true,
+            providerOrderId: finalOId,
+            newBalance: newBal,
+            data: resData
+          });
+        } else {
+          const errReason =
+            resData?.error ||
+            resData?.message ||
+            resData?.msg ||
+            resData?.reason ||
+            "Provider did not accept the order";
+          const cleanErr = typeof errReason === "string" ? errReason : JSON.stringify(errReason);
+          return res.status(400).json({
+            success: false,
+            error: cleanErr,
+            currentBalance: currentUserBal,
+            data: resData
+          });
+        }
       } catch (err: any) {
-        return res.status(500).json({ error: err.response?.data || err.message });
+        const errorDetail = err.response?.data?.error || err.response?.data?.message || err.response?.data || err.message;
+        const cleanErr = typeof errorDetail === "string" ? errorDetail : JSON.stringify(errorDetail);
+        return res.status(500).json({
+          success: false,
+          error: cleanErr,
+          currentBalance: currentUserBal
+        });
       }
     }
 
