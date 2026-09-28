@@ -262,7 +262,7 @@ export const DEFAULT_SETTINGS = {
   paymentQrUrl: "",
   qrAutoEnabled: false,
   instantQrEnabled: true,
-  manualQrEnabled: true,
+  manualQrEnabled: false,
   selectedTheme: "charcoal",
   selectedFestivalTheme: "none",
   whatsappLink: "https://wa.me/919999999999",

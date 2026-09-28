@@ -220,7 +220,7 @@ export default async function handler(req: any, res: any) {
             upiId: "mdsaudalam621@okicici",
             merchantName: "Pyare SMM Panel",
             instantQrEnabled: true,
-            manualQrEnabled: true
+            manualQrEnabled: false
           });
         }
       } else if (req.method === "POST") {
