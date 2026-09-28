@@ -1251,17 +1251,17 @@ export async function startServer() {
     // 5 minutes cache for dynamic user balance to avoid redundant reads on rapid navigation
     const DYNAMIC_CACHE_TTL = 5 * 60 * 1000;
 
-    // CORE CACHE-FIRST CHECK:
-    // Settings, providers, and courses are semi-static. If we already have them in cache,
-    // ALWAYS serve from memory (0 Firestore reads!).
-    if (collect === "settings" && id === "payment" && serverCache.settings) {
-      return { exists: true, data: () => serverCache.settings.data };
-    }
-    if (collect === "providers" && id && serverCache.providers.has(id)) {
-      return { exists: true, data: () => serverCache.providers.get(id).data };
-    }
-    if (collect === "courses" && id && serverCache.courses.has(id)) {
-      return { exists: true, data: () => serverCache.courses.get(id).data };
+    // CORE CACHE-FIRST CHECK (If not forceFresh):
+    if (!forceFresh) {
+      if (collect === "settings" && id === "payment" && serverCache.settings?.data) {
+        return { exists: true, data: () => serverCache.settings.data };
+      }
+      if (collect === "providers" && id && serverCache.providers.has(id)) {
+        return { exists: true, data: () => serverCache.providers.get(id).data };
+      }
+      if (collect === "courses" && id && serverCache.courses.has(id)) {
+        return { exists: true, data: () => serverCache.courses.get(id).data };
+      }
     }
 
     // Dynamic cache for users (15s TTL if not forceFresh)

@@ -337,7 +337,7 @@ export default function Admin() {
         const providersList = await dbClient.getProviders();
         setProviders(providersList);
       } else if (tab === "settings" && isAdmin) {
-        const settingsData = await dbClient.getDoc("settings", "payment");
+        const settingsData = await dbClient.getDoc("settings", "payment", { fresh: true });
         if (settingsData) {
           setQrUrl(settingsData.paymentQrUrl || "");
           setUpiId(settingsData.upiId || "");
@@ -642,6 +642,10 @@ export default function Admin() {
 
       const cacheMod = await import("@/lib/cache");
       cacheMod.clearCache();
+      try {
+        localStorage.setItem("cached_settings", JSON.stringify(settingsPayload));
+        localStorage.setItem("cached_settings_time", Date.now().toString());
+      } catch (e) {}
       await cacheMod.getCachedSettings(true);
       toast.success("Payment & Global Settings updated successfully!");
     } catch (error: any) {

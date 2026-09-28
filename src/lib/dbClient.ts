@@ -32,18 +32,19 @@ export interface UserProfile {
 
 export const dbClient = {
   // Generic helpers
-  async getDoc(table: string, id: string): Promise<any> {
-    if (table === "settings" && id === "payment") {
+  async getDoc(table: string, id: string, options?: { fresh?: boolean }): Promise<any> {
+    const forceFresh = !!options?.fresh;
+    if (table === "settings" && id === "payment" && !forceFresh) {
       try {
         const { getCachedSettings } = await import('@/lib/cache');
         const settings = await getCachedSettings();
         if (settings) return settings;
       } catch (e) {}
     }
-    // 1. Try authoritative backend proxy first (0 reads if cached in server memory/disk)
+    // 1. Try authoritative backend proxy first
     try {
-      const res = await axios.post('/api/db/get', { collection: table, id });
-      if (res.data && res.data.success) {
+      const res = await axios.post('/api/db/get', { collection: table, id, fresh: forceFresh });
+      if (res.data && res.data.success && res.data.data && Object.keys(res.data.data).length > 0) {
         return { id, ...res.data.data };
       }
       if (res.data && res.data.error === "Document not found") {
