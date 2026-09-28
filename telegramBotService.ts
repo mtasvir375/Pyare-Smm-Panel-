@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import axios from "axios";
-import { setRestDoc, getRestDoc, getRestCollection } from "./api/_firestoreRest";
+import { setRestDoc, getRestDoc } from "./api/_firestoreRest";
 
 export interface BankAlert {
   id: string;
@@ -82,24 +82,47 @@ let intentMatchCallback: PaymentIntentCallback | null = null;
 
 const INSTANCE_ID = `inst_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 let isLeader = false;
+let lockCachedUntil = 0;
+let lastLockCheckTime = 0;
 
 export async function checkOrAcquirePollingLock(): Promise<boolean> {
+  const now = Date.now();
+  // If we already hold the lease and it's valid for at least 15 more seconds, return true with ZERO Firestore calls
+  if (isLeader && now < lockCachedUntil - 15000) {
+    return true;
+  }
+
+  // Throttle checking/renewing to at most once every 15 seconds
+  if (now - lastLockCheckTime < 15000) {
+    return isLeader;
+  }
+  lastLockCheckTime = now;
+
   try {
     const lockDoc = await getRestDoc("settings", "telegram_bot_lock");
-    const now = Date.now();
-    if (lockDoc && lockDoc.holder && lockDoc.expiresAt && lockDoc.expiresAt > now && lockDoc.holder !== INSTANCE_ID) {
+    const currentHolder = lockDoc?.holder;
+    const expiresAt = Number(lockDoc?.expiresAt || 0);
+
+    // If another instance holds an active lease
+    if (lockDoc && currentHolder && expiresAt > now && currentHolder !== INSTANCE_ID) {
       isLeader = false;
+      lockCachedUntil = expiresAt;
       return false;
     }
+
+    // Acquire or renew 60-second lease
+    const newExpiresAt = now + 60000;
     await setRestDoc("settings", "telegram_bot_lock", {
       holder: INSTANCE_ID,
-      expiresAt: now + 25000,
+      expiresAt: newExpiresAt,
       renewedAt: new Date().toISOString()
     });
     isLeader = true;
+    lockCachedUntil = newExpiresAt;
     return true;
   } catch {
     isLeader = true;
+    lockCachedUntil = now + 60000;
     return true;
   }
 }
@@ -927,27 +950,6 @@ export async function reconcilePendingIntentsWithAlerts(): Promise<number> {
         for (const it of diskIntents) {
           if (!memoryIntents.has(it.intentId)) {
             memoryIntents.set(it.intentId, it);
-          }
-        }
-      }
-    }
-  } catch {}
-
-  // Sync recent intents from Firestore (e.g. created on Vercel)
-  try {
-    const remoteIntents = await getRestCollection("payment_intents", 50);
-    if (Array.isArray(remoteIntents)) {
-      for (const it of remoteIntents) {
-        if (it && it.intentId) {
-          if (!memoryIntents.has(it.intentId)) {
-            memoryIntents.set(it.intentId, it as PaymentIntent);
-          } else {
-            const mem = memoryIntents.get(it.intentId)!;
-            if (it.status === "completed" && mem.status !== "completed") {
-              mem.status = "completed";
-              mem.completedAt = it.completedAt;
-              mem.utr = it.utr;
-            }
           }
         }
       }

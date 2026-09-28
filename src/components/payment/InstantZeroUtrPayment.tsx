@@ -145,11 +145,11 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
     }
   };
 
-  // 3. 2-Second Polling Loop to check verification status without asking UTR
+  // 3. 3-Second Polling Loop to check verification status without asking UTR
   useEffect(() => {
     if (!intent || isSuccess) return;
 
-    pollIntervalRef.current = setInterval(() => verifyStatus(false), 2000);
+    pollIntervalRef.current = setInterval(() => verifyStatus(false), 3000);
 
     return () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);

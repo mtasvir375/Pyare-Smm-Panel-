@@ -1114,6 +1114,7 @@ export async function startServer() {
         const uDoc = await getDocSafe("users", intent.userId);
         newBalance = uDoc?.data()?.balance || 0;
       } catch (e) {}
+      (intent as any).newBalance = newBalance;
 
       // 3. Save approved deposit record
       const cleanUtr = utr || intent.orderRef;
@@ -2174,6 +2175,43 @@ export async function startServer() {
     }
   });
 
+  app.post("/api/settings", async (req, res) => {
+    try {
+      const data = req.body || {};
+      const now = Date.now();
+      const updated = { ...data, updatedAt: new Date().toISOString() };
+      await setDocSafe("settings", "payment", updated);
+      serverCachedSettings = updated;
+      serverCachedSettingsTime = now;
+      serverCache.settings = { data: updated, time: now };
+      savePersistentCache();
+      return res.json({ success: true, message: "Settings saved", settings: updated });
+    } catch (err: any) {
+      console.error("[SETTINGS-SAVE-ERR]", err.message);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/admin/update-balance", async (req, res) => {
+    try {
+      const { userId, id, balance } = req.body || {};
+      const targetId = userId || id;
+      if (!targetId) return res.status(400).json({ success: false, error: "Missing userId" });
+      const numBal = Number(balance || 0);
+      await updateDocSafe("users", targetId, { balance: numBal, updatedAt: new Date().toISOString() });
+      if (serverCache.users.has(targetId)) {
+        const u = serverCache.users.get(targetId);
+        if (u) {
+          u.data = { ...(u.data || {}), balance: numBal };
+          u.time = Date.now();
+        }
+      }
+      return res.json({ success: true, balance: numBal });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   app.get("/api/user-orders/:userId", async (req, res) => {
     const { userId } = req.params;
     const qEmail = String(req.query.email || req.query.userEmail || "").trim().toLowerCase();
@@ -3049,16 +3087,25 @@ export async function startServer() {
     }
   });
 
-  // 2. Check Intent Status (Polled by Frontend every 2 seconds)
+  // 2. Check Intent Status (Polled by Frontend)
   app.get("/api/payments/check-intent/:intentId", async (req, res) => {
     try {
       const { intentId } = req.params;
       let intent = getPaymentIntent(intentId);
       if (!intent) {
+        // Fallback: try single doc read in case server restarted
+        try {
+          const doc = await getDocSafe("payment_intents", intentId);
+          if (doc?.exists()) {
+            intent = doc.data() as any;
+          }
+        } catch {}
+      }
+      if (!intent) {
         return res.status(404).json({ success: false, error: "Payment intent not found or expired." });
       }
 
-      // Proactively reconcile if not yet completed
+      // Proactively reconcile in-memory alerts if not yet completed (0 Firestore reads)
       if (intent.status !== "completed") {
         await reconcilePendingIntentsWithAlerts();
         intent = getPaymentIntent(intentId) || intent;
@@ -3066,10 +3113,14 @@ export async function startServer() {
 
       let userBalance: number | undefined;
       if (intent.status === "completed") {
-        try {
-          const uDoc = await getDocSafe("users", intent.userId);
-          userBalance = uDoc?.data()?.balance;
-        } catch (e) {}
+        if ((intent as any).newBalance !== undefined) {
+          userBalance = (intent as any).newBalance;
+        } else {
+          try {
+            const uDoc = await getDocSafe("users", intent.userId);
+            userBalance = uDoc?.data()?.balance;
+          } catch (e) {}
+        }
       }
 
       return res.json({

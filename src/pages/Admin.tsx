@@ -571,7 +571,7 @@ export default function Admin() {
       const cleanKey = providerApiKey.trim();
       let cleanBackend = backendApiUrl.trim();
 
-      await dbClient.saveDoc("settings", "payment", {
+      const settingsPayload = {
         paymentQrUrl: base64,
         upiId: upiId.trim(),
         merchantName: merchantName.trim(),
@@ -615,7 +615,12 @@ export default function Admin() {
         smsForwarderEnabled: smsForwarderEnabled,
         smsForwarderSecret: smsForwarderSecret.trim(),
         updatedAt: new Date().toISOString()
-      });
+      };
+
+      await dbClient.saveDoc("settings", "payment", settingsPayload);
+      try {
+        await axios.post("/api/settings", settingsPayload);
+      } catch (e) {}
       setQrUrl(base64);
       setProviderApiUrl(cleanUrl);
       setProviderApiKey(cleanKey);
@@ -2526,40 +2531,71 @@ export default function Admin() {
                 </div>
               </div>
               <div className="space-y-3">
-                {allUsers
-                  .map((u) => (
-                    <Card key={u.id} className="border-none shadow-sm">
-                      <CardContent className="p-4 flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center font-bold text-gray-500">
-                            {u.email.charAt(0).toUpperCase()}
-                          </div>
-                          <div>
-                            <p className="font-bold text-sm leading-none">{u.email}</p>
-                            {u.displayName && <p className="text-[10px] text-gray-500 mt-1 font-medium">{u.displayName}</p>}
-                            <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                              <p className="text-xs text-primary font-bold">Bal: ₹{Number(u.balance || 0).toFixed(2)}</p>
-                              <span className="text-[10px] text-gray-400">•</span>
-                              <p className="text-[10px] text-gray-300">
-                                Active: {u.lastActive?.toDate ? u.lastActive.toDate().toLocaleDateString() : "Just now"}
-                              </p>
+                {(!allUsers || allUsers.length === 0) ? (
+                  <div className="text-center py-10 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                    <p className="text-sm font-medium text-gray-500">No users found</p>
+                    <p className="text-xs text-gray-400 mt-1">Enter an email, name or ID in the search box above to find users</p>
+                  </div>
+                ) : (
+                  allUsers.map((u: any, idx: number) => {
+                    if (!u) return null;
+                    const email = String(u.email || u.userEmail || "").trim();
+                    const name = String(u.displayName || u.name || "").trim();
+                    const displayIdentifier = email || name || String(u.id || `User #${idx + 1}`);
+                    const initial = (email || name || "U").charAt(0).toUpperCase();
+
+                    let activeDateStr = "Recent";
+                    try {
+                      if (u.lastActive?.toDate && typeof u.lastActive.toDate === "function") {
+                        activeDateStr = u.lastActive.toDate().toLocaleDateString();
+                      } else if (u.lastActive) {
+                        activeDateStr = new Date(u.lastActive).toLocaleDateString();
+                      } else if (u.createdAt?.toDate && typeof u.createdAt.toDate === "function") {
+                        activeDateStr = u.createdAt.toDate().toLocaleDateString();
+                      } else if (u.createdAt) {
+                        activeDateStr = new Date(u.createdAt).toLocaleDateString();
+                      }
+                    } catch (e) {
+                      activeDateStr = "Active";
+                    }
+
+                    return (
+                      <Card key={u.id || `user_${idx}`} className="border-none shadow-sm">
+                        <CardContent className="p-4 flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-purple-50 text-purple-700 rounded-full flex items-center justify-center font-bold text-sm shrink-0">
+                              {initial}
+                            </div>
+                            <div>
+                              <p className="font-bold text-sm leading-none">{displayIdentifier}</p>
+                              {name && email && name !== email && (
+                                <p className="text-[10px] text-gray-500 mt-1 font-medium">{name}</p>
+                              )}
+                              <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                                <p className="text-xs text-primary font-bold">Bal: ₹{Number(u.balance || 0).toFixed(2)}</p>
+                                <span className="text-[10px] text-gray-400">•</span>
+                                <p className="text-[10px] text-gray-400">ID: <span className="font-mono">{String(u.id || "").slice(0, 8)}...</span></p>
+                                <span className="text-[10px] text-gray-400">•</span>
+                                <p className="text-[10px] text-gray-400">{activeDateStr}</p>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className="rounded-xl"
-                          onClick={() => {
-                            setEditingUser(u);
-                            setNewBalance(String(u.balance || 0));
-                          }}
-                        >
-                          Edit Wallet
-                        </Button>
-                      </CardContent>
-                    </Card>
-                  ))}
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="rounded-xl shrink-0"
+                            onClick={() => {
+                              setEditingUser(u);
+                              setNewBalance(String(u.balance || 0));
+                            }}
+                          >
+                            Edit Wallet
+                          </Button>
+                        </CardContent>
+                      </Card>
+                    );
+                  })
+                )}
               </div>
               </>
             )}

@@ -699,6 +699,94 @@ export default async function handler(req: any, res: any) {
       }
     }
 
+    // 11. Generic DB Proxy Endpoints: /api/db/get, /api/db/set, /api/db/update, /api/db/list, /api/db/add
+    if (pathname === "/api/db/get") {
+      const { collection: colName, id } = body || {};
+      if (!colName || !id) return res.status(400).json({ success: false, error: "Missing collection or id" });
+      const data = await getRestDoc(colName, id);
+      return res.status(200).json({ success: true, data });
+    }
+
+    if (pathname === "/api/db/set") {
+      const { collection: colName, id, data } = body || {};
+      if (!colName || !id) return res.status(400).json({ success: false, error: "Missing collection or id" });
+      const saved = await setRestDoc(colName, id, data || {});
+      return res.status(200).json({ success: true, data: saved });
+    }
+
+    if (pathname === "/api/db/update") {
+      const { collection: colName, id, data } = body || {};
+      if (!colName || !id) return res.status(400).json({ success: false, error: "Missing collection or id" });
+      const updated = await setRestDoc(colName, id, data || {});
+      return res.status(200).json({ success: true, data: updated });
+    }
+
+    if (pathname === "/api/db/list" || pathname === "/api/db/query") {
+      const { collection: colName, limit: queryLimit } = body || {};
+      if (!colName) return res.status(400).json({ success: false, error: "Missing collection" });
+      const docs = await listRestDocs(colName, queryLimit || 100);
+      return res.status(200).json({ success: true, data: docs });
+    }
+
+    if (pathname === "/api/db/add") {
+      const { collection: colName, data } = body || {};
+      if (!colName) return res.status(400).json({ success: false, error: "Missing collection" });
+      const autoId = `item_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const saved = await setRestDoc(colName, autoId, { id: autoId, ...(data || {}) });
+      return res.status(200).json({ success: true, id: autoId, data: saved });
+    }
+
+    // 12. Admin User Management: /api/admin/search-user & /api/admin/update-balance
+    if (pathname === "/api/admin/search-user") {
+      const queryStr = String(body.query || body.email || "").toLowerCase().trim();
+      const allUsers = await listRestDocs("users", 100);
+      let matched = allUsers;
+      if (queryStr) {
+        matched = allUsers.filter((u: any) => {
+          const uEmail = String(u.email || u.userEmail || "").toLowerCase();
+          const uName = String(u.displayName || u.name || "").toLowerCase();
+          const uId = String(u.id || u.uid || "").toLowerCase();
+          return uEmail.includes(queryStr) || uName.includes(queryStr) || uId.includes(queryStr);
+        });
+      }
+      return res.status(200).json({ success: true, users: matched });
+    }
+
+    if (pathname === "/api/admin/update-balance") {
+      const { userId, id, balance } = body || {};
+      const targetId = userId || id;
+      if (!targetId) return res.status(400).json({ success: false, error: "Missing userId" });
+      const numBal = Number(balance || 0);
+      await setRestDoc("users", targetId, { balance: numBal, updatedAt: new Date().toISOString() });
+      return res.status(200).json({ success: true, balance: numBal });
+    }
+
+    // 13. UPI Gateway & Telegram Config: /api/admin/upi-gateway-config
+    if (pathname === "/api/admin/upi-gateway-config") {
+      if (body.action === "save") {
+        const cur = (await getRestDoc("settings", "payment")) || {};
+        const updated = {
+          ...cur,
+          upiId: body.upiId || cur.upiId,
+          merchantName: body.payeeName || cur.merchantName,
+          instantQrEnabled: body.instantQrEnabled !== undefined ? body.instantQrEnabled : cur.instantQrEnabled,
+          manualQrEnabled: body.manualQrEnabled !== undefined ? body.manualQrEnabled : cur.manualQrEnabled
+        };
+        await setRestDoc("settings", "payment", updated);
+        return res.status(200).json({ success: true, config: updated });
+      } else {
+        const settings = (await getRestDoc("settings", "payment")) || {};
+        return res.status(200).json({
+          success: true,
+          config: {
+            upiId: settings.upiId || "mdsaudalam621@okicici",
+            payeeName: settings.merchantName || "Pyare SMM Panel",
+            enabled: settings.instantQrEnabled !== false
+          }
+        });
+      }
+    }
+
     // Default 404
     return res.status(404).json({ success: false, error: `Route ${pathname} not found on Vercel Gateway` });
   } catch (err: any) {
