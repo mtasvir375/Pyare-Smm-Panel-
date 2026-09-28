@@ -347,6 +347,10 @@ export default function Profile() {
   };
 
   const handleAmountSubmit = async () => {
+    if (!user) {
+      toast.error("Please login to add funds");
+      return;
+    }
     if (!amount || Number(amount) < 1) {
       toast.error("Minimum amount is ₹1");
       return;
@@ -356,9 +360,9 @@ export default function Profile() {
       setIsQrAutoLoading(true);
       try {
         const res = await axios.post("/api/deposits/create-qr-auto-order", {
-          userId: user.uid,
+          userId: user?.uid || "",
           amount: Number(amount),
-          userEmail: user.email
+          userEmail: user?.email || ""
         });
         if (res.data.success && res.data.payment_url) {
           setQrAutoData({ 
