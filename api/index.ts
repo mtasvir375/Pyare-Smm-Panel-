@@ -598,15 +598,33 @@ export default async function handler(req: any, res: any) {
             listRestDocs("sms_forwarder_pool", 50)
           ]);
           const combinedAlerts = [...bankAlerts, ...smsPool];
+          const intentCreatedTime = Number(intent.createdAt || 0);
 
           const match = combinedAlerts.find((a: any) => {
             if (!a || a.isUsed === true || a.status === "claimed") return false;
+
+            let alertTime = 0;
+            if (typeof a.timestamp === "number") alertTime = a.timestamp;
+            else if (typeof a.timestamp === "string") alertTime = new Date(a.timestamp).getTime();
+
+            // STRICT TIMING GUARD: Alert MUST be generated AFTER or within 60s before payment intent was created
+            if (intentCreatedTime > 0 && alertTime > 0 && alertTime < (intentCreatedTime - 60000)) {
+              return false; // Ignore old bank alerts from previous sessions
+            }
+
             const utrStr = String(a.utr || "").trim();
             const textStr = String(a.rawText || a.rawSms || "").trim();
             const orderRef = String(intent.orderRef || "").trim();
+
+            // 1. Match by exact 12-digit Order Ref in UTR or SMS text
             if (utrStr && orderRef && utrStr.toLowerCase() === orderRef.toLowerCase()) return true;
             if (orderRef && textStr.includes(orderRef)) return true;
-            if (typeof a.amount === "number" && Math.abs(a.amount - intent.amount) < 0.005) return true;
+
+            // 2. Match by exact assigned decimal amount IF alert arrived after intent creation
+            if (typeof a.amount === "number" && Math.abs(a.amount - intent.amount) < 0.005 && alertTime >= (intentCreatedTime - 60000)) {
+              return true;
+            }
+
             return false;
           });
 
@@ -835,24 +853,82 @@ export default async function handler(req: any, res: any) {
     // 13. UPI Gateway & Telegram Config: /api/admin/upi-gateway-config
     if (pathname === "/api/admin/upi-gateway-config") {
       if (body.action === "save") {
-        const cur = (await getRestDoc("settings", "payment")) || {};
-        const updated = {
-          ...cur,
-          upiId: body.upiId || cur.upiId,
-          merchantName: body.payeeName || cur.merchantName,
-          instantQrEnabled: body.instantQrEnabled !== undefined ? body.instantQrEnabled : cur.instantQrEnabled,
-          manualQrEnabled: body.manualQrEnabled !== undefined ? body.manualQrEnabled : cur.manualQrEnabled
+        const upiId = body.upiId ? String(body.upiId).trim() : undefined;
+        const payeeName = body.payeeName || body.merchantName ? String(body.payeeName || body.merchantName).trim() : undefined;
+        const botToken = body.botToken || body.telegramBotToken ? String(body.botToken || body.telegramBotToken).trim() : undefined;
+        const chatId = body.chatId || body.telegramChatId ? String(body.chatId || body.telegramChatId).trim() : undefined;
+
+        const curPayment = (await getRestDoc("settings", "payment").catch(() => ({}))) || {};
+        const curTg = (await getRestDoc("settings", "telegram_bot").catch(() => ({}))) || {};
+
+        const updatedPayment = {
+          ...curPayment,
+          ...(upiId && { upiId }),
+          ...(payeeName && { merchantName: payeeName }),
+          ...(botToken && { telegramBotToken: botToken }),
+          ...(chatId && { telegramChatId: chatId }),
+          instantQrEnabled: body.instantQrEnabled !== undefined ? body.instantQrEnabled : curPayment.instantQrEnabled
         };
-        await setRestDoc("settings", "payment", updated);
-        return res.status(200).json({ success: true, config: updated });
-      } else {
-        const settings = (await getRestDoc("settings", "payment")) || {};
+
+        const updatedTg = {
+          ...curTg,
+          ...(botToken && { botToken }),
+          ...(chatId && { chatId }),
+          ...(upiId && { upiId }),
+          ...(payeeName && { payeeName }),
+          enabled: body.enabled !== undefined ? !!body.enabled : true,
+          updatedAt: new Date().toISOString()
+        };
+
+        await Promise.all([
+          setRestDoc("settings", "payment", updatedPayment),
+          setRestDoc("settings", "telegram_bot", updatedTg)
+        ]);
+
         return res.status(200).json({
           success: true,
+          message: "Config saved successfully",
+          running: true,
+          enabled: true,
+          hasToken: !!(botToken || curTg.botToken),
+          botToken: botToken || curTg.botToken,
+          chatId: chatId || curTg.chatId,
+          upiId: upiId || curPayment.upiId,
+          payeeName: payeeName || curPayment.merchantName,
+          config: updatedPayment
+        });
+      } else {
+        const [settings, tgDoc] = await Promise.all([
+          getRestDoc("settings", "payment").catch(() => ({})),
+          getRestDoc("settings", "telegram_bot").catch(() => ({}))
+        ]);
+
+        const botToken = String(tgDoc?.botToken || settings?.telegramBotToken || settings?.botToken || "").trim();
+        const chatId = String(tgDoc?.chatId || settings?.telegramChatId || settings?.chatId || "").trim();
+        const isEnabled = tgDoc?.enabled ?? settings?.telegramBotEnabled ?? true;
+        const isActive = !!(botToken && botToken.length >= 30 && isEnabled !== false);
+
+        let masked = "";
+        if (botToken.length > 8) {
+          const parts = botToken.split(":");
+          masked = parts.length === 2 ? `${parts[0]}:***${parts[1].slice(-4)}` : `${botToken.slice(0, 4)}***${botToken.slice(-4)}`;
+        }
+
+        return res.status(200).json({
+          success: true,
+          running: isActive,
+          enabled: isActive,
+          hasToken: !!botToken,
+          maskedToken: masked,
+          botToken,
+          chatId,
+          botUsername: tgDoc?.botUsername || settings?.telegramBotUsername || "",
+          upiId: settings?.upiId || tgDoc?.upiId || "mdsaudalam621@okicici",
+          payeeName: settings?.merchantName || tgDoc?.payeeName || "Pyare SMM Panel",
           config: {
-            upiId: settings.upiId || "mdsaudalam621@okicici",
-            payeeName: settings.merchantName || "Pyare SMM Panel",
-            enabled: settings.instantQrEnabled !== false
+            upiId: settings?.upiId || tgDoc?.upiId || "mdsaudalam621@okicici",
+            payeeName: settings?.merchantName || tgDoc?.payeeName || "Pyare SMM Panel",
+            enabled: isActive
           }
         });
       }
