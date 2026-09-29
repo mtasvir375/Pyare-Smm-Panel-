@@ -1099,8 +1099,26 @@ export async function startServer() {
 
   // Register Zero-UTR Automatic Payment Intent Callback
   registerPaymentIntentCallback(async (intent, utr, rawText) => {
+    // 0. Double-credit guard: Ensure no payment is claimed twice
+    if ((intent as any).credited || (intent as any).walletCredited) {
+      console.log(`[DUPLICATE-PREVENTED] Intent ${intent.intentId} already credited. Skipping.`);
+      return true;
+    }
+
+    const cleanUtr = utr || intent.orderRef;
+    if (cleanUtr && globalClaimedUtrs.has(cleanUtr)) {
+      console.log(`[DUPLICATE-PREVENTED] UTR ${cleanUtr} already claimed globally. Skipping.`);
+      return true;
+    }
+
     console.log(`[ZERO-UTR-INTENT-CALLBACK] Processing wallet credit for intent ${intent.intentId} (Order: ${intent.orderRef}, ₹${intent.amount})`);
     try {
+      (intent as any).credited = true;
+      (intent as any).walletCredited = true;
+      if (cleanUtr && cleanUtr.length === 12) {
+        globalClaimedUtrs.add(cleanUtr);
+      }
+
       // 1. Credit User Balance
       const adjusted = await adjustUserBalanceSafe(intent.userId, intent.amount);
       if (!adjusted) {
@@ -1110,14 +1128,18 @@ export async function startServer() {
 
       // 2. Read new balance
       let newBalance = 0;
+      let existingDeposits: any[] = [];
       try {
         const uDoc = await getDocSafe("users", intent.userId);
-        newBalance = uDoc?.data()?.balance || 0;
+        const uData = uDoc?.data ? uDoc.data() : uDoc;
+        newBalance = uData?.balance || 0;
+        if (Array.isArray(uData?.latestDeposits)) {
+          existingDeposits = uData.latestDeposits;
+        }
       } catch (e) {}
       (intent as any).newBalance = newBalance;
 
       // 3. Save approved deposit record
-      const cleanUtr = utr || intent.orderRef;
       const depositId = `dep_auto_${intent.orderRef}_${Date.now()}`;
       const depositData = {
         id: depositId,
@@ -1141,9 +1163,18 @@ export async function startServer() {
         savePersistentCache();
       } catch (e) {}
 
-      if (cleanUtr && cleanUtr.length === 12) {
-        globalClaimedUtrs.add(cleanUtr);
-      }
+      // 4. Maintain rotating latest 10 deposits in user document (0 extra reads on login/refresh!)
+      try {
+        const updatedLatestDeposits = [
+          depositData,
+          ...existingDeposits.filter((d: any) => d && d.utr !== cleanUtr && d.orderRef !== intent.orderRef)
+        ].slice(0, 10);
+
+        await updateDocSafe("users", intent.userId, {
+          latestDeposits: updatedLatestDeposits,
+          lastDepositedAt: new Date().toISOString()
+        });
+      } catch (e) {}
 
       console.log(`[ZERO-UTR-CREDITED-SUCCESS] Credited ₹${intent.amount} to user ${intent.userId} (New Balance: ₹${newBalance})`);
       return true;
@@ -2257,6 +2288,17 @@ export async function startServer() {
       }
     }
     
+    // 2. Check User Profile document latestOrders (0 extra queries if cached, 1 read otherwise)
+    if (userId && userId !== "undefined" && userId !== "null") {
+      try {
+        const uDoc = await getDocSafe("users", userId);
+        const uData = uDoc?.data ? uDoc.data() : uDoc;
+        if (uData && Array.isArray(uData.latestOrders) && uData.latestOrders.length > 0) {
+          return res.json(uData.latestOrders.slice(0, limitCount));
+        }
+      } catch (uErr) {}
+    }
+
     try {
       let docs: any[] = [];
       if (!useRestFallback) {
@@ -2649,6 +2691,19 @@ export async function startServer() {
 
       const depositMap = new Map<string, any>();
 
+      // Check User Profile document latestDeposits first (0 extra queries if cached)
+      if (targetUid) {
+        try {
+          const uDoc = await getDocSafe("users", targetUid);
+          const uData = uDoc?.data ? uDoc.data() : uDoc;
+          if (uData && Array.isArray(uData.latestDeposits)) {
+            for (const d of uData.latestDeposits) {
+              if (d && d.id) depositMap.set(d.id, d);
+            }
+          }
+        } catch (uErr) {}
+      }
+
       // 1. From server memory cache
       for (const [key, val] of serverCache.deposits.entries()) {
         const item = val?.data || val;
@@ -2719,7 +2774,7 @@ export async function startServer() {
         return timeB - timeA;
       });
 
-      return res.status(200).json({ success: true, deposits });
+      return res.status(200).json({ success: true, deposits: deposits.slice(0, 10) });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }
@@ -6317,6 +6372,39 @@ export async function startServer() {
           } catch (saveErr: any) {
             console.warn(`[TRANSMIT] Order save warning: ${saveErr.message}`);
           }
+        }
+
+        // Maintain rotating latest 10 orders in user document (0 extra reads for Dashboard!)
+        if (oUserId) {
+          try {
+            const uDoc = await getDocSafe("users", oUserId);
+            const uData = uDoc?.data ? uDoc.data() : uDoc;
+            const existingOrders = Array.isArray(uData?.latestOrders) ? uData.latestOrders : [];
+            const newOrderSummary = {
+              id: orderId,
+              userId: oUserId,
+              userEmail: currentOrderData.userEmail || currentOrderData.user_email || "",
+              serviceId: currentOrderData.serviceId || currentOrderData.service_id || "",
+              courseId: currentOrderData.courseId || currentOrderData.serviceId || "",
+              title: currentOrderData.title || currentOrderData.courseTitle || "",
+              category: currentOrderData.category || "Other",
+              quantity: Number(currentOrderData.quantity || 0),
+              targetLink: String(currentOrderData.targetLink || currentOrderData.target_link || "").trim(),
+              totalPrice: price,
+              status: "Completed",
+              providerOrderId: oId,
+              createdAt: currentOrderData.createdAt || new Date().toISOString()
+            };
+            const updatedLatestOrders = [
+              newOrderSummary,
+              ...existingOrders.filter((o: any) => o && o.id !== orderId && o.providerOrderId !== oId)
+            ].slice(0, 10);
+
+            await updateDocSafe("users", oUserId, {
+              latestOrders: updatedLatestOrders,
+              lastOrderedAt: new Date().toISOString()
+            });
+          } catch (ordSyncErr) {}
         }
 
         if (updatedUserBal === undefined && oUserId) {

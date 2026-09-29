@@ -27,6 +27,8 @@ export interface UserProfile {
   role: 'student' | 'instructor' | 'admin' | 'payment_admin';
   balance: number;
   createdAt: any;
+  latestOrders?: any[];
+  latestDeposits?: any[];
   isFallback?: boolean;
 }
 
@@ -216,15 +218,42 @@ export const dbClient = {
   },
 
   async getUserOrders(userId: string, l = 10, email?: string): Promise<any[]> {
+    const limitCount = Math.min(l, 10);
+    // 1. Try server endpoint
     try {
       const emailQuery = email ? `&email=${encodeURIComponent(email)}` : "";
-      const response = await axios.get(`/api/user-orders/${userId}?limit=${l}${emailQuery}`);
-      if (Array.isArray(response.data)) {
-        return response.data;
+      const response = await axios.get(`/api/user-orders/${userId}?limit=${limitCount}${emailQuery}`, { timeout: 6000 });
+      if (Array.isArray(response.data) && response.data.length > 0) {
+        return response.data.slice(0, 10);
       }
-      return [];
     } catch (e) {
-      console.warn("[DB-CLIENT] Memory order fetch failed.");
+      console.warn("[DB-CLIENT] Server order fetch failed, checking user profile...");
+    }
+
+    // 2. Try User Profile document (0 extra Firestore read if cached, 1 read otherwise)
+    try {
+      const userDoc = await this.getDoc('users', userId);
+      if (userDoc && Array.isArray(userDoc.latestOrders) && userDoc.latestOrders.length > 0) {
+        return userDoc.latestOrders.slice(0, 10);
+      }
+    } catch (uErr) {}
+
+    // 3. Fallback targeted query on 'orders' collection (strictly limit to 10!)
+    try {
+      const q = query(
+        collection(db, 'orders'),
+        where('userId', '==', userId),
+        limit(10)
+      );
+      const snapshot = await getDocs(q);
+      const orders = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      orders.sort((a: any, b: any) => {
+        const tA = new Date(a.createdAt || a.created_at || 0).getTime();
+        const tB = new Date(b.createdAt || b.created_at || 0).getTime();
+        return tB - tA;
+      });
+      return orders.slice(0, 10);
+    } catch (fallbackErr) {
       return [];
     }
   },
@@ -441,22 +470,38 @@ export const dbClient = {
   },
 
   async getUserDeposits(userId: string, userEmail?: string): Promise<any[]> {
+    // 1. Try server endpoint
     try {
       const emailParam = userEmail ? `&email=${encodeURIComponent(userEmail)}` : '';
-      const res = await axios.get(`/api/user/deposits?userId=${encodeURIComponent(userId)}${emailParam}`, { timeout: 8000 });
-      if (res.data?.success && Array.isArray(res.data.deposits)) {
-        return res.data.deposits;
+      const res = await axios.get(`/api/user/deposits?userId=${encodeURIComponent(userId)}${emailParam}`, { timeout: 6000 });
+      if (res.data?.success && Array.isArray(res.data.deposits) && res.data.deposits.length > 0) {
+        return res.data.deposits.slice(0, 10);
       }
     } catch (e) {}
 
+    // 2. Try User Profile document (0 extra Firestore read if cached, 1 read otherwise)
+    try {
+      const userDoc = await this.getDoc('users', userId);
+      if (userDoc && Array.isArray(userDoc.latestDeposits) && userDoc.latestDeposits.length > 0) {
+        return userDoc.latestDeposits.slice(0, 10);
+      }
+    } catch (uErr) {}
+
+    // 3. Fallback targeted query on 'deposits' collection (strictly limit to 10!)
     try {
       const q = query(
         collection(db, 'deposits'),
         where('userId', '==', userId),
-        limit(50)
+        limit(10)
       );
       const snapshot = await getDocs(q);
-      return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      const deposits = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      deposits.sort((a: any, b: any) => {
+        const tA = new Date(a.createdAt || a.timestamp || 0).getTime();
+        const tB = new Date(b.createdAt || b.timestamp || 0).getTime();
+        return tB - tA;
+      });
+      return deposits.slice(0, 10);
     } catch (fallbackErr) {
       return [];
     }

@@ -379,14 +379,39 @@ export default async function handler(req: any, res: any) {
         if (isSuccess) {
           const finalOId = providerOrderId ? String(providerOrderId) : "SUCCESS";
           let newBal = currentUserBal;
+          const finalOrderId = orderId || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
 
-          // Deduct user balance
-          if (finalUserId && finalPrice > 0) {
-            newBal = Math.max(0, Number((currentUserBal - finalPrice).toFixed(2)));
+          const newOrderSummary = {
+            id: finalOrderId,
+            userId: finalUserId,
+            userEmail: userEmail || orderData?.userEmail || "",
+            serviceId: orderData?.serviceId || finalService,
+            title: orderData?.title || "SMM Order",
+            category: orderData?.category || "Other",
+            quantity: Number(finalQty),
+            targetLink: finalLink,
+            totalPrice: finalPrice,
+            status: "Completed",
+            providerOrderId: finalOId,
+            createdAt: new Date().toISOString()
+          };
+
+          // Deduct user balance & maintain latest 10 rotating orders
+          if (finalUserId) {
+            if (finalPrice > 0) {
+              newBal = Math.max(0, Number((currentUserBal - finalPrice).toFixed(2)));
+            }
             try {
+              const existingOrders = Array.isArray(userDoc?.latestOrders) ? userDoc.latestOrders : [];
+              const updatedLatestOrders = [
+                newOrderSummary,
+                ...existingOrders.filter((o: any) => o && o.id !== finalOrderId && o.providerOrderId !== finalOId)
+              ].slice(0, 10);
+
               await setRestDoc("users", finalUserId, {
                 ...userDoc,
                 balance: newBal,
+                latestOrders: updatedLatestOrders,
                 lastOrderedAt: new Date().toISOString()
               });
             } catch (deductErr: any) {
@@ -395,21 +420,9 @@ export default async function handler(req: any, res: any) {
           }
 
           // Save order in Firestore orders collection
-          const finalOrderId = orderId || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
           try {
             await setRestDoc("orders", finalOrderId, {
-              id: finalOrderId,
-              userId: finalUserId,
-              userEmail: userEmail || orderData?.userEmail || "",
-              serviceId: orderData?.serviceId || finalService,
-              title: orderData?.title || "SMM Order",
-              category: orderData?.category || "Other",
-              quantity: Number(finalQty),
-              targetLink: finalLink,
-              totalPrice: finalPrice,
-              status: "Completed",
-              providerOrderId: finalOId,
-              createdAt: new Date().toISOString(),
+              ...newOrderSummary,
               updatedAt: new Date().toISOString()
             });
           } catch (ordSaveErr: any) {
@@ -628,7 +641,7 @@ export default async function handler(req: any, res: any) {
             return false;
           });
 
-          if (match) {
+          if (match && intent.status !== "completed") {
             const matchUtr = match.utr || intent.orderRef;
             const creditAmt = Number(intent.amount || match.amount || 0);
 
@@ -641,10 +654,38 @@ export default async function handler(req: any, res: any) {
             } catch (e) {}
 
             const newBal = Number((currentBal + creditAmt).toFixed(2));
+            const depId = `dep_${intent.orderRef}_${Date.now()}`;
+            const newDepositSummary = {
+              id: depId,
+              amount: creditAmt,
+              utr: matchUtr,
+              orderRef: intent.orderRef,
+              status: "approved",
+              method: "Instant UPI QR",
+              gateway: match.bank || match.senderBank || "UPI Auto-Verify",
+              createdAt: new Date().toISOString()
+            };
 
-            // Persist updated balance & completed intent
+            const existingDeposits = Array.isArray(uDoc?.latestDeposits) ? uDoc.latestDeposits : [];
+            const updatedLatestDeposits = [
+              newDepositSummary,
+              ...existingDeposits.filter((d: any) => d && d.utr !== matchUtr && d.orderRef !== intent.orderRef)
+            ].slice(0, 10);
+
+            // Persist updated balance, latestDeposits, completed intent, and deposit record
             await Promise.all([
-              setRestDoc("users", intent.userId, { balance: newBal, updatedAt: new Date().toISOString() }),
+              setRestDoc("users", intent.userId, { 
+                ...uDoc, 
+                balance: newBal, 
+                latestDeposits: updatedLatestDeposits, 
+                updatedAt: new Date().toISOString() 
+              }),
+              setRestDoc("deposits", depId, {
+                ...newDepositSummary,
+                userId: intent.userId,
+                userEmail: intent.userEmail || "",
+                type: "deposit"
+              }),
               setRestDoc("payment_intents", intent.intentId, {
                 ...intent,
                 status: "completed",
@@ -945,10 +986,22 @@ export default async function handler(req: any, res: any) {
 
       const depositMap = new Map<string, any>();
 
+      // Check User Profile document latestDeposits first (0ms, 0 extra read if cached)
+      if (targetUid) {
+        try {
+          const uDoc = await getRestDoc("users", targetUid);
+          if (uDoc && Array.isArray(uDoc.latestDeposits)) {
+            for (const d of uDoc.latestDeposits) {
+              if (d && d.id) depositMap.set(d.id, d);
+            }
+          }
+        } catch (uErr) {}
+      }
+
       try {
         const [depList, intentList] = await Promise.all([
-          listRestDocs("deposits", 100),
-          listRestDocs("payment_intents", 100)
+          listRestDocs("deposits", 50),
+          listRestDocs("payment_intents", 50)
         ]);
 
         for (const item of depList) {
@@ -992,7 +1045,49 @@ export default async function handler(req: any, res: any) {
         return timeB - timeA;
       });
 
-      return res.status(200).json({ success: true, deposits });
+      // Strictly return latest 10 deposits
+      return res.status(200).json({ success: true, deposits: deposits.slice(0, 10) });
+    }
+
+    // 15. User Orders History: /api/user-orders/:userId or /api/user-orders
+    if (pathname.startsWith("/api/user-orders")) {
+      const parts = pathname.split("/").filter(Boolean);
+      const pathUid = parts.length >= 2 && parts[1] !== "user-orders" ? parts[1] : "";
+      const targetUid = String(req.query?.userId || pathUid || "").trim();
+      const targetEmail = String(req.query?.email || req.query?.userEmail || "").trim().toLowerCase();
+
+      if (!targetUid && !targetEmail) {
+        return res.status(200).json([]);
+      }
+
+      // Check User Profile document latestOrders first (0 extra reads if cached!)
+      if (targetUid) {
+        try {
+          const uDoc = await getRestDoc("users", targetUid);
+          if (uDoc && Array.isArray(uDoc.latestOrders) && uDoc.latestOrders.length > 0) {
+            return res.status(200).json(uDoc.latestOrders.slice(0, 10));
+          }
+        } catch (e) {}
+      }
+
+      // Fallback query to orders collection
+      try {
+        const ordList = await listRestDocs("orders", 50);
+        const filtered = ordList.filter((item: any) => {
+          if (!item) return false;
+          const uUid = String(item.userId || item.user_id || "").trim();
+          const uEmail = String(item.userEmail || item.user_email || "").trim().toLowerCase();
+          return (targetUid && uUid === targetUid) || (targetEmail && uEmail && uEmail === targetEmail);
+        });
+        filtered.sort((a, b) => {
+          const timeA = new Date(a.createdAt || a.created_at || 0).getTime();
+          const timeB = new Date(b.createdAt || b.created_at || 0).getTime();
+          return timeB - timeA;
+        });
+        return res.status(200).json(filtered.slice(0, 10));
+      } catch (e: any) {
+        return res.status(200).json([]);
+      }
     }
 
     // Default 404

@@ -424,14 +424,37 @@ export default function Courses() {
         updateUserProfileLocal({ balance: finalBal });
       }
 
-      // Persist deducted balance directly to Firestore so all active devices (app + browser) update in real time
+      // Persist deducted balance and rotating latest 10 orders directly to user profile in Firestore
       try {
+        const uDoc = await dbClient.getDoc("users", user.uid);
+        const existingOrders = Array.isArray(uDoc?.latestOrders) ? uDoc.latestOrders : [];
+        const newOrderSummary = {
+          id: orderId,
+          userId: user.uid,
+          userEmail: user.email || "",
+          courseId: selectedCourse.id,
+          serviceId: selectedCourse.id,
+          title: selectedCourse.title,
+          category: selectedCourse.category || "Other",
+          quantity: Math.floor(Number(quantity)),
+          targetLink: formattedLink,
+          totalPrice: Number(totalPrice),
+          status: "In progress",
+          providerOrderId: finalProviderOrderId,
+          createdAt: new Date().toISOString()
+        };
+        const updatedLatestOrders = [
+          newOrderSummary,
+          ...existingOrders.filter((o: any) => o && o.id !== orderId && o.providerOrderId !== finalProviderOrderId)
+        ].slice(0, 10);
+
         await dbClient.updateUserProfile(user.uid, {
           balance: finalBal,
+          latestOrders: updatedLatestOrders,
           lastOrderedAt: new Date().toISOString()
         });
       } catch (persistErr) {
-        console.warn("[ORDER] Profile balance direct sync error:", persistErr);
+        console.warn("[ORDER] Profile balance & latest orders direct sync error:", persistErr);
       }
 
       // Update local state and UI (Server already deducted balance in Firestore and in-memory cache)

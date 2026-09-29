@@ -14,7 +14,7 @@ import axios from "axios";
 import { toast } from "sonner";
 
 export default function Dashboard() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, userProfile, loading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState<"orders" | "deposits">("orders");
   const [orders, setOrders] = useState<any[]>([]);
   const [deposits, setDeposits] = useState<any[]>([]);
@@ -129,9 +129,8 @@ export default function Dashboard() {
             if (Array.isArray(parsed) && parsed.length > 0) {
               initialOrders = parseOrdersList(parsed);
               if (isMounted && initialOrders.length > 0) {
-                setOrders(initialOrders.slice(0, 15));
+                setOrders(initialOrders.slice(0, 10));
                 setLoading(false);
-                console.log(`[DASHBOARD] ✅ Displaying ${initialOrders.length} orders instantly from Chrome cache`);
               }
             }
           } catch (e) {
@@ -139,19 +138,29 @@ export default function Dashboard() {
           }
         }
 
-        // 2. Stale-While-Revalidate: Always fetch latest orders from server cache (0 Firestore reads!)
-        // to ensure any newly placed orders on custom domains or other devices appear seamlessly
+        // 2. If browser cache is cleared, load immediately from userProfile (0ms, 0 extra Firestore reads!)
+        if (initialOrders.length === 0 && userProfile && Array.isArray((userProfile as any).latestOrders) && (userProfile as any).latestOrders.length > 0) {
+          initialOrders = parseOrdersList((userProfile as any).latestOrders);
+          if (isMounted && initialOrders.length > 0) {
+            setOrders(initialOrders.slice(0, 10));
+            setLoading(false);
+            console.log(`[DASHBOARD] ✅ Restored ${initialOrders.length} orders instantly from persistent User Profile!`);
+          }
+        }
+
+        // 3. Stale-While-Revalidate: fetch latest 10 orders from server cache/db
         try {
-          const fetched = await dbClient.getUserOrders(user.uid, 50, user.email || undefined);
+          const fetched = await dbClient.getUserOrders(user.uid, 10, user.email || undefined);
           if (Array.isArray(fetched) && isMounted) {
-            // Combine initial cache with fetched orders to ensure no order is lost
             const combined = [...initialOrders, ...fetched];
             const freshParsed = parseOrdersList(combined);
 
-            setOrders(freshParsed.slice(0, 15));
+            // Strictly cap to latest 10 orders (FIFO rotation)
+            const latest10 = freshParsed.slice(0, 10);
+            setOrders(latest10);
 
-            // Update Chrome cache with fresh consolidated list
-            const jsonStr = JSON.stringify(freshParsed);
+            // Update local/session cache with fresh list
+            const jsonStr = JSON.stringify(latest10);
             const nowStr = Date.now().toString();
             const keysToSave = [uidKey];
             if (emailKey) keysToSave.push(emailKey);
@@ -162,13 +171,11 @@ export default function Dashboard() {
                 localStorage.setItem(`${k}_time`, nowStr);
                 sessionStorage.setItem(k, jsonStr);
                 sessionStorage.setItem(`${k}_time`, nowStr);
-              } catch (storageErr) {
-                console.warn("[DASHBOARD] Storage save notice:", storageErr);
-              }
+              } catch (storageErr) {}
             });
           }
         } catch (serverErr) {
-          console.warn("[DASHBOARD] Notice while fetching orders from server cache:", serverErr);
+          console.warn("[DASHBOARD] Notice while fetching orders:", serverErr);
         }
 
       } catch (err) {
@@ -188,15 +195,20 @@ export default function Dashboard() {
         if (cached) {
           try {
             const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed)) setDeposits(parsed);
+            if (Array.isArray(parsed) && parsed.length > 0) setDeposits(parsed.slice(0, 10));
           } catch (e) {}
+        } else if (userProfile && Array.isArray((userProfile as any).latestDeposits) && (userProfile as any).latestDeposits.length > 0) {
+          // If browser cache is cleared, load immediately from persistent User Profile (0ms, 0 extra reads!)
+          setDeposits((userProfile as any).latestDeposits.slice(0, 10));
+          console.log(`[DASHBOARD] ✅ Restored ${(userProfile as any).latestDeposits.length} deposits from persistent User Profile!`);
         }
 
         const fresh = await dbClient.getUserDeposits(user.uid, user.email || undefined);
         if (Array.isArray(fresh) && isMounted) {
-          setDeposits(fresh);
+          const latest10Deposits = fresh.slice(0, 10);
+          setDeposits(latest10Deposits);
           try {
-            const jsonStr = JSON.stringify(fresh);
+            const jsonStr = JSON.stringify(latest10Deposits);
             localStorage.setItem(depKey, jsonStr);
             sessionStorage.setItem(depKey, jsonStr);
           } catch (e) {}
@@ -473,8 +485,8 @@ export default function Dashboard() {
           </h1>
           <p className="text-xs text-gray-500 mt-0.5">
             {activeTab === "orders" 
-              ? `Track your placed social media service orders (${orders.length})` 
-              : `Review all your wallet add money deposits & UPI payments (${deposits.length})`}
+              ? `Showing latest ${orders.length} service orders (Stored persistently in your account)` 
+              : `Showing latest ${deposits.length} wallet deposits (Stored persistently in your account)`}
           </p>
         </div>
 
@@ -558,7 +570,7 @@ export default function Dashboard() {
             "text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold",
             activeTab === "orders" ? "bg-primary/10 text-primary" : "bg-gray-200 text-gray-600"
           )}>
-            {orders.length}
+            {orders.length}/10
           </span>
         </button>
 
@@ -577,7 +589,7 @@ export default function Dashboard() {
             "text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold",
             activeTab === "deposits" ? "bg-emerald-100 text-emerald-700" : "bg-gray-200 text-gray-600"
           )}>
-            {deposits.length}
+            {deposits.length}/10
           </span>
         </button>
       </div>
