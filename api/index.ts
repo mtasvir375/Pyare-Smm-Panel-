@@ -452,23 +452,19 @@ export default async function handler(req: any, res: any) {
     if (pathname === "/api/telegram-config" || pathname === "/api/admin/telegram-config") {
       if (req.method === "GET") {
         let cfg: any = null;
+        let paymentCfg: any = null;
         try {
           cfg = await getRestDoc("settings", "telegram_bot");
         } catch {}
+        try {
+          paymentCfg = await getRestDoc("settings", "payment");
+        } catch {}
 
-        if (!cfg) {
-          return res.status(200).json({
-            success: true,
-            running: false,
-            enabled: false,
-            hasToken: false,
-            maskedToken: "",
-            chatId: "",
-            botUsername: ""
-          });
-        }
+        const botToken = String(cfg?.botToken || paymentCfg?.telegramBotToken || paymentCfg?.botToken || "").trim();
+        const chatId = String(cfg?.chatId || paymentCfg?.telegramChatId || paymentCfg?.chatId || "").trim();
+        const isEnabled = cfg?.enabled ?? paymentCfg?.telegramBotEnabled ?? true;
+        const isActive = !!(botToken && botToken.length >= 30 && isEnabled !== false);
 
-        const botToken = String(cfg.botToken || "").trim();
         let masked = "";
         if (botToken.length > 8) {
           const parts = botToken.split(":");
@@ -477,12 +473,12 @@ export default async function handler(req: any, res: any) {
 
         return res.status(200).json({
           success: true,
-          running: !!cfg.enabled,
-          enabled: !!cfg.enabled,
+          running: isActive,
+          enabled: isActive,
           hasToken: !!botToken,
           maskedToken: masked,
-          chatId: cfg.chatId || "",
-          botUsername: cfg.botUsername || ""
+          chatId,
+          botUsername: cfg?.botUsername || paymentCfg?.telegramBotUsername || ""
         });
       } else if (req.method === "POST") {
         let current: any = {};
@@ -592,6 +588,82 @@ export default async function handler(req: any, res: any) {
           intentId: String(intentId),
           message: "Awaiting bank SMS confirmation"
         });
+      }
+
+      // Auto-reconcile against Firestore bank_alerts & sms_forwarder_pool if still pending
+      if (intent.status !== "completed" && intent.userId) {
+        try {
+          const [bankAlerts, smsPool] = await Promise.all([
+            listRestDocs("bank_alerts", 50),
+            listRestDocs("sms_forwarder_pool", 50)
+          ]);
+          const combinedAlerts = [...bankAlerts, ...smsPool];
+
+          const match = combinedAlerts.find((a: any) => {
+            if (!a || a.isUsed === true || a.status === "claimed") return false;
+            const utrStr = String(a.utr || "").trim();
+            const textStr = String(a.rawText || a.rawSms || "").trim();
+            const orderRef = String(intent.orderRef || "").trim();
+            if (utrStr && orderRef && utrStr.toLowerCase() === orderRef.toLowerCase()) return true;
+            if (orderRef && textStr.includes(orderRef)) return true;
+            if (typeof a.amount === "number" && Math.abs(a.amount - intent.amount) < 0.005) return true;
+            return false;
+          });
+
+          if (match) {
+            const matchUtr = match.utr || intent.orderRef;
+            const creditAmt = Number(intent.amount || match.amount || 0);
+
+            // Fetch current user balance
+            let currentBal = 0;
+            let uDoc: any = null;
+            try {
+              uDoc = await getRestDoc("users", intent.userId);
+              currentBal = Number(uDoc?.balance || 0);
+            } catch (e) {}
+
+            const newBal = Number((currentBal + creditAmt).toFixed(2));
+
+            // Persist updated balance & completed intent
+            await Promise.all([
+              setRestDoc("users", intent.userId, { balance: newBal, updatedAt: new Date().toISOString() }),
+              setRestDoc("payment_intents", intent.intentId, {
+                ...intent,
+                status: "completed",
+                completedAt: Date.now(),
+                utr: matchUtr,
+                creditedAmount: creditAmt
+              }),
+              setRestDoc("bank_alerts", matchUtr, {
+                ...match,
+                isUsed: true,
+                status: "claimed",
+                usedBy: intent.userId,
+                usedAt: new Date().toISOString()
+              })
+            ]);
+
+            intent.status = "completed";
+            intent.utr = matchUtr;
+            intent.completedAt = Date.now();
+
+            return res.status(200).json({
+              success: true,
+              status: "completed",
+              intentId: intent.intentId,
+              orderRef: intent.orderRef,
+              amount: creditAmt,
+              baseAmount: intent.baseAmount,
+              creditedAmount: creditAmt,
+              utr: matchUtr,
+              expiresAt: intent.expiresAt,
+              completedAt: intent.completedAt,
+              newBalance: newBal
+            });
+          }
+        } catch (reconcileErr: any) {
+          console.warn("[CHECK-INTENT-AUTO-RECONCILE-WARN]", reconcileErr.message);
+        }
       }
 
       let userBalance: number | undefined;

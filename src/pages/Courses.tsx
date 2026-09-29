@@ -520,7 +520,7 @@ export default function Courses() {
       const lowerErr = transmissionError.toLowerCase();
       if (lowerErr.includes("current link already in work") || lowerErr.includes("link already in work") || lowerErr.includes("link is already in work") || lowerErr.includes("link is already in progress")) {
         transmissionError = "Current link already in work";
-      } else if (lowerErr.includes("not enough balance") || lowerErr.includes("insufficient balance") || lowerErr.includes("low balance")) {
+      } else if (lowerErr.includes("provider panel has low balance") || lowerErr.includes("provider low balance")) {
         transmissionError = "Provider panel has low balance. Please contact support.";
       }
 
