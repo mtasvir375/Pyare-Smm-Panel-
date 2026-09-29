@@ -82,49 +82,10 @@ let intentMatchCallback: PaymentIntentCallback | null = null;
 
 const INSTANCE_ID = `inst_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 let isLeader = false;
-let lockCachedUntil = 0;
-let lastLockCheckTime = 0;
-
 export async function checkOrAcquirePollingLock(): Promise<boolean> {
-  const now = Date.now();
-  // If we already hold the lease and it's valid for at least 15 more seconds, return true with ZERO Firestore calls
-  if (isLeader && now < lockCachedUntil - 15000) {
-    return true;
-  }
-
-  // Throttle checking/renewing to at most once every 15 seconds
-  if (now - lastLockCheckTime < 15000) {
-    return isLeader;
-  }
-  lastLockCheckTime = now;
-
-  try {
-    const lockDoc = await getRestDoc("settings", "telegram_bot_lock");
-    const currentHolder = lockDoc?.holder;
-    const expiresAt = Number(lockDoc?.expiresAt || 0);
-
-    // If another instance holds an active lease
-    if (lockDoc && currentHolder && expiresAt > now && currentHolder !== INSTANCE_ID) {
-      isLeader = false;
-      lockCachedUntil = expiresAt;
-      return false;
-    }
-
-    // Acquire or renew 60-second lease
-    const newExpiresAt = now + 60000;
-    await setRestDoc("settings", "telegram_bot_lock", {
-      holder: INSTANCE_ID,
-      expiresAt: newExpiresAt,
-      renewedAt: new Date().toISOString()
-    });
-    isLeader = true;
-    lockCachedUntil = newExpiresAt;
-    return true;
-  } catch {
-    isLeader = true;
-    lockCachedUntil = now + 60000;
-    return true;
-  }
+  // Completely in-memory leader lock - 0 Firestore reads/writes!
+  isLeader = true;
+  return true;
 }
 
 let memoryConfig: TelegramBotConfig = {
@@ -322,53 +283,29 @@ export function findMatchingIntent(params: {
     }
   }
 
-  // 1. PRIMARY MATCH: Match by unique 12-digit code (orderRef)
-  // Each QR code has a globally unique 12-digit numeric code. If it matches, it's 100% this user's payment!
+  // 1. STRICT 12-DIGIT CODE MATCH ONLY:
+  // Match ONLY if the 12-digit Order Ref or UTR matches the intent's orderRef or user-provided utr!
   if (candidate12Digits.size > 0) {
     for (const num of candidate12Digits) {
-      // First check active pending intents
+      // First check active pending intents matching orderRef
       const matchPending = uncompleted.find(
         (i) => i.status === "pending" && i.orderRef.toLowerCase() === num.toLowerCase()
       );
       if (matchPending) return matchPending;
 
-      // Also check uncompleted intents (in case payment took a bit longer than initial timer)
+      // Also check uncompleted recent intents matching orderRef
       const matchAny = uncompleted.find(
         (i) => i.orderRef.toLowerCase() === num.toLowerCase()
       );
       if (matchAny) return matchAny;
+
+      // Check if user pre-mapped this UTR to their intent
+      const matchByUtr = uncompleted.find((i) => i.utr && i.utr.toLowerCase() === num.toLowerCase());
+      if (matchByUtr) return matchByUtr;
     }
   }
 
-  // 2. SECONDARY MATCH: Match strictly by UNIQUE ASSIGNED DECIMAL AMOUNT (e.g., 1.01 vs 1.02)
-  // NEVER match by baseAmount (e.g. 1.00) to prevent cross-user payment stealing!
-  if (params.amount && params.amount > 0) {
-    const targetAmt = Number(params.amount.toFixed(2));
-
-    // Active pending intents (created in last 15 mins) where assigned final amount EXACTLY matches targetAmt
-    const matchActiveByExactAmt = uncompleted.find(
-      (i) =>
-        i.status === "pending" &&
-        now - i.createdAt < 15 * 60 * 1000 &&
-        Math.abs(i.amount - targetAmt) < 0.005
-    );
-    if (matchActiveByExactAmt) return matchActiveByExactAmt;
-
-    // Uncompleted recent intents (created in last 30 mins) matching exact assigned final amount
-    const matchRecentByExactAmt = uncompleted.find(
-      (i) =>
-        now - i.createdAt < 30 * 60 * 1000 &&
-        Math.abs(i.amount - targetAmt) < 0.005
-    );
-    if (matchRecentByExactAmt) return matchRecentByExactAmt;
-  }
-
-  // 3. By UTR if already mapped
-  if (params.utr && params.utr.length === 12) {
-    const byUtr = uncompleted.find((i) => i.utr === params.utr);
-    if (byUtr) return byUtr;
-  }
-
+  // NOTE: Matching by amount alone without 12-digit code is STRICTLY DISABLED to prevent cross-user payment theft!
   return null;
 }
 
@@ -966,14 +903,11 @@ export async function reconcilePendingIntentsWithAlerts(): Promise<number> {
   for (const intent of uncompleted) {
     const matchedAlert = memoryAlerts.find((alert) => {
       if (alert.isUsed) return false;
-      // 1. Exact match by 12-digit code
+      // Strict 12-digit code match only:
       if (alert.utr === intent.orderRef) return true;
+      if ((alert as any).orderRef === intent.orderRef) return true;
       if (alert.rawText && alert.rawText.includes(intent.orderRef)) return true;
-      // 2. Exact match by unique amount (within 30 mins)
-      if (Math.abs(alert.amount - intent.amount) < 0.005) {
-        const alertTime = new Date(alert.timestamp).getTime();
-        if (Math.abs(intent.createdAt - alertTime) < 60 * 60 * 1000) return true;
-      }
+      if (intent.utr && alert.utr === intent.utr) return true;
       return false;
     });
 

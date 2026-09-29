@@ -292,54 +292,8 @@ export const TelegramBotTab: React.FC = () => {
     }
 
     if (!loaded) {
-      try {
-        const [alertDocs, poolDocs] = await Promise.all([
-          dbClient.getDocs("bank_alerts"),
-          dbClient.getDocs("sms_forwarder_pool")
-        ]);
-
-        const map = new Map<string, any>();
-        for (const doc of [...alertDocs, ...poolDocs]) {
-          const utr = doc.utr || doc.id;
-          if (!utr || map.has(utr)) continue;
-          const isUsed = doc.status === "claimed" || doc.isUsed === true;
-          map.set(utr, {
-            id: doc.id || `alert_${utr}`,
-            utr,
-            amount: Number(doc.amount || 0),
-            senderBank: doc.senderBank || doc.sender || "UPI Payment",
-            rawText: doc.rawText || doc.rawSms || "",
-            timestamp: doc.timestamp || new Date().toISOString(),
-            isUsed,
-            usedBy: doc.usedBy || doc.claimedBy || "",
-            usedByEmail: doc.usedByEmail || doc.claimedEmail || "",
-            usedAt: doc.usedAt || doc.claimedAt || ""
-          });
-        }
-
-        let allAlerts = Array.from(map.values());
-        allAlerts.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-
-        if (filter === "unused") {
-          allAlerts = allAlerts.filter((a) => !a.isUsed);
-        } else if (filter === "used") {
-          allAlerts = allAlerts.filter((a) => a.isUsed);
-        }
-
-        if (searchQuery.trim()) {
-          const q = searchQuery.trim().toLowerCase();
-          allAlerts = allAlerts.filter((a) =>
-            a.utr.toLowerCase().includes(q) ||
-            a.senderBank.toLowerCase().includes(q) ||
-            String(a.amount).includes(q) ||
-            (a.usedByEmail && a.usedByEmail.toLowerCase().includes(q))
-          );
-        }
-
-        setAlerts(allAlerts);
-      } catch (e) {
-        console.warn("[FETCH-ALERTS-FIRESTORE-ERR]", e);
-      }
+      // Do NOT dump entire collections into browser every few seconds (protects 50k quota)
+      setAlerts([]);
     }
 
     setLoadingAlerts(false);
@@ -350,11 +304,12 @@ export const TelegramBotTab: React.FC = () => {
     fetchAlerts();
     fetchIntents();
 
-    // Auto-poll alerts & intents every 5 seconds so new SMS/Telegram payments and QR requests show up automatically
+    // Gentle 30s poll only when tab is visible (0 Firestore reads, memory cache only)
     const pollInterval = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
       fetchAlerts();
       fetchIntents();
-    }, 5000);
+    }, 30000);
 
     return () => clearInterval(pollInterval);
   }, [filter, intentFilter]);

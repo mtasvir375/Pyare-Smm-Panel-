@@ -280,7 +280,7 @@ export default function Dashboard() {
       // fetch latest orders and update the cache seamlessly!
       if (user) {
         try {
-          const fresh = await dbClient.getUserOrders(user.uid, 50, user.email || undefined);
+          const fresh = await dbClient.getUserOrders(user.uid, 10, user.email || undefined);
           if (Array.isArray(fresh) && fresh.length > 0) {
             const uidKey = `orders_${user.uid}`;
             const emailKey = user.email ? `orders_${user.email.toLowerCase()}` : null;

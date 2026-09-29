@@ -603,45 +603,16 @@ export default async function handler(req: any, res: any) {
         });
       }
 
-      // Auto-reconcile against Firestore bank_alerts & sms_forwarder_pool if still pending
-      if (intent.status !== "completed" && intent.userId) {
+      // Auto-reconcile against targeted orderRef alert (1 single doc read instead of 100 reads!)
+      if (intent.status !== "completed" && intent.userId && intent.orderRef) {
         try {
-          const [bankAlerts, smsPool] = await Promise.all([
-            listRestDocs("bank_alerts", 50),
-            listRestDocs("sms_forwarder_pool", 50)
-          ]);
-          const combinedAlerts = [...bankAlerts, ...smsPool];
-          const intentCreatedTime = Number(intent.createdAt || 0);
+          // Targeted 1-doc lookup by unique 12-digit orderRef
+          let match: any = await getRestDoc("bank_alerts", intent.orderRef);
+          if (!match || match.isUsed === true || match.status === "claimed") {
+            match = await getRestDoc("sms_forwarder_pool", intent.orderRef);
+          }
 
-          const match = combinedAlerts.find((a: any) => {
-            if (!a || a.isUsed === true || a.status === "claimed") return false;
-
-            let alertTime = 0;
-            if (typeof a.timestamp === "number") alertTime = a.timestamp;
-            else if (typeof a.timestamp === "string") alertTime = new Date(a.timestamp).getTime();
-
-            // STRICT TIMING GUARD: Alert MUST be generated AFTER or within 60s before payment intent was created
-            if (intentCreatedTime > 0 && alertTime > 0 && alertTime < (intentCreatedTime - 60000)) {
-              return false; // Ignore old bank alerts from previous sessions
-            }
-
-            const utrStr = String(a.utr || "").trim();
-            const textStr = String(a.rawText || a.rawSms || "").trim();
-            const orderRef = String(intent.orderRef || "").trim();
-
-            // 1. Match by exact 12-digit Order Ref in UTR or SMS text
-            if (utrStr && orderRef && utrStr.toLowerCase() === orderRef.toLowerCase()) return true;
-            if (orderRef && textStr.includes(orderRef)) return true;
-
-            // 2. Match by exact assigned decimal amount IF alert arrived after intent creation
-            if (typeof a.amount === "number" && Math.abs(a.amount - intent.amount) < 0.005 && alertTime >= (intentCreatedTime - 60000)) {
-              return true;
-            }
-
-            return false;
-          });
-
-          if (match && intent.status !== "completed") {
+          if (match && !match.isUsed && match.status !== "claimed" && intent.status !== "completed") {
             const matchUtr = match.utr || intent.orderRef;
             const creditAmt = Number(intent.amount || match.amount || 0);
 
@@ -794,23 +765,54 @@ export default async function handler(req: any, res: any) {
 
         const creditAmount = Number(alertDoc.amount || reqAmount || 0);
         let newBalance = creditAmount;
+        let uDoc: any = null;
         try {
-          const userDoc = await getRestDoc("users", userId);
-          const currentBal = Number(userDoc?.balance || 0);
+          uDoc = await getRestDoc("users", userId);
+          const currentBal = Number(uDoc?.balance || 0);
           newBalance = currentBal + creditAmount;
-          await setRestDoc("users", userId, { balance: newBalance });
         } catch (e) {}
 
         const nowIso = new Date().toISOString();
-        await setRestDoc("bank_alerts", cleanUtr, {
-          ...alertDoc,
-          isUsed: true,
-          status: "claimed",
-          usedBy: userId,
-          usedByEmail: userEmail || "",
-          claimedBy: userId,
-          claimedAt: nowIso
-        });
+        const depId = `dep_utr_${cleanUtr}_${Date.now()}`;
+        const newDepositSummary = {
+          id: depId,
+          amount: creditAmount,
+          utr: cleanUtr,
+          status: "approved",
+          method: "Instant UPI QR",
+          gateway: alertDoc.senderBank || "UPI Verification",
+          createdAt: nowIso
+        };
+
+        const existingDeposits = Array.isArray(uDoc?.latestDeposits) ? uDoc.latestDeposits : [];
+        const updatedLatestDeposits = [
+          newDepositSummary,
+          ...existingDeposits.filter((d: any) => d && d.utr !== cleanUtr)
+        ].slice(0, 10);
+
+        await Promise.all([
+          setRestDoc("users", userId, { 
+            ...uDoc, 
+            balance: newBalance, 
+            latestDeposits: updatedLatestDeposits, 
+            updatedAt: nowIso 
+          }),
+          setRestDoc("deposits", depId, {
+            ...newDepositSummary,
+            userId,
+            userEmail: userEmail || "",
+            type: "deposit"
+          }),
+          setRestDoc("bank_alerts", cleanUtr, {
+            ...alertDoc,
+            isUsed: true,
+            status: "claimed",
+            usedBy: userId,
+            usedByEmail: userEmail || "",
+            claimedBy: userId,
+            claimedAt: nowIso
+          })
+        ]);
 
         return res.status(200).json({
           success: true,
@@ -986,14 +988,12 @@ export default async function handler(req: any, res: any) {
 
       const depositMap = new Map<string, any>();
 
-      // Check User Profile document latestDeposits first (0ms, 0 extra read if cached)
+      // Check User Profile document latestDeposits first (1 read instead of 100 reads!)
       if (targetUid) {
         try {
           const uDoc = await getRestDoc("users", targetUid);
-          if (uDoc && Array.isArray(uDoc.latestDeposits)) {
-            for (const d of uDoc.latestDeposits) {
-              if (d && d.id) depositMap.set(d.id, d);
-            }
+          if (uDoc && Array.isArray(uDoc.latestDeposits) && uDoc.latestDeposits.length > 0) {
+            return res.status(200).json({ success: true, deposits: uDoc.latestDeposits.slice(0, 10) });
           }
         } catch (uErr) {}
       }

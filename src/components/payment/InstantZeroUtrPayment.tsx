@@ -52,9 +52,48 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedRef, setCopiedRef] = useState(false);
   const [checkingNow, setCheckingNow] = useState(false);
+  const [manualUtr, setManualUtr] = useState("");
+  const [submittingUtr, setSubmittingUtr] = useState(false);
+  const [showManualUtrBox, setShowManualUtrBox] = useState(false);
 
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleVerifyManualUtr = async () => {
+    const clean = manualUtr.replace(/\D/g, "").trim();
+    if (clean.length !== 12) {
+      toast.error("Please enter a valid 12-digit UTR number from your payment receipt.");
+      return;
+    }
+    setSubmittingUtr(true);
+    try {
+      const res = await axios.post("/api/verify-utr", {
+        userId,
+        utr: clean,
+        amount: intent?.amount || amount,
+        userEmail
+      });
+      if (res.data?.success) {
+        setIsSuccess(true);
+        setCompletedData({
+          amount: res.data.amount || intent?.amount || amount,
+          utr: clean,
+          newBalance: res.data.newBalance
+        });
+        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+        if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+        toast.success(`🎉 Payment Verified! ₹${res.data.amount || intent?.amount || amount} added to your wallet!`);
+        onSuccess(res.data.amount || intent?.amount || amount, res.data.newBalance);
+      } else {
+        toast.error(res.data?.error || "UTR not verified yet. Please check the 12-digit number.");
+      }
+    } catch (err: any) {
+      const msg = err.response?.data?.error || err.message || "UTR verification failed";
+      toast.error(msg);
+    } finally {
+      setSubmittingUtr(false);
+    }
+  };
 
   // 1. Create Payment Intent on mount
   useEffect(() => {
@@ -145,11 +184,14 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
     }
   };
 
-  // 3. 3-Second Polling Loop to check verification status without asking UTR
+  // 3. Gentle Polling Loop to check verification status without asking UTR
   useEffect(() => {
     if (!intent || isSuccess) return;
 
-    pollIntervalRef.current = setInterval(() => verifyStatus(false), 3000);
+    pollIntervalRef.current = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      verifyStatus(false);
+    }, 5000);
 
     return () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
@@ -365,7 +407,44 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
         </div>
       </div>
 
-      {/* Clean compact bottom - background verification happens automatically */}
+      {/* Manual UTR verification option if bank SMS didn't include 12-digit Order Ref */}
+      <div className="pt-1">
+        {!showManualUtrBox ? (
+          <button
+            type="button"
+            onClick={() => setShowManualUtrBox(true)}
+            className="w-full text-center text-xs text-primary hover:underline font-semibold py-1 transition-all"
+          >
+            Paid via UPI? Click here to enter 12-digit UTR if not verified automatically
+          </button>
+        ) : (
+          <div className="p-3.5 bg-blue-50/70 border border-blue-200 rounded-2xl space-y-2 animate-in fade-in duration-200">
+            <p className="text-xs font-bold text-blue-950">Enter 12-Digit UTR from your UPI App Receipt:</p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                maxLength={12}
+                placeholder="e.g. 159290109800"
+                value={manualUtr}
+                onChange={(e) => setManualUtr(e.target.value.replace(/\D/g, "").slice(0, 12))}
+                className="flex-1 px-3 py-2 text-xs font-mono font-bold bg-white border border-blue-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleVerifyManualUtr}
+                disabled={submittingUtr || manualUtr.length !== 12}
+                className="rounded-xl bg-primary text-white font-bold text-xs px-4"
+              >
+                {submittingUtr ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : "Verify"}
+              </Button>
+            </div>
+            <p className="text-[10px] text-gray-500">
+              Found on GPay, PhonePe, Paytm receipt as "UPI Ref No" or "UTR No" (12 digits).
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
