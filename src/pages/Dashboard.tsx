@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { motion } from "motion/react";
-import { Play, CheckCircle, Clock, ChevronRight, History, ExternalLink, Youtube, RefreshCw, AlertCircle, Trash2 } from "lucide-react";
+import { Play, CheckCircle, Clock, ChevronRight, History, ExternalLink, Youtube, RefreshCw, AlertCircle, Trash2, Wallet, ArrowDownLeft, Copy, Check } from "lucide-react";
 import CategoryIcon from "@/components/CategoryIcon";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,12 +11,17 @@ import { Link } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import axios from "axios";
+import { toast } from "sonner";
 
 export default function Dashboard() {
   const { user, loading: authLoading } = useAuth();
+  const [activeTab, setActiveTab] = useState<"orders" | "deposits">("orders");
   const [orders, setOrders] = useState<any[]>([]);
+  const [deposits, setDeposits] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [depositsLoading, setDepositsLoading] = useState(false);
   const [checkingStatus, setCheckingStatus] = useState(false);
+  const [copiedUtr, setCopiedUtr] = useState<string | null>(null);
   const statusIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastCheckedRef = useRef<number>(0);
   const [renderLimit] = useState(10);
@@ -174,11 +179,60 @@ export default function Dashboard() {
         }
       }
     };
+
+    const fetchDeposits = async () => {
+      if (!user) return;
+      try {
+        const depKey = `deposits_${user.uid}`;
+        const cached = localStorage.getItem(depKey) || sessionStorage.getItem(depKey);
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed)) setDeposits(parsed);
+          } catch (e) {}
+        }
+
+        const fresh = await dbClient.getUserDeposits(user.uid, user.email || undefined);
+        if (Array.isArray(fresh) && isMounted) {
+          setDeposits(fresh);
+          try {
+            const jsonStr = JSON.stringify(fresh);
+            localStorage.setItem(depKey, jsonStr);
+            sessionStorage.setItem(depKey, jsonStr);
+          } catch (e) {}
+        }
+      } catch (depErr) {
+        console.warn("[DASHBOARD] Could not load user deposits:", depErr);
+      }
+    };
     
     fetchOrders();
+    fetchDeposits();
     
     return () => { isMounted = false; };
   }, [user, renderLimit, refreshTrigger]);
+
+  const refreshDeposits = async () => {
+    if (!user || depositsLoading) return;
+    setDepositsLoading(true);
+    try {
+      const fresh = await dbClient.getUserDeposits(user.uid, user.email || undefined);
+      if (Array.isArray(fresh)) {
+        setDeposits(fresh);
+        const depKey = `deposits_${user.uid}`;
+        try {
+          const jsonStr = JSON.stringify(fresh);
+          localStorage.setItem(depKey, jsonStr);
+          sessionStorage.setItem(depKey, jsonStr);
+        } catch (e) {}
+      }
+      toast.success("Deposit history updated!");
+    } catch (e) {
+      toast.error("Failed to refresh deposits");
+    } finally {
+      setDepositsLoading(false);
+    }
+  };
 
   const checkOrdersStatus = async (force = false) => {
     if (checkingStatus || orders.length === 0) return;
@@ -335,182 +389,483 @@ export default function Dashboard() {
       case 'in progress':
       case 'approved':
       case 'completed':
-        return <Badge className="bg-green-100 text-green-700 border-none">Completed</Badge>;
+        return <Badge className="bg-green-100 text-green-700 border-none font-bold text-[10px]">Completed</Badge>;
       case 'partial':
-        return <Badge className="bg-yellow-100 text-yellow-700 border-none">Partial</Badge>;
+        return <Badge className="bg-yellow-100 text-yellow-700 border-none font-bold text-[10px]">Partial</Badge>;
       case 'canceled':
-        return <Badge className="bg-red-100 text-red-700 border-none">Canceled</Badge>;
+        return <Badge className="bg-red-100 text-red-700 border-none font-bold text-[10px]">Canceled</Badge>;
       case 'failed':
-        return <Badge className="bg-red-600 text-white border-none">Failed</Badge>;
+        return <Badge className="bg-red-600 text-white border-none font-bold text-[10px]">Failed</Badge>;
       case 'refunded':
-        return <Badge className="bg-gray-100 text-gray-700 border-none">Refunded</Badge>;
+        return <Badge className="bg-gray-100 text-gray-700 border-none font-bold text-[10px]">Refunded</Badge>;
       default:
-        return <Badge className="bg-green-100 text-green-700 border-none">Completed</Badge>;
+        return <Badge className="bg-green-100 text-green-700 border-none font-bold text-[10px]">Completed</Badge>;
     }
   };
 
+  const getDepositStatusBadge = (status: string) => {
+    const s = String(status || '').toLowerCase();
+    if (s === 'approved' || s === 'completed' || s === 'success') {
+      return (
+        <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold text-[10px] flex items-center gap-1">
+          <CheckCircle className="w-3 h-3 text-emerald-600" />
+          Successful
+        </Badge>
+      );
+    }
+    if (s === 'pending') {
+      return (
+        <Badge className="bg-amber-50 text-amber-700 border border-amber-200 font-bold text-[10px] flex items-center gap-1">
+          <Clock className="w-3 h-3 text-amber-600" />
+          Verifying
+        </Badge>
+      );
+    }
+    return (
+      <Badge className="bg-red-50 text-red-700 border border-red-200 font-bold text-[10px] flex items-center gap-1">
+        <AlertCircle className="w-3 h-3 text-red-600" />
+        Failed
+      </Badge>
+    );
+  };
+
+  const formatDepositDate = (val: any): string => {
+    const ms = getTimestampMs(val);
+    if (!ms) return "Recently";
+    try {
+      return new Date(ms).toLocaleString("en-IN", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true
+      });
+    } catch {
+      return new Date(ms).toLocaleString();
+    }
+  };
+
+  const handleCopyUtr = (text: string) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setCopiedUtr(text);
+    toast.success("12-Digit code copied to clipboard!");
+    setTimeout(() => setCopiedUtr(null), 2500);
+  };
+
+  const successfulDeposits = deposits.filter(d => {
+    const s = String(d.status || '').toLowerCase();
+    return s === 'approved' || s === 'completed' || s === 'success';
+  });
+
+  const totalDepositedAmount = successfulDeposits.reduce((acc, d) => {
+    return acc + (Number(d.amount) || 0);
+  }, 0);
+
   return (
-    <div className="w-full max-w-xl mx-auto space-y-8">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">My Orders</h1>
-        <div className="flex items-center gap-4">
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            className="text-xs font-bold text-gray-500 hover:text-primary"
-            onClick={() => checkOrdersStatus(true)}
-            disabled={checkingStatus}
-          >
-            <RefreshCw className={cn("w-3 h-3 mr-2", checkingStatus && "animate-spin")} />
-            {checkingStatus ? "Updating..." : "Refresh Status"}
-          </Button>
-          <div className="text-sm text-gray-500">
-            Last {orders.length} Orders
-          </div>
+    <div className="w-full max-w-xl mx-auto space-y-6">
+      {/* Header with Title and Quick Switch Button */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            {activeTab === "orders" ? "My Service Orders" : "My Deposit History"}
+          </h1>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {activeTab === "orders" 
+              ? `Track your placed social media service orders (${orders.length})` 
+              : `Review all your wallet add money deposits & UPI payments (${deposits.length})`}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {activeTab === "orders" ? (
+            <>
+              {/* Cute Deposit History button in Orders section */}
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="text-xs font-bold bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 hover:text-emerald-800 rounded-xl px-3 py-1.5 shadow-sm transition-all flex items-center gap-1.5"
+                onClick={() => setActiveTab("deposits")}
+              >
+                <Wallet className="w-3.5 h-3.5 text-emerald-600" />
+                <span>💰 Deposit History</span>
+                {deposits.length > 0 && (
+                  <span className="bg-emerald-600 text-white text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ml-0.5">
+                    {deposits.length}
+                  </span>
+                )}
+              </Button>
+
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="text-xs font-bold text-gray-500 hover:text-primary rounded-xl"
+                onClick={() => checkOrdersStatus(true)}
+                disabled={checkingStatus}
+              >
+                <RefreshCw className={cn("w-3 h-3 mr-1.5", checkingStatus && "animate-spin")} />
+                {checkingStatus ? "Checking..." : "Refresh"}
+              </Button>
+            </>
+          ) : (
+            <>
+              {/* Button to Switch Back to Service Orders */}
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="text-xs font-bold bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 hover:text-blue-800 rounded-xl px-3 py-1.5 shadow-sm transition-all flex items-center gap-1.5"
+                onClick={() => setActiveTab("orders")}
+              >
+                <Play className="w-3.5 h-3.5 text-blue-600" />
+                <span>📦 Service Orders</span>
+                {orders.length > 0 && (
+                  <span className="bg-blue-600 text-white text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ml-0.5">
+                    {orders.length}
+                  </span>
+                )}
+              </Button>
+
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="text-xs font-bold text-gray-500 hover:text-primary rounded-xl"
+                onClick={refreshDeposits}
+                disabled={depositsLoading}
+              >
+                <RefreshCw className={cn("w-3 h-3 mr-1.5", depositsLoading && "animate-spin")} />
+                {depositsLoading ? "Updating..." : "Refresh"}
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
-      <div className="space-y-4">
-        {loading ? (
-          [1, 2, 3, 4, 5].map((i) => (
-            <Card key={i} className="overflow-hidden border-none shadow-sm">
-              <CardContent className="p-4 space-y-4">
-                <Skeleton className="h-6 w-3/4" />
-                <Skeleton className="h-4 w-1/2" />
-                <Skeleton className="h-2 w-full" />
-              </CardContent>
-            </Card>
-          ))
-        ) : orders.length > 0 ? (
-          orders.map((order) => (
-            <motion.div
-              key={order.id}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-            >
-              <Card className="overflow-hidden border-none shadow-sm bg-white">
-                <CardContent className="p-4 space-y-3">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-3 flex-1 min-w-0">
-                      <div className="w-10 h-10 bg-gray-50 rounded-xl flex items-center justify-center shrink-0">
-                        <CategoryIcon category={order.category} className="w-5 h-5" />
+      {/* Tabs Switcher for Orders vs Deposits */}
+      <div className="flex p-1 bg-gray-100/90 rounded-2xl border border-gray-200/60 shadow-inner">
+        <button
+          onClick={() => setActiveTab("orders")}
+          className={cn(
+            "flex-1 flex items-center justify-center gap-2 py-2.5 text-xs font-bold rounded-xl transition-all",
+            activeTab === "orders" 
+              ? "bg-white text-gray-900 shadow-sm" 
+              : "text-gray-500 hover:text-gray-900"
+          )}
+        >
+          <Play className="w-3.5 h-3.5 text-primary" />
+          <span>Service Orders</span>
+          <span className={cn(
+            "text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold",
+            activeTab === "orders" ? "bg-primary/10 text-primary" : "bg-gray-200 text-gray-600"
+          )}>
+            {orders.length}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab("deposits")}
+          className={cn(
+            "flex-1 flex items-center justify-center gap-2 py-2.5 text-xs font-bold rounded-xl transition-all",
+            activeTab === "deposits" 
+              ? "bg-white text-emerald-700 shadow-sm" 
+              : "text-gray-500 hover:text-gray-900"
+          )}
+        >
+          <Wallet className="w-3.5 h-3.5 text-emerald-600" />
+          <span>Deposit History</span>
+          <span className={cn(
+            "text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold",
+            activeTab === "deposits" ? "bg-emerald-100 text-emerald-700" : "bg-gray-200 text-gray-600"
+          )}>
+            {deposits.length}
+          </span>
+        </button>
+      </div>
+
+      {/* MAIN CONTENT AREA */}
+      {activeTab === "orders" ? (
+        <div className="space-y-4">
+          {loading ? (
+            [1, 2, 3, 4, 5].map((i) => (
+              <Card key={i} className="overflow-hidden border-none shadow-sm">
+                <CardContent className="p-4 space-y-4">
+                  <Skeleton className="h-6 w-3/4" />
+                  <Skeleton className="h-4 w-1/2" />
+                  <Skeleton className="h-2 w-full" />
+                </CardContent>
+              </Card>
+            ))
+          ) : orders.length > 0 ? (
+            orders.map((order) => (
+              <motion.div
+                key={order.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+              >
+                <Card className="overflow-hidden border-none shadow-sm bg-white">
+                  <CardContent className="p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                        <div className="w-10 h-10 bg-gray-50 rounded-xl flex items-center justify-center shrink-0">
+                          <CategoryIcon category={order.category} className="w-5 h-5" />
+                        </div>
+                        <div className="min-w-0 py-1">
+                          <h3 className="font-bold text-sm line-clamp-2 leading-tight">{order.title}</h3>
+                          <p className="text-[10px] text-gray-400 font-medium">{order.category || 'Other'}</p>
+                        </div>
                       </div>
-                      <div className="min-w-0 py-1">
-                        <h3 className="font-bold text-sm line-clamp-2 leading-tight">{order.title}</h3>
-                        <p className="text-[10px] text-gray-400 font-medium">{order.category || 'Other'}</p>
+                      
+                      <div className="flex items-center gap-2 shrink-0">
+                        {getStatusBadge(order.status)}
+                        
+                        {confirmDeleteId === order.id ? (
+                          <div className="flex items-center gap-1 bg-red-50 p-1 rounded-lg border border-red-100 animate-in fade-in">
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              className="h-6 text-[9px] font-bold text-red-600 hover:bg-red-200/50 px-1.5"
+                              onClick={() => handleDeleteOrder(order.id)}
+                              disabled={deletingOrderId === order.id}
+                            >
+                              {deletingOrderId === order.id ? "..." : "Yes"}
+                            </Button>
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              className="h-6 text-[9px] font-bold text-gray-500 hover:bg-gray-100 px-1.5"
+                              onClick={() => setConfirmDeleteId(null)}
+                              disabled={deletingOrderId === order.id}
+                            >
+                              No
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="w-8 h-8 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg shrink-0"
+                            title="Delete from history"
+                            onClick={() => setConfirmDeleteId(order.id)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        )}
                       </div>
                     </div>
                     
-                    <div className="flex items-center gap-2 shrink-0">
-                      {getStatusBadge(order.status)}
-                      
-                      {confirmDeleteId === order.id ? (
-                        <div className="flex items-center gap-1 bg-red-50 p-1 rounded-lg border border-red-100 animate-in fade-in">
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            className="h-6 text-[9px] font-bold text-red-600 hover:bg-red-200/50 px-1.5"
-                            onClick={() => handleDeleteOrder(order.id)}
-                            disabled={deletingOrderId === order.id}
-                          >
-                            {deletingOrderId === order.id ? "..." : "Yes"}
-                          </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            className="h-6 text-[9px] font-bold text-gray-500 hover:bg-gray-100 px-1.5"
-                            onClick={() => setConfirmDeleteId(null)}
-                            disabled={deletingOrderId === order.id}
-                          >
-                            No
-                          </Button>
-                        </div>
-                      ) : (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="w-8 h-8 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg shrink-0"
-                          title="Delete from history"
-                          onClick={() => setConfirmDeleteId(order.id)}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                  
-                  <div className="grid grid-cols-3 gap-2 text-[10px]">
-                    <div className="space-y-1">
-                      <p className="text-gray-400 uppercase font-bold">Order ID</p>
-                      <p className="font-mono font-bold text-gray-900 bg-gray-100/80 px-1.5 py-0.5 rounded border border-gray-150 inline-block">
-                        {order.providerOrderId && order.providerOrderId !== 'PENDING' ? `#${order.providerOrderId}` : (order.provider_order_id && order.provider_order_id !== 'PENDING' ? `#${order.provider_order_id}` : (order.status?.toLowerCase() === 'failed' ? 'N/A' : 'Processing'))}
-                      </p>
-                    </div>
-                    <div className="space-y-1 text-center">
-                      <p className="text-gray-400 uppercase font-bold">Order Details</p>
-                      <p className="font-medium">Qty: {order.quantity} | ₹{order.totalPrice || order.total_price}</p>
-                    </div>
-                    <div className="space-y-1 text-right">
-                      <p className="text-gray-400 uppercase font-bold">Date & Time</p>
-                      <p className="font-medium">{new Date(order.createdAt || order.created_at).toLocaleString()}</p>
-                    </div>
-                  </div>
-
-                  <div className="p-2 bg-gray-50 rounded-lg border border-gray-100">
-                    <p className="text-[9px] font-bold text-gray-400 uppercase mb-1">Target Link</p>
-                    {(() => {
-                      const linkVal = String(order.targetLink || order.target_link || "").trim();
-                      const isUrl = linkVal.startsWith("http://") || linkVal.startsWith("https://");
-                      if (isUrl) {
-                        return (
-                          <a href={linkVal} target="_blank" rel="noreferrer" className="text-[10px] text-primary hover:underline break-all flex items-center gap-1">
-                            <ExternalLink className="w-3 h-3 shrink-0" />
-                            {linkVal}
-                          </a>
-                        );
-                      }
-                      return (
-                        <p className="text-[10px] text-gray-800 font-medium break-all select-all">
-                          {linkVal}
+                    <div className="grid grid-cols-3 gap-2 text-[10px]">
+                      <div className="space-y-1">
+                        <p className="text-gray-400 uppercase font-bold">Order ID</p>
+                        <p className="font-mono font-bold text-gray-900 bg-gray-100/80 px-1.5 py-0.5 rounded border border-gray-150 inline-block">
+                          {order.providerOrderId && order.providerOrderId !== 'PENDING' ? `#${order.providerOrderId}` : (order.provider_order_id && order.provider_order_id !== 'PENDING' ? `#${order.provider_order_id}` : (order.status?.toLowerCase() === 'failed' ? 'N/A' : 'Processing'))}
                         </p>
-                      );
-                    })()}
-                  </div>
-
-                  {order.status?.toLowerCase() === 'failed' && (
-                    <div className="p-2 bg-red-50 text-red-600 rounded-lg text-[10px] font-bold border border-red-100 flex flex-col gap-1 animate-in fade-in">
-                      <div className="flex items-center gap-1.5">
-                        <AlertCircle className="w-3 h-3" />
-                        ORDER REJECTED
                       </div>
-                      <p className="text-[9px] opacity-80 pl-4">{formatErrorMessage(order.error) || "Check target link or contact support."}</p>
+                      <div className="space-y-1 text-center">
+                        <p className="text-gray-400 uppercase font-bold">Order Details</p>
+                        <p className="font-medium">Qty: {order.quantity} | ₹{order.totalPrice || order.total_price}</p>
+                      </div>
+                      <div className="space-y-1 text-right">
+                        <p className="text-gray-400 uppercase font-bold">Date & Time</p>
+                        <p className="font-medium">{new Date(order.createdAt || order.created_at).toLocaleString()}</p>
+                      </div>
                     </div>
-                  )}
 
-                  {order.status === 'pending' && !order.provider_order_id && (
-                    <p className="text-[10px] text-orange-600 bg-orange-50 p-2 rounded-lg font-medium">
-                      Order is pending. We are trying to connect to the provider. If it stays pending, please contact support.
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            </motion.div>
-          ))
-        ) : (
-          <div className="text-center py-20 bg-white rounded-3xl border-2 border-dashed border-gray-200">
-            <History className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-            <h3 className="font-bold text-gray-900">No orders yet</h3>
-            <p className="text-gray-500 text-sm max-w-xs mx-auto mt-2">
-              Start growing your social media by placing your first order.
-            </p>
-            <Link to="/courses">
-              <Button className="mt-6 rounded-full px-8">Browse Services</Button>
+                    <div className="p-2 bg-gray-50 rounded-lg border border-gray-100">
+                      <p className="text-[9px] font-bold text-gray-400 uppercase mb-1">Target Link</p>
+                      {(() => {
+                        const linkVal = String(order.targetLink || order.target_link || "").trim();
+                        const isUrl = linkVal.startsWith("http://") || linkVal.startsWith("https://");
+                        if (isUrl) {
+                          return (
+                            <a href={linkVal} target="_blank" rel="noreferrer" className="text-[10px] text-primary hover:underline break-all flex items-center gap-1">
+                              <ExternalLink className="w-3 h-3 shrink-0" />
+                              {linkVal}
+                            </a>
+                          );
+                        }
+                        return (
+                          <p className="text-[10px] text-gray-800 font-medium break-all select-all">
+                            {linkVal}
+                          </p>
+                        );
+                      })()}
+                    </div>
+
+                    {order.status?.toLowerCase() === 'failed' && (
+                      <div className="p-2 bg-red-50 text-red-600 rounded-lg text-[10px] font-bold border border-red-100 flex flex-col gap-1 animate-in fade-in">
+                        <div className="flex items-center gap-1.5">
+                          <AlertCircle className="w-3 h-3" />
+                          ORDER REJECTED
+                        </div>
+                        <p className="text-[9px] opacity-80 pl-4">{formatErrorMessage(order.error) || "Check target link or contact support."}</p>
+                      </div>
+                    )}
+
+                    {order.status === 'pending' && !order.provider_order_id && (
+                      <p className="text-[10px] text-orange-600 bg-orange-50 p-2 rounded-lg font-medium">
+                        Order is pending. We are trying to connect to the provider. If it stays pending, please contact support.
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              </motion.div>
+            ))
+          ) : (
+            <div className="text-center py-20 bg-white rounded-3xl border-2 border-dashed border-gray-200">
+              <History className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+              <h3 className="font-bold text-gray-900">No orders yet</h3>
+              <p className="text-gray-500 text-sm max-w-xs mx-auto mt-2">
+                Start growing your social media by placing your first order.
+              </p>
+              <Link to="/courses">
+                <Button className="mt-6 rounded-full px-8">Browse Services</Button>
+              </Link>
+            </div>
+          )}
+        </div>
+      ) : (
+        /* DEPOSIT HISTORY TAB */
+        <div className="space-y-4">
+          {/* Summary Card */}
+          <div className="bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-2xl p-4 shadow-sm flex items-center justify-between">
+            <div className="space-y-1">
+              <p className="text-emerald-100 text-xs font-medium">Total Successfully Deposited</p>
+              <h2 className="text-2xl font-black">₹{totalDepositedAmount.toFixed(2)}</h2>
+              <p className="text-[11px] text-emerald-100">
+                {successfulDeposits.length} Successful {successfulDeposits.length === 1 ? 'Deposit' : 'Deposits'}
+              </p>
+            </div>
+            <Link to="/profile">
+              <Button size="sm" className="bg-white text-emerald-800 hover:bg-emerald-50 rounded-xl font-bold text-xs shadow-sm">
+                + Add More Funds
+              </Button>
             </Link>
           </div>
-        )}
 
-        {/* Load more removed to save quota as per request */}
-      </div>
+          {depositsLoading ? (
+            [1, 2, 3].map((i) => (
+              <Card key={i} className="overflow-hidden border-none shadow-sm">
+                <CardContent className="p-4 space-y-3">
+                  <Skeleton className="h-6 w-1/3" />
+                  <Skeleton className="h-4 w-1/2" />
+                  <Skeleton className="h-2 w-full" />
+                </CardContent>
+              </Card>
+            ))
+          ) : deposits.length > 0 ? (
+            deposits.map((dep, idx) => {
+              const code = dep.utr || dep.orderRef || dep.order_ref || (dep.id?.startsWith('intent_') ? dep.id.replace('intent_', '') : '') || '';
+              const isApproved = String(dep.status || '').toLowerCase() === 'approved' || String(dep.status || '').toLowerCase() === 'completed' || String(dep.status || '').toLowerCase() === 'success';
+
+              return (
+                <motion.div
+                  key={dep.id || idx}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                >
+                  <Card className="overflow-hidden border-none shadow-sm bg-white hover:shadow-md transition-shadow">
+                    <CardContent className="p-4 space-y-3">
+                      {/* Top Row: Amount & Status Badge */}
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className={cn(
+                            "w-10 h-10 rounded-xl flex items-center justify-center shrink-0",
+                            isApproved ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
+                          )}>
+                            <ArrowDownLeft className="w-5 h-5 stroke-[2.5]" />
+                          </div>
+                          <div>
+                            <div className="flex items-baseline gap-1">
+                              <span className="text-xl font-black text-emerald-600">
+                                + ₹{Number(dep.amount || 0).toFixed(2)}
+                              </span>
+                            </div>
+                            <p className="text-[11px] font-semibold text-gray-500">
+                              {dep.method || dep.gateway || "Instant UPI QR (Zero-UTR)"}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div>
+                          {getDepositStatusBadge(dep.status)}
+                        </div>
+                      </div>
+
+                      {/* Details Grid */}
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-2 border-t border-gray-100 text-[11px]">
+                        {/* 12-Digit Code / UTR */}
+                        <div className="col-span-2 sm:col-span-1 space-y-0.5">
+                          <p className="text-[10px] uppercase font-bold text-gray-400">12-Digit Ref / UTR</p>
+                          {code ? (
+                            <button
+                              onClick={() => handleCopyUtr(code)}
+                              className="group flex items-center gap-1.5 font-mono font-bold text-gray-900 bg-gray-50 hover:bg-gray-100 px-2 py-1 rounded-lg border border-gray-200 transition-colors text-xs"
+                              title="Click to copy code"
+                            >
+                              <span>{code}</span>
+                              {copiedUtr === code ? (
+                                <Check className="w-3 h-3 text-emerald-600 shrink-0" />
+                              ) : (
+                                <Copy className="w-3 h-3 text-gray-400 group-hover:text-gray-700 shrink-0" />
+                              )}
+                            </button>
+                          ) : (
+                            <span className="font-mono text-gray-400 text-xs">Direct Credit</span>
+                          )}
+                        </div>
+
+                        {/* Date & Time */}
+                        <div className="space-y-0.5">
+                          <p className="text-[10px] uppercase font-bold text-gray-400">Date & Time</p>
+                          <p className="font-medium text-gray-700">
+                            {formatDepositDate(dep.createdAt || dep.timestamp || dep.completedAt)}
+                          </p>
+                        </div>
+
+                        {/* Payment Method / Bank */}
+                        <div className="space-y-0.5 text-right sm:text-left">
+                          <p className="text-[10px] uppercase font-bold text-gray-400">Gateway</p>
+                          <p className="font-medium text-gray-700 truncate">
+                            {dep.gateway || dep.senderBank || "UPI Auto-Verify"}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Note for Instant Zero-UTR Guarantee */}
+                      <div className="bg-emerald-50/50 rounded-lg px-2.5 py-1.5 border border-emerald-150/60 flex items-center justify-between text-[10px] text-emerald-800">
+                        <span className="font-medium flex items-center gap-1">
+                          <CheckCircle className="w-3 h-3 text-emerald-600" />
+                          Wallet Balance Credited
+                        </span>
+                        <span className="text-[9px] text-emerald-600 font-semibold font-mono">
+                          ID: {dep.id?.slice(0, 16)}...
+                        </span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              );
+            })
+          ) : (
+            <div className="text-center py-16 bg-white rounded-3xl border-2 border-dashed border-gray-200 p-6 space-y-4">
+              <div className="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto">
+                <Wallet className="w-7 h-7" />
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-900 text-base">No Deposits Found Yet</h3>
+                <p className="text-gray-500 text-xs max-w-sm mx-auto mt-1 leading-relaxed">
+                  Whenever you scan the QR code to add balance to your wallet, all successful deposits and 12-digit transaction codes will be safely recorded here.
+                </p>
+              </div>
+              <Link to="/profile">
+                <Button className="rounded-full px-6 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs">
+                  Add Balance to Wallet Now
+                </Button>
+              </Link>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

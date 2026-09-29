@@ -934,6 +934,67 @@ export default async function handler(req: any, res: any) {
       }
     }
 
+    // 14. User Deposits History: /api/user/deposits
+    if (pathname === "/api/user/deposits") {
+      const targetUid = String(req.query?.userId || "").trim();
+      const targetEmail = String(req.query?.email || "").trim().toLowerCase();
+
+      if (!targetUid && !targetEmail) {
+        return res.status(400).json({ success: false, error: "Missing userId or email" });
+      }
+
+      const depositMap = new Map<string, any>();
+
+      try {
+        const [depList, intentList] = await Promise.all([
+          listRestDocs("deposits", 100),
+          listRestDocs("payment_intents", 100)
+        ]);
+
+        for (const item of depList) {
+          if (!item) continue;
+          const uUid = String(item.userId || item.user_id || "").trim();
+          const uEmail = String(item.userEmail || item.user_email || "").trim().toLowerCase();
+          if ((targetUid && uUid === targetUid) || (targetEmail && uEmail && uEmail === targetEmail)) {
+            depositMap.set(item.id, item);
+          }
+        }
+
+        for (const item of intentList) {
+          if (!item || item.status !== "completed") continue;
+          const uUid = String(item.userId || "").trim();
+          const uEmail = String(item.userEmail || "").trim().toLowerCase();
+          if ((targetUid && uUid === targetUid) || (targetEmail && uEmail && uEmail === targetEmail)) {
+            const depId = `intent_${item.intentId}`;
+            if (!depositMap.has(depId)) {
+              depositMap.set(depId, {
+                id: depId,
+                userId: item.userId,
+                userEmail: item.userEmail,
+                amount: item.amount,
+                status: "approved",
+                utr: item.utr || item.orderRef,
+                orderRef: item.orderRef,
+                method: "Instant UPI QR",
+                gateway: item.senderBank || "Instant QR",
+                createdAt: item.completedAt ? new Date(item.completedAt).toISOString() : (item.createdAt ? new Date(item.createdAt).toISOString() : new Date().toISOString())
+              });
+            }
+          }
+        }
+      } catch (e: any) {
+        console.warn("[USER-DEPOSITS-ERR]", e.message);
+      }
+
+      const deposits = Array.from(depositMap.values()).sort((a, b) => {
+        const timeA = new Date(a.createdAt || a.timestamp || 0).getTime();
+        const timeB = new Date(b.createdAt || b.timestamp || 0).getTime();
+        return timeB - timeA;
+      });
+
+      return res.status(200).json({ success: true, deposits });
+    }
+
     // Default 404
     return res.status(404).json({ success: false, error: `Route ${pathname} not found on Vercel Gateway` });
   } catch (err: any) {

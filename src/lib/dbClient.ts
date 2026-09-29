@@ -440,6 +440,28 @@ export const dbClient = {
     });
   },
 
+  async getUserDeposits(userId: string, userEmail?: string): Promise<any[]> {
+    try {
+      const emailParam = userEmail ? `&email=${encodeURIComponent(userEmail)}` : '';
+      const res = await axios.get(`/api/user/deposits?userId=${encodeURIComponent(userId)}${emailParam}`, { timeout: 8000 });
+      if (res.data?.success && Array.isArray(res.data.deposits)) {
+        return res.data.deposits;
+      }
+    } catch (e) {}
+
+    try {
+      const q = query(
+        collection(db, 'deposits'),
+        where('userId', '==', userId),
+        limit(50)
+      );
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch (fallbackErr) {
+      return [];
+    }
+  },
+
   observeOrder(id: string, callback: (data: any) => void): () => void {
     const docRef = doc(db, 'orders', id);
     return onSnapshot(docRef, (snap) => {

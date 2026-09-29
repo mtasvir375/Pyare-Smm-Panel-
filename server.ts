@@ -2637,6 +2637,94 @@ export async function startServer() {
     }
   });
 
+  // User Deposit History Endpoint
+  app.get("/api/user/deposits", async (req, res) => {
+    try {
+      const targetUid = String(req.query.userId || (req as any).user?.uid || "").trim();
+      const targetEmail = String(req.query.email || (req as any).user?.email || "").trim().toLowerCase();
+
+      if (!targetUid && !targetEmail) {
+        return res.status(400).json({ success: false, error: "User ID or email is required" });
+      }
+
+      const depositMap = new Map<string, any>();
+
+      // 1. From server memory cache
+      for (const [key, val] of serverCache.deposits.entries()) {
+        const item = val?.data || val;
+        if (!item) continue;
+        const uUid = String(item.userId || item.user_id || "").trim();
+        const uEmail = String(item.userEmail || item.user_email || "").trim().toLowerCase();
+        if ((targetUid && uUid === targetUid) || (targetEmail && uEmail && uEmail === targetEmail)) {
+          depositMap.set(item.id || key, { ...item, id: item.id || key });
+        }
+      }
+
+      // 2. From payment intents (completed)
+      for (const intent of getAllPaymentIntents()) {
+        if (!intent || intent.status !== "completed") continue;
+        const uUid = String(intent.userId || "").trim();
+        const uEmail = String(intent.userEmail || "").trim().toLowerCase();
+        if ((targetUid && uUid === targetUid) || (targetEmail && uEmail && uEmail === targetEmail)) {
+          const depId = `intent_${intent.intentId}`;
+          if (!depositMap.has(depId)) {
+            depositMap.set(depId, {
+              id: depId,
+              userId: intent.userId,
+              userEmail: intent.userEmail,
+              amount: intent.amount,
+              status: "approved",
+              utr: intent.utr || intent.orderRef,
+              orderRef: intent.orderRef,
+              method: "Instant UPI QR",
+              gateway: intent.senderBank || "Instant QR",
+              createdAt: new Date(intent.completedAt || intent.createdAt).toISOString()
+            });
+          }
+        }
+      }
+
+      // 3. From Firestore
+      try {
+        if (!useRestFallback) {
+          if (targetUid) {
+            const snap = await fdb.collection("deposits").where("userId", "==", targetUid).limit(50).get();
+            snap.forEach(doc => {
+              depositMap.set(doc.id, { id: doc.id, ...doc.data() });
+            });
+          }
+        } else {
+          try {
+            const targetProject = getTargetProject();
+            const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/deposits?key=${apiKey}&pageSize=50`;
+            const resRest = await axios.get(url, { timeout: 10000 });
+            if (resRest.data && resRest.data.documents) {
+              resRest.data.documents.forEach((doc: any) => {
+                const id = doc.name.split("/").pop();
+                const item = { id, ...unwrapRestFields(doc.fields || {}) };
+                const uUid = String(item.userId || item.user_id || "").trim();
+                const uEmail = String(item.userEmail || item.user_email || "").trim().toLowerCase();
+                if ((targetUid && uUid === targetUid) || (targetEmail && uEmail && uEmail === targetEmail)) {
+                  depositMap.set(id, item);
+                }
+              });
+            }
+          } catch (rErr) {}
+        }
+      } catch (e) {}
+
+      const deposits = Array.from(depositMap.values()).sort((a, b) => {
+        const timeA = new Date(a.createdAt || a.timestamp || 0).getTime();
+        const timeB = new Date(b.createdAt || b.timestamp || 0).getTime();
+        return timeB - timeA;
+      });
+
+      return res.status(200).json({ success: true, deposits });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // ==========================================
   // TELEGRAM BOT & LOCAL BANK ALERTS ENDPOINTS
   // (0 Firestore Reads - Local Disk Persistence)
@@ -3096,7 +3184,7 @@ export async function startServer() {
         // Fallback: try single doc read in case server restarted
         try {
           const doc = await getDocSafe("payment_intents", intentId);
-          if (doc?.exists()) {
+          if (doc && (typeof (doc as any).exists === "function" ? (doc as any).exists() : Boolean((doc as any).exists))) {
             intent = doc.data() as any;
           }
         } catch {}
