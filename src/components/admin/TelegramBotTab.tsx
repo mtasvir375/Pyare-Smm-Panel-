@@ -368,8 +368,13 @@ export const TelegramBotTab: React.FC = () => {
     setIsTestingTgProxy(true);
     try {
       const mockUtr = String(Math.floor(100000000000 + Math.random() * 900000000000));
-      const token = botToken.trim() || "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0";
-      const targetChatId = chatId.trim() || "8307658312";
+      const token = botToken.trim();
+      const targetChatId = chatId.trim() || config?.chatId || "";
+      if (!token) {
+        toast.error("Please enter your Telegram Bot Token in the field above first.");
+        setIsTestingTgProxy(false);
+        return;
+      }
       const res = await axios.post(`/bot${token}/sendMessage`, {
         chat_id: targetChatId,
         text: `From : AD-CENTBK-T()\nA/c XX0953 credited by Rs. 10.00 on 22092026 via UPI from Mr MD SAUD ALAM via Ref No. ${mockUtr}. -CBoI`
@@ -1276,7 +1281,7 @@ export const TelegramBotTab: React.FC = () => {
                       <div className="flex items-center gap-2">
                         <Input
                           readOnly
-                          value={typeof window !== "undefined" ? `${window.location.origin}/bot${botToken.trim() || "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0"}/sendMessage` : ""}
+                          value={typeof window !== "undefined" ? `${window.location.origin}/bot${botToken.trim() || "YOUR_BOT_TOKEN"}/sendMessage` : ""}
                           className="font-mono text-[11px] bg-white h-9 rounded-xl border-gray-200 text-gray-800"
                         />
                         <Button
@@ -1284,7 +1289,7 @@ export const TelegramBotTab: React.FC = () => {
                           variant="outline"
                           onClick={() => {
                             if (typeof window !== "undefined") {
-                              const fullUrl = `${window.location.origin}/bot${botToken.trim() || "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0"}/sendMessage`;
+                              const fullUrl = `${window.location.origin}/bot${botToken.trim() || "YOUR_BOT_TOKEN"}/sendMessage`;
                               navigator.clipboard.writeText(fullUrl);
                               setCopiedWebhook(true);
                               toast.success("Full Telegram Proxy URL copied!");

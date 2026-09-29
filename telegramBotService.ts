@@ -949,9 +949,44 @@ export async function processTelegramUpdate(update: any, token: string): Promise
     ? `${msg.from.first_name || ""} ${msg.from.last_name || ""}`.trim() || msg.from.username || "User"
     : (msg.chat?.title || "Channel/Group");
   const chatId = msg.chat?.id;
+  const incomingChatId = chatId ? String(chatId).trim() : "";
+  const authorizedChatId = (memoryConfig.chatId || "").trim();
 
-  if (chatId) {
-    saveTelegramConfig({ chatId: String(chatId) });
+  // If no chat ID is configured yet, register the first sender's chat ID (initial admin setup)
+  if (!authorizedChatId && incomingChatId) {
+    memoryConfig.chatId = incomingChatId;
+    saveTelegramConfig({ chatId: incomingChatId });
+    console.log(`[TELEGRAM-AUTH-INIT] Initialized authorized Admin Chat ID: ${incomingChatId}`);
+  }
+
+  // STRICT ANTI-HACKER SECURITY LOCK:
+  // If an authorized Chat ID is configured, REJECT any messages from unauthorized strangers/hackers!
+  const isAuthorizedChat = !authorizedChatId || (incomingChatId && (
+    incomingChatId === authorizedChatId ||
+    incomingChatId.replace(/^-100/, "-") === authorizedChatId.replace(/^-100/, "-")
+  ));
+
+  if (!isAuthorizedChat) {
+    console.warn(`[SECURITY-BLOCKED] Unauthorized sender "${senderName}" (Chat: ${incomingChatId}) blocked from sending messages to bot!`);
+    recordIncomingMessage({
+      sender: senderName,
+      chatId: incomingChatId,
+      text,
+      parsed: false,
+      reason: `Blocked: Unauthorized chat ID ${incomingChatId}`
+    });
+
+    if (incomingChatId) {
+      await sendTelegramReply(
+        token,
+        incomingChatId,
+        `⛔ <b>Access Restricted!</b>\n\n` +
+        `This is a private payment verification bot for Pyare SMM Panel.\n` +
+        `Your Chat ID: <code>${incomingChatId}</code>\n\n` +
+        `<i>Only the verified website owner/admin can forward payment SMS to this bot. Unauthorized submissions are blocked and logged.</i>`
+      );
+    }
+    return { success: false, reason: "Unauthorized sender chat ID" };
   }
 
   if (!text) {
