@@ -1105,7 +1105,29 @@ export async function startServer() {
     const orderRef = (intent.orderRef || "").trim();
     const intentId = (intent.intentId || "").trim();
 
-    // 0. Strict Multi-Level Duplicate Guard:
+    // 0. Firestore Persistent Duplicate Guard (Acts as ironclad distributed lock):
+    if (orderRef) {
+      try {
+        const claimDoc = await getDocSafe("claimed_payments", orderRef);
+        const claimData = claimDoc?.data ? claimDoc.data() : claimDoc;
+        if (claimData && claimData.credited) {
+          console.log(`[DUPLICATE-PREVENTED] Permanent Firestore check: Order ${orderRef} was already claimed in Firestore. Skipping.`);
+          return true;
+        }
+      } catch (err) {}
+    }
+    if (cleanUtr) {
+      try {
+        const claimDoc = await getDocSafe("claimed_payments", cleanUtr);
+        const claimData = claimDoc?.data ? claimDoc.data() : claimDoc;
+        if (claimData && claimData.credited) {
+          console.log(`[DUPLICATE-PREVENTED] Permanent Firestore check: UTR ${cleanUtr} was already claimed in Firestore. Skipping.`);
+          return true;
+        }
+      } catch (err) {}
+    }
+
+    // Strict Multi-Level Duplicate Guard (In-memory lock check):
     if ((intent as any).credited || (intent as any).walletCredited) {
       console.log(`[DUPLICATE-PREVENTED] Intent ${intentId} already credited in memory. Skipping.`);
       return true;
@@ -1165,6 +1187,16 @@ export async function startServer() {
       // Mark distributed cross-platform lock in Firestore claimed_payments collection
       if (orderRef) {
         setDocSafe("claimed_payments", orderRef, {
+          orderRef,
+          utr: cleanUtr,
+          userId: intent.userId,
+          amount: intent.amount,
+          credited: true,
+          claimedAt: new Date().toISOString()
+        }).catch(() => {});
+      }
+      if (cleanUtr && cleanUtr !== orderRef) {
+        setDocSafe("claimed_payments", cleanUtr, {
           orderRef,
           utr: cleanUtr,
           userId: intent.userId,

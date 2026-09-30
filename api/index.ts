@@ -783,6 +783,14 @@ export default async function handler(req: any, res: any) {
             match = null;
           }
 
+          if (match && intent.orderRef) {
+            const doubleDoc = await getRestDoc("claimed_payments", intent.orderRef).catch(() => null);
+            if (doubleDoc && doubleDoc.credited) {
+              console.log(`[RECONCILE-PREVENTED] Permanent check: Order ${intent.orderRef} already claimed in Firestore. Skipping match.`);
+              match = null;
+            }
+          }
+
           if (match && !match.isUsed && match.status !== "claimed" && intent.status !== "completed") {
             const matchUtr = match.utr || intent.orderRef;
             const creditAmt = Number(intent.amount || match.amount || 0);
@@ -962,6 +970,15 @@ export default async function handler(req: any, res: any) {
           return res.status(400).json({ success: false, error: "Please enter a valid 12-digit UPI / UTR Reference Number." });
         }
 
+        // Permanent distributed lock double-check
+        const doubleClaim = await getRestDoc("claimed_payments", cleanUtr).catch(() => null);
+        if (doubleClaim && doubleClaim.credited) {
+          return res.status(400).json({
+            success: false,
+            error: `UTR ${cleanUtr} has already been claimed and credited to an account.`
+          });
+        }
+
         let alertDoc = await getRestDoc("bank_alerts", cleanUtr);
         if (!alertDoc) {
           alertDoc = await getRestDoc("sms_forwarder_pool", cleanUtr);
@@ -1037,6 +1054,14 @@ export default async function handler(req: any, res: any) {
             usedBy: userId,
             usedByEmail: userEmail || "",
             claimedBy: userId,
+            claimedAt: nowIso
+          }),
+          setRestDoc("claimed_payments", cleanUtr, {
+            orderRef: alertDoc.orderRef || cleanUtr,
+            utr: cleanUtr,
+            userId,
+            amount: creditAmount,
+            credited: true,
             claimedAt: nowIso
           })
         ]);
