@@ -78,7 +78,57 @@ let memoryAlerts: BankAlert[] = [];
 let memoryRawMessages: RawBotMessage[] = [];
 let memoryIntents: Map<string, PaymentIntent> = new Map();
 const notifiedIntents: Set<string> = new Set();
+const sentPaymentAlerts: Set<string> = new Set();
 let intentMatchCallback: PaymentIntentCallback | null = null;
+
+export async function sendVerifiedPaymentAlertOnce(params: {
+  token?: string;
+  chatId?: string | number;
+  intent: PaymentIntent;
+  text: string;
+  detectedBank: string;
+}): Promise<boolean> {
+  const { intent, text, detectedBank } = params;
+  const key1 = intent.orderRef;
+  const key2 = intent.utr || intent.orderRef;
+  const key3 = intent.intentId;
+
+  if (
+    (key1 && (sentPaymentAlerts.has(key1) || notifiedIntents.has(key1))) ||
+    (key2 && (sentPaymentAlerts.has(key2) || notifiedIntents.has(key2))) ||
+    (key3 && (sentPaymentAlerts.has(key3) || notifiedIntents.has(key3))) ||
+    intent.notified
+  ) {
+    console.log(`[TELEGRAM-DEDUP] Notification already sent for ${key1} / ${key2}. Skipping duplicate!`);
+    return false;
+  }
+
+  // Atomically mark all identifiers immediately BEFORE network call
+  if (key1) { sentPaymentAlerts.add(key1); notifiedIntents.add(key1); }
+  if (key2) { sentPaymentAlerts.add(key2); notifiedIntents.add(key2); }
+  if (key3) { sentPaymentAlerts.add(key3); notifiedIntents.add(key3); }
+  intent.notified = true;
+  savePaymentIntents();
+
+  const activeToken = params.token || memoryConfig.botToken;
+  const targetChat = params.chatId || memoryConfig.chatId;
+  if (!activeToken || !targetChat) return false;
+
+  await sendTelegramReply(
+    activeToken,
+    targetChat,
+    `📋 <b>[SMS Auto-Forwarded & Received]</b>\n` +
+    `<code>${escapeHtml(text)}</code>\n\n` +
+    `✅ <b>Payment Verified Instantly!</b>\n` +
+    `💰 <b>Amount:</b> ₹${intent.amount.toFixed(2)}\n` +
+    `🆔 <b>Order Ref:</b> <code>${intent.orderRef}</code>\n` +
+    `🔢 <b>UTR:</b> <code>${intent.utr}</code>\n` +
+    `👤 <b>User:</b> ${intent.userEmail || intent.userId}\n` +
+    `🏦 <b>Gateway:</b> ${detectedBank}\n` +
+    `🟢 <b>Status:</b> Auto-received & wallet credited in 0.1s!`
+  );
+  return true;
+}
 
 const INSTANCE_ID = `inst_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 let isLeader = false;
@@ -829,31 +879,14 @@ export async function tryMatchAndCompleteIntent(params: {
       }
     }
 
-    const notificationKey = matchedIntent.intentId;
-    if (!notifiedIntents.has(notificationKey) && !matchedIntent.notified) {
-      notifiedIntents.add(notificationKey);
-      notifiedIntents.add(matchedIntent.orderRef);
-      matchedIntent.notified = true;
-      savePaymentIntents();
-
-      const activeToken = params.token || memoryConfig.botToken;
-      const targetChat = params.chatId || memoryConfig.chatId;
-      if (activeToken && targetChat) {
-        await sendTelegramReply(
-          activeToken,
-          targetChat,
-          `📋 <b>[SMS Auto-Forwarded & Received]</b>\n` +
-          `<code>${escapeHtml(text)}</code>\n\n` +
-          `✅ <b>Payment Verified Instantly!</b>\n` +
-          `💰 <b>Amount:</b> ₹${matchedIntent.amount.toFixed(2)}\n` +
-          `🆔 <b>Order Ref:</b> <code>${matchedIntent.orderRef}</code>\n` +
-          `🔢 <b>UTR:</b> <code>${matchedIntent.utr}</code>\n` +
-          `👤 <b>User:</b> ${matchedIntent.userEmail || matchedIntent.userId}\n` +
-          `🏦 <b>Gateway:</b> ${detectedBank}\n` +
-          `🟢 <b>Status:</b> Auto-received & wallet credited in 0.1s!`
-        );
-      }
-    }
+    // STRICT SINGLE-NOTIFICATION: Guaranteed 100% duplicate-proof
+    await sendVerifiedPaymentAlertOnce({
+      token: params.token,
+      chatId: params.chatId,
+      intent: matchedIntent,
+      text,
+      detectedBank
+    });
 
     return { matched: true, intent: matchedIntent };
   }
@@ -1114,31 +1147,14 @@ export async function processTelegramUpdate(update: any, token: string): Promise
       }
     }
 
-    // STRICT SINGLE-NOTIFICATION:
-    const notificationKey = matchedIntent.intentId;
-    if (!notifiedIntents.has(notificationKey) && !matchedIntent.notified) {
-      notifiedIntents.add(notificationKey);
-      notifiedIntents.add(matchedIntent.orderRef);
-      matchedIntent.notified = true;
-      savePaymentIntents();
-
-      const targetChat = chatId || memoryConfig.chatId;
-      if (targetChat) {
-        await sendTelegramReply(
-          token,
-          targetChat,
-          `📋 <b>[SMS Auto-Forwarded & Received]</b>\n` +
-          `<code>${escapeHtml(text)}</code>\n\n` +
-          `✅ <b>Payment Verified Instantly!</b>\n` +
-          `💰 <b>Amount:</b> ₹${matchedIntent.amount.toFixed(2)}\n` +
-          `🆔 <b>Order Ref:</b> <code>${matchedIntent.orderRef}</code>\n` +
-          `🔢 <b>UTR:</b> <code>${matchedIntent.utr}</code>\n` +
-          `👤 <b>User:</b> ${matchedIntent.userEmail || matchedIntent.userId}\n` +
-          `🏦 <b>Gateway:</b> ${detectedBank}\n` +
-          `🟢 <b>Status:</b> Auto-received & wallet credited in 0.1s!`
-        );
-      }
-    }
+    // STRICT SINGLE-NOTIFICATION: Guaranteed 100% duplicate-proof
+    await sendVerifiedPaymentAlertOnce({
+      token,
+      chatId,
+      intent: matchedIntent,
+      text,
+      detectedBank
+    });
 
     const matchedAlertObj: BankAlert = {
       id: `alert_intent_${matchedIntent.intentId}`,

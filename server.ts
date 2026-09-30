@@ -1101,24 +1101,58 @@ export async function startServer() {
 
   // Register Zero-UTR Automatic Payment Intent Callback
   registerPaymentIntentCallback(async (intent, utr, rawText) => {
-    // 0. Double-credit guard: Ensure no payment is claimed twice
+    const cleanUtr = (utr || intent.orderRef || "").trim();
+    const orderRef = (intent.orderRef || "").trim();
+    const intentId = (intent.intentId || "").trim();
+
+    // 0. Strict Multi-Level Duplicate Guard:
     if ((intent as any).credited || (intent as any).walletCredited) {
-      console.log(`[DUPLICATE-PREVENTED] Intent ${intent.intentId} already credited. Skipping.`);
+      console.log(`[DUPLICATE-PREVENTED] Intent ${intentId} already credited in memory. Skipping.`);
       return true;
     }
 
-    const cleanUtr = utr || intent.orderRef;
-    if (cleanUtr && globalClaimedUtrs.has(cleanUtr)) {
-      console.log(`[DUPLICATE-PREVENTED] UTR ${cleanUtr} already claimed globally. Skipping.`);
+    if (
+      (cleanUtr && globalClaimedUtrs.has(cleanUtr)) ||
+      (orderRef && globalClaimedUtrs.has(orderRef)) ||
+      (intentId && globalClaimedUtrs.has(intentId)) ||
+      (cleanUtr && globalUtrLocks.has(cleanUtr)) ||
+      (orderRef && globalUtrLocks.has(orderRef))
+    ) {
+      console.log(`[DUPLICATE-PREVENTED] Payment ${orderRef} / ${cleanUtr} already claimed or processing globally. Skipping.`);
       return true;
     }
 
-    console.log(`[ZERO-UTR-INTENT-CALLBACK] Processing wallet credit for intent ${intent.intentId} (Order: ${intent.orderRef}, ₹${intent.amount})`);
+    // Acquire atomic concurrency lock IMMEDIATELY
+    if (cleanUtr) globalUtrLocks.add(cleanUtr);
+    if (orderRef) globalUtrLocks.add(orderRef);
+    if (cleanUtr) globalClaimedUtrs.add(cleanUtr);
+    if (orderRef) globalClaimedUtrs.add(orderRef);
+    if (intentId) globalClaimedUtrs.add(intentId);
+
+    console.log(`[ZERO-UTR-INTENT-CALLBACK] Processing wallet credit for intent ${intentId} (Order: ${orderRef}, ₹${intent.amount})`);
     try {
       (intent as any).credited = true;
       (intent as any).walletCredited = true;
-      if (cleanUtr && cleanUtr.length === 12) {
-        globalClaimedUtrs.add(cleanUtr);
+
+      // Check if user document already has this deposit in their history
+      let currentBal = 0;
+      let existingDeposits: any[] = [];
+      try {
+        const uDoc = await getDocSafe("users", intent.userId);
+        const uData = uDoc?.data ? uDoc.data() : uDoc;
+        currentBal = Number(uData?.balance ?? uData?.walletBalance ?? 0);
+        if (Array.isArray(uData?.latestDeposits)) {
+          existingDeposits = uData.latestDeposits;
+        }
+      } catch (e) {}
+
+      const alreadyExists = existingDeposits.some((d: any) =>
+        (orderRef && d?.orderRef === orderRef) ||
+        (cleanUtr && d?.utr === cleanUtr)
+      );
+      if (alreadyExists) {
+        console.log(`[DUPLICATE-PREVENTED] Deposit already approved in user profile for ${orderRef} / ${cleanUtr}. Skipping balance add.`);
+        return true;
       }
 
       // 1. Credit User Balance
@@ -1128,9 +1162,20 @@ export async function startServer() {
         return false;
       }
 
+      // Mark distributed cross-platform lock in Firestore claimed_payments collection
+      if (orderRef) {
+        setDocSafe("claimed_payments", orderRef, {
+          orderRef,
+          utr: cleanUtr,
+          userId: intent.userId,
+          amount: intent.amount,
+          credited: true,
+          claimedAt: new Date().toISOString()
+        }).catch(() => {});
+      }
+
       // 2. Read new balance
       let newBalance = 0;
-      let existingDeposits: any[] = [];
       try {
         const uDoc = await getDocSafe("users", intent.userId);
         const uData = uDoc?.data ? uDoc.data() : uDoc;

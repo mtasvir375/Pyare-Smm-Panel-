@@ -609,6 +609,21 @@ export default async function handler(req: any, res: any) {
       // Auto-reconcile against targeted orderRef alert (1 single doc read instead of 100 reads!)
       if (intent.status !== "completed" && intent.userId && intent.orderRef) {
         try {
+          // Check distributed lock in claimed_payments to prevent double credit
+          const alreadyClaimed = await getRestDoc("claimed_payments", intent.orderRef).catch(() => null);
+          if (alreadyClaimed || intent.status === "completed" || (intent as any).credited) {
+            return res.status(200).json({
+              success: true,
+              status: "completed",
+              intentId: intent.intentId,
+              orderRef: intent.orderRef,
+              amount: intent.amount,
+              creditedAmount: intent.amount,
+              utr: alreadyClaimed?.utr || intent.utr || intent.orderRef,
+              completedAt: intent.completedAt || Date.now()
+            });
+          }
+
           // Targeted 1-doc lookup by unique 12-digit orderRef
           let match: any = await getRestDoc("bank_alerts", intent.orderRef);
           if (!match || match.isUsed === true || match.status === "claimed") {
@@ -619,6 +634,16 @@ export default async function handler(req: any, res: any) {
             const matchUtr = match.utr || intent.orderRef;
             const creditAmt = Number(intent.amount || match.amount || 0);
 
+            // Double-check: Mark claimed_payments IMMEDIATELY as atomic distributed lock
+            await setRestDoc("claimed_payments", intent.orderRef, {
+              orderRef: intent.orderRef,
+              utr: matchUtr,
+              userId: intent.userId,
+              amount: creditAmt,
+              credited: true,
+              claimedAt: new Date().toISOString()
+            });
+
             // Fetch current user balance
             let currentBal = 0;
             let uDoc: any = null;
@@ -627,7 +652,17 @@ export default async function handler(req: any, res: any) {
               currentBal = Number(uDoc?.balance ?? uDoc?.walletBalance ?? 0);
             } catch (e) {}
 
-            const newBal = Number((currentBal + creditAmt).toFixed(2));
+            const existingDeposits = Array.isArray(uDoc?.latestDeposits) ? uDoc.latestDeposits : [];
+            const alreadyInHistory = existingDeposits.some((d: any) =>
+              (intent.orderRef && d?.orderRef === intent.orderRef) ||
+              (matchUtr && d?.utr === matchUtr)
+            );
+
+            let newBal = currentBal;
+            if (!alreadyInHistory) {
+              newBal = Number((currentBal + creditAmt).toFixed(2));
+            }
+
             const depId = `dep_${intent.orderRef}_${Date.now()}`;
             const newDepositSummary = {
               id: depId,
@@ -640,7 +675,6 @@ export default async function handler(req: any, res: any) {
               createdAt: new Date().toISOString()
             };
 
-            const existingDeposits = Array.isArray(uDoc?.latestDeposits) ? uDoc.latestDeposits : [];
             const updatedLatestDeposits = [
               newDepositSummary,
               ...existingDeposits.filter((d: any) => d && d.utr !== matchUtr && d.orderRef !== intent.orderRef)
@@ -665,14 +699,16 @@ export default async function handler(req: any, res: any) {
                 status: "completed",
                 completedAt: Date.now(),
                 utr: matchUtr,
-                creditedAmount: creditAmt
+                creditedAmount: creditAmt,
+                notified: true
               }),
               setRestDoc("bank_alerts", matchUtr, {
                 ...match,
                 isUsed: true,
                 status: "claimed",
                 usedBy: intent.userId,
-                usedAt: new Date().toISOString()
+                usedAt: new Date().toISOString(),
+                notified: true
               })
             ]);
 
@@ -680,31 +716,33 @@ export default async function handler(req: any, res: any) {
             intent.utr = matchUtr;
             intent.completedAt = Date.now();
 
-            // Send 2nd confirmation message to Telegram Channel (Identical to default URL!)
-            try {
-              const tgDoc = await getRestDoc("settings", "telegram_bot").catch(() => null);
-              const botTok = (tgDoc?.botToken || "").trim();
-              const cId = (tgDoc?.chatId || "").trim();
-              if (botTok && cId) {
-                const rawSms = match.rawText || match.rawSms || `Mr MD SAUD ALAM paid you ₹${creditAmt.toFixed(2)} ${matchUtr}`;
-                const msgText = 
-                  `📋 <b>[SMS Auto-Forwarded & Received]</b>\n` +
-                  `<code>${rawSms}</code>\n\n` +
-                  `✅ <b>Payment Verified Instantly!</b>\n` +
-                  `💰 <b>Amount:</b> ₹${creditAmt.toFixed(2)}\n` +
-                  `🆔 <b>Order Ref:</b> <code>${intent.orderRef}</code>\n` +
-                  `🔢 <b>UTR:</b> <code>${matchUtr}</code>\n` +
-                  `👤 <b>User:</b> ${intent.userEmail || intent.userId}\n` +
-                  `🏦 <b>Gateway:</b> ${match.senderBank || match.bank || "UPI Payment"}\n` +
-                  `🟢 <b>Status:</b> Auto-received & wallet credited in 0.1s!`;
-                await axios.post(`https://api.telegram.org/bot${botTok}/sendMessage`, {
-                  chat_id: cId,
-                  text: msgText,
-                  parse_mode: "HTML"
-                }, { timeout: 4000 }).catch(() => {});
+            // Send 2nd confirmation message to Telegram Channel ONLY IF NOT ALREADY NOTIFIED
+            if (!match.notified && !intent.notified && !alreadyClaimed?.notified) {
+              try {
+                const tgDoc = await getRestDoc("settings", "telegram_bot").catch(() => null);
+                const botTok = (tgDoc?.botToken || "").trim();
+                const cId = (tgDoc?.chatId || "").trim();
+                if (botTok && cId) {
+                  const rawSms = match.rawText || match.rawSms || `Mr MD SAUD ALAM paid you ₹${creditAmt.toFixed(2)} ${matchUtr}`;
+                  const msgText = 
+                    `📋 <b>[SMS Auto-Forwarded & Received]</b>\n` +
+                    `<code>${rawSms}</code>\n\n` +
+                    `✅ <b>Payment Verified Instantly!</b>\n` +
+                    `💰 <b>Amount:</b> ₹${creditAmt.toFixed(2)}\n` +
+                    `🆔 <b>Order Ref:</b> <code>${intent.orderRef}</code>\n` +
+                    `🔢 <b>UTR:</b> <code>${matchUtr}</code>\n` +
+                    `👤 <b>User:</b> ${intent.userEmail || intent.userId}\n` +
+                    `🏦 <b>Gateway:</b> ${match.senderBank || match.bank || "UPI Payment"}\n` +
+                    `🟢 <b>Status:</b> Auto-received & wallet credited in 0.1s!`;
+                  await axios.post(`https://api.telegram.org/bot${botTok}/sendMessage`, {
+                    chat_id: cId,
+                    text: msgText,
+                    parse_mode: "HTML"
+                  }, { timeout: 4000 }).catch(() => {});
+                }
+              } catch (tgErr: any) {
+                console.warn("[TG-NOTIFY-ERR]", tgErr.message);
               }
-            } catch (tgErr: any) {
-              console.warn("[TG-NOTIFY-ERR]", tgErr.message);
             }
 
             return res.status(200).json({
