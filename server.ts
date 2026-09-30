@@ -1037,22 +1037,24 @@ export async function startServer() {
     let currentBalance = 0;
     let existingUserData: any = null;
 
-    if (serverCache.users.has(user_id)) {
+    // 1. ALWAYS fetch authoritative fresh user document from Firestore first (prevents stale balance calculations)
+    try {
+      const userRef = await getDocREST("users", user_id, token);
+      if (userRef && userRef.exists) {
+        existingUserData = userRef.data();
+        currentBalance = Number(existingUserData.balance ?? existingUserData.walletBalance ?? existingUserData.wallet_balance ?? 0);
+      }
+    } catch (fetchErr: any) {
+      console.warn(`[BALANCE-SAFE] Fresh fetch error for ${user_id}, using fallback:`, fetchErr.message);
+    }
+
+    // Fallback only if direct Firestore fetch failed
+    if (!existingUserData && serverCache.users.has(user_id)) {
       const cached = serverCache.users.get(user_id);
       if (cached && (cached.data || cached.balance !== undefined)) {
         existingUserData = cached.data || cached;
         currentBalance = Number(existingUserData.balance ?? existingUserData.walletBalance ?? existingUserData.wallet_balance ?? 0);
       }
-    }
-
-    if (!existingUserData) {
-      try {
-        const userRef = await getDocREST("users", user_id, token);
-        if (userRef && userRef.exists) {
-          existingUserData = userRef.data();
-          currentBalance = Number(existingUserData.balance ?? existingUserData.walletBalance ?? existingUserData.wallet_balance ?? 0);
-        }
-      } catch (e) {}
     }
 
     const newBalance = Math.max(0, Number((currentBalance + change).toFixed(2)));

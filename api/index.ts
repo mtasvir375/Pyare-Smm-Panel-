@@ -624,7 +624,7 @@ export default async function handler(req: any, res: any) {
             let uDoc: any = null;
             try {
               uDoc = await getRestDoc("users", intent.userId);
-              currentBal = Number(uDoc?.balance || 0);
+              currentBal = Number(uDoc?.balance ?? uDoc?.walletBalance ?? 0);
             } catch (e) {}
 
             const newBal = Number((currentBal + creditAmt).toFixed(2));
@@ -798,7 +798,7 @@ export default async function handler(req: any, res: any) {
         let uDoc: any = null;
         try {
           uDoc = await getRestDoc("users", userId);
-          const currentBal = Number(uDoc?.balance || 0);
+          const currentBal = Number(uDoc?.balance ?? uDoc?.walletBalance ?? 0);
           newBalance = currentBal + creditAmount;
         } catch (e) {}
 
