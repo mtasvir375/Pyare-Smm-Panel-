@@ -135,6 +135,40 @@ async function listRestDocs(collection: string, pageSize = 100): Promise<any[]> 
   }
 }
 
+async function queryRestDocs(collection: string, field: string, value: string, pageSize = 50): Promise<any[]> {
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents:runQuery?key=${FIREBASE_API_KEY}`;
+    const payload = {
+      structuredQuery: {
+        from: [{ collectionId: collection }],
+        where: {
+          fieldFilter: {
+            field: { fieldPath: field },
+            op: "EQUAL",
+            value: { stringValue: value }
+          }
+        },
+        limit: pageSize
+      }
+    };
+    const res = await axios.post(url, payload, { timeout: 8000 });
+    if (res.data && Array.isArray(res.data)) {
+      return res.data
+        .filter((item: any) => item.document)
+        .map((item: any) => {
+          const doc = item.document;
+          const id = doc.name.split("/").pop();
+          const data = unwrapFirestoreFields(doc.fields || {});
+          return { id, ...data };
+        });
+    }
+    return [];
+  } catch (err: any) {
+    console.error(`[REST-QUERY-ERR] Failed query for ${collection} (${field}==${value}):`, err.response?.data || err.message);
+    return [];
+  }
+}
+
 // Known Providers for proxy
 const KNOWN_PROVIDERS: Record<string, { apiUrl: string; apiKey: string; name: string }> = {
   "talVdnSEg8QGpNVpaUTi": {
@@ -1205,10 +1239,24 @@ export default async function handler(req: any, res: any) {
       }
 
       try {
-        const [depList, intentList] = await Promise.all([
-          listRestDocs("deposits", 20),
-          listRestDocs("payment_intents", 20)
-        ]);
+        let depList: any[] = [];
+        let intentList: any[] = [];
+
+        if (targetUid) {
+          const [d1, i1] = await Promise.all([
+            queryRestDocs("deposits", "userId", targetUid, 30),
+            queryRestDocs("payment_intents", "userId", targetUid, 30)
+          ]);
+          depList = d1;
+          intentList = i1;
+        } else if (targetEmail) {
+          const [d2, i2] = await Promise.all([
+            queryRestDocs("deposits", "userEmail", targetEmail, 30),
+            queryRestDocs("payment_intents", "userEmail", targetEmail, 30)
+          ]);
+          depList = d2;
+          intentList = i2;
+        }
 
         for (const item of depList) {
           if (!item) continue;
@@ -1292,7 +1340,13 @@ export default async function handler(req: any, res: any) {
 
       // Fallback query to orders collection
       try {
-        const ordList = await listRestDocs("orders", 25);
+        let ordList: any[] = [];
+        if (targetUid) {
+          ordList = await queryRestDocs("orders", "userId", targetUid, 30);
+        } else if (targetEmail) {
+          ordList = await queryRestDocs("orders", "userEmail", targetEmail, 30);
+        }
+
         const filtered = ordList.filter((item: any) => {
           if (!item) return false;
           const uUid = String(item.userId || item.user_id || "").trim();
