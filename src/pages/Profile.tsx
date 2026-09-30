@@ -79,6 +79,8 @@ export default function Profile() {
   const { user, userProfile: profile, loading: authLoading, isAdmin, isPaymentAdmin, signOut, updateUserProfileLocal, refreshUserProfile } = useAuth() as any;
   const navigate = useNavigate();
   const [isAddFundsOpen, setIsAddFundsOpen] = useState(false);
+  const [isSuccessPopupOpen, setIsSuccessPopupOpen] = useState(false);
+  const [successDetails, setSuccessDetails] = useState<{ amount: number; balance: number } | null>(null);
   const [paymentStep, setPaymentStep] = useState<"amount" | "payment">("amount");
   const [amount, setAmount] = useState("");
   const [apiKey, setApiKey] = useState<string | null>(null);
@@ -556,7 +558,35 @@ export default function Profile() {
         </Card>
       )}
 
-
+      {/* Dedicated Payment Success Celebration Popup */}
+      <Dialog open={isSuccessPopupOpen} onOpenChange={setIsSuccessPopupOpen}>
+        <DialogContent className="max-w-[90vw] sm:max-w-md rounded-3xl p-6 text-center space-y-5 animate-in zoom-in-95 duration-300">
+          <div className="w-20 h-20 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto shadow-lg shadow-emerald-600/20 animate-bounce">
+            <Check className="w-12 h-12 stroke-[3]" />
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-2xl font-black text-gray-900">
+              Payment Successful! 🎉
+            </h3>
+            <p className="text-sm font-medium text-gray-500">
+              ₹{Number(successDetails?.amount || 0).toFixed(2)} credited to your wallet.
+            </p>
+            {successDetails?.balance !== undefined && (
+              <p className="text-base font-black text-emerald-600 pt-1">
+                Updated Balance: ₹{Number(successDetails.balance).toFixed(2)}
+              </p>
+            )}
+          </div>
+          <div className="pt-2">
+            <Button
+              onClick={() => setIsSuccessPopupOpen(false)}
+              className="w-full h-12 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-md shadow-emerald-600/20"
+            >
+              Done / Continue
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <div className="pt-0">
         <Dialog open={isAddFundsOpen} onOpenChange={(open) => {
@@ -697,14 +727,16 @@ export default function Profile() {
                           userId={user.uid}
                           userEmail={user.email || undefined}
                           onSuccess={(credited, newBal) => {
-                            if (newBal !== undefined && updateUserProfileLocal) {
-                              updateUserProfileLocal({ balance: newBal });
-                            } else if (updateUserProfileLocal) {
-                              updateUserProfileLocal({ balance: (profile?.balance || 0) + credited });
+                            const finalBal = newBal !== undefined ? newBal : (profile?.balance || 0) + credited;
+                            if (updateUserProfileLocal) {
+                              updateUserProfileLocal({ balance: finalBal });
                             }
                             if (refreshUserProfile) {
                               refreshUserProfile();
                             }
+                            setIsAddFundsOpen(false); // Close payment screen immediately
+                            setSuccessDetails({ amount: credited, balance: finalBal });
+                            setIsSuccessPopupOpen(true); // Open success popup!
                             resetAddFunds();
                           }}
                           onCancelOrSwitchManual={isManualQrEnabled ? () => setPaymentMethod("manual") : undefined}
