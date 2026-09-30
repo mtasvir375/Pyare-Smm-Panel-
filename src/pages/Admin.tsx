@@ -387,7 +387,6 @@ export default function Admin() {
           
           const savedBackendUrl = settingsData.backendApiUrl || "";
           setBackendApiUrl(savedBackendUrl);
-          fetchSmsLogs();
         }
       }
       setFetchedTabs(prev => {

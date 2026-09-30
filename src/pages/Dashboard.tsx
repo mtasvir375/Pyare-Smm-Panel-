@@ -84,8 +84,10 @@ export default function Dashboard() {
         
         // 1. Check Chrome Cache (localStorage & sessionStorage) for instant 0ms rendering
         let cachedData = localStorage.getItem(uidKey) || sessionStorage.getItem(uidKey);
+        let cachedTime = Number(localStorage.getItem(`${uidKey}_time`) || sessionStorage.getItem(`${uidKey}_time`) || 0);
         if (!cachedData && emailKey) {
           cachedData = localStorage.getItem(emailKey) || sessionStorage.getItem(emailKey);
+          cachedTime = Number(localStorage.getItem(`${emailKey}_time`) || sessionStorage.getItem(`${emailKey}_time`) || 0);
         }
 
         const parseOrdersList = (dataList: any[]): any[] => {
@@ -148,7 +150,13 @@ export default function Dashboard() {
           }
         }
 
-        // 3. Stale-While-Revalidate: fetch latest 10 orders from server cache/db
+        // Strict Quota Guard: If orders are already loaded from cache or userProfile, SKIP network read completely!
+        if (initialOrders.length > 0 && refreshTrigger === 0) {
+          setLoading(false);
+          return;
+        }
+
+        // 4. Only fetch from network if cache is missing or expired
         try {
           const fetched = await dbClient.getUserOrders(user.uid, 10, user.email || undefined);
           if (Array.isArray(fetched) && isMounted) {
@@ -192,15 +200,27 @@ export default function Dashboard() {
       try {
         const depKey = `deposits_${user.uid}`;
         const cached = localStorage.getItem(depKey) || sessionStorage.getItem(depKey);
+        const cachedTime = Number(localStorage.getItem(`${depKey}_time`) || sessionStorage.getItem(`${depKey}_time`) || 0);
+        let hasDeposits = false;
+
         if (cached) {
           try {
             const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed) && parsed.length > 0) setDeposits(parsed.slice(0, 10));
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setDeposits(parsed.slice(0, 10));
+              hasDeposits = true;
+            }
           } catch (e) {}
         } else if (userProfile && Array.isArray((userProfile as any).latestDeposits) && (userProfile as any).latestDeposits.length > 0) {
           // If browser cache is cleared, load immediately from persistent User Profile (0ms, 0 extra reads!)
           setDeposits((userProfile as any).latestDeposits.slice(0, 10));
+          hasDeposits = true;
           console.log(`[DASHBOARD] ✅ Restored ${(userProfile as any).latestDeposits.length} deposits from persistent User Profile!`);
+        }
+
+        // Strict Quota Guard: If deposits are already loaded from cache or userProfile, SKIP network read completely!
+        if (hasDeposits && refreshTrigger === 0) {
+          return;
         }
 
         const fresh = await dbClient.getUserDeposits(user.uid, user.email || undefined);
@@ -209,8 +229,11 @@ export default function Dashboard() {
           setDeposits(latest10Deposits);
           try {
             const jsonStr = JSON.stringify(latest10Deposits);
+            const nowStr = Date.now().toString();
             localStorage.setItem(depKey, jsonStr);
+            localStorage.setItem(`${depKey}_time`, nowStr);
             sessionStorage.setItem(depKey, jsonStr);
+            sessionStorage.setItem(`${depKey}_time`, nowStr);
           } catch (e) {}
         }
       } catch (depErr) {

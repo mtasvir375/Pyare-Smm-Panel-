@@ -303,15 +303,6 @@ export const TelegramBotTab: React.FC = () => {
     fetchConfig();
     fetchAlerts();
     fetchIntents();
-
-    // Gentle 30s poll only when tab is visible (0 Firestore reads, memory cache only)
-    const pollInterval = setInterval(() => {
-      if (typeof document !== "undefined" && document.hidden) return;
-      fetchAlerts();
-      fetchIntents();
-    }, 30000);
-
-    return () => clearInterval(pollInterval);
   }, [filter, intentFilter]);
 
   const handleIngestDirectSms = async () => {

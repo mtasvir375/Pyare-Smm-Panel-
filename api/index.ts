@@ -76,6 +76,20 @@ function wrapFirestoreFields(data: any): any {
   return fields;
 }
 
+// In-Memory Quota-Protection Caches
+const memIntents = new Map<string, { data: any; time: number }>();
+const memUserOrders = new Map<string, { data: any[]; time: number }>();
+const memUserDeposits = new Map<string, { data: any[]; time: number }>();
+const lastCheckIntentTime = new Map<string, number>();
+
+let memCoursesCache: { data: any[]; time: number } | null = null;
+let memSettingsCache: { data: any; time: number } | null = null;
+let memProvidersCache: { data: any[]; time: number } | null = null;
+let memAdminOrdersCache: { data: any[]; time: number } | null = null;
+let memAdminDepositsCache: { data: any[]; time: number } | null = null;
+let memBankAlertsCache: { data: any[]; time: number } | null = null;
+let memAllUsersCache: { data: any[]; time: number } | null = null;
+
 async function getRestDoc(collection: string, docId: string): Promise<any> {
   try {
     const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}?key=${FIREBASE_API_KEY}`;
@@ -208,14 +222,24 @@ export default async function handler(req: any, res: any) {
 
     // 2. Settings: /api/settings
     if (pathname === "/api/settings") {
+      const isFresh = req.query?.fresh === "1" || req.query?.fresh === "true";
+      const now = Date.now();
+      if (!isFresh && memSettingsCache && (now - memSettingsCache.time < 15 * 60 * 1000)) {
+        res.setHeader("Cache-Control", "public, max-age=60, s-maxage=900, stale-while-revalidate=86400");
+        return res.status(200).json(memSettingsCache.data);
+      }
       if (req.method === "GET") {
         try {
           const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/settings/payment?key=${FIREBASE_API_KEY}`;
           const response = await axios.get(url, { timeout: 6000 });
           const data = unwrapFirestoreFields(response.data.fields);
-          res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+          memSettingsCache = { data, time: Date.now() };
+          res.setHeader("Cache-Control", "public, max-age=60, s-maxage=900, stale-while-revalidate=86400");
           return res.status(200).json(data);
         } catch (err: any) {
+          if (memSettingsCache?.data) {
+            return res.status(200).json(memSettingsCache.data);
+          }
           console.warn("[REST-SETTINGS-GET-ERR]", err.response?.data || err.message);
           return res.status(err.response?.status || 500).json({
             error: "Failed to fetch settings from Firestore REST API",
@@ -223,6 +247,7 @@ export default async function handler(req: any, res: any) {
           });
         }
       } else if (req.method === "POST") {
+        memSettingsCache = null;
         await setRestDoc("settings", "payment", body);
         return res.status(200).json({ success: true, message: "Settings saved" });
       }
@@ -230,6 +255,12 @@ export default async function handler(req: any, res: any) {
 
     // 3. Courses: /api/courses
     if (pathname === "/api/courses") {
+      const isFresh = req.query?.fresh === "1" || req.query?.fresh === "true";
+      const now = Date.now();
+      if (!isFresh && memCoursesCache && (now - memCoursesCache.time < 30 * 60 * 1000)) {
+        res.setHeader("Cache-Control", "public, max-age=300, s-maxage=1800, stale-while-revalidate=86400");
+        return res.status(200).json(memCoursesCache.data);
+      }
       if (req.method === "GET") {
         try {
           const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/courses?pageSize=300&key=${FIREBASE_API_KEY}`;
@@ -248,9 +279,13 @@ export default async function handler(req: any, res: any) {
             if (idxA !== idxB) return (idxA === -1 ? 99 : idxA) - (idxB === -1 ? 99 : idxB);
             return (a.serviceId || 0) - (b.serviceId || 0);
           });
-          res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+          memCoursesCache = { data: courses, time: Date.now() };
+          res.setHeader("Cache-Control", "public, max-age=300, s-maxage=1800, stale-while-revalidate=86400");
           return res.status(200).json(courses);
         } catch (err: any) {
+          if (memCoursesCache?.data) {
+            return res.status(200).json(memCoursesCache.data);
+          }
           return res.status(500).json({ error: err.message });
         }
       }
@@ -258,13 +293,54 @@ export default async function handler(req: any, res: any) {
 
     // 4. Providers: /api/providers
     if (pathname === "/api/providers") {
+      const now = Date.now();
+      if (memProvidersCache && (now - memProvidersCache.time < 30 * 60 * 1000)) {
+        return res.status(200).json(memProvidersCache.data);
+      }
       if (req.method === "GET") {
         try {
           const providers = await listRestDocs("providers", 100);
+          memProvidersCache = { data: providers, time: Date.now() };
           return res.status(200).json(providers);
         } catch (err: any) {
           return res.status(500).json({ error: err.message });
         }
+      }
+    }
+
+    // 4.1 Admin All Orders: /api/admin/all-orders
+    if (pathname === "/api/admin/all-orders") {
+      const now = Date.now();
+      const isFresh = req.query?.force === "true";
+      if (!isFresh && memAdminOrdersCache && (now - memAdminOrdersCache.time < 5 * 60 * 1000)) {
+        return res.status(200).json(memAdminOrdersCache.data);
+      }
+      try {
+        const queryLimit = parseInt(String(req.query?.limit || "50"), 10) || 50;
+        const orders = await listRestDocs("orders", queryLimit);
+        orders.sort((a, b) => new Date(b.createdAt || b.created_at || 0).getTime() - new Date(a.createdAt || a.created_at || 0).getTime());
+        memAdminOrdersCache = { data: orders, time: Date.now() };
+        return res.status(200).json(orders);
+      } catch (err: any) {
+        return res.status(200).json(memAdminOrdersCache?.data || []);
+      }
+    }
+
+    // 4.2 Admin All Deposits: /api/admin/all-deposits
+    if (pathname === "/api/admin/all-deposits") {
+      const now = Date.now();
+      const isFresh = req.query?.force === "true";
+      if (!isFresh && memAdminDepositsCache && (now - memAdminDepositsCache.time < 5 * 60 * 1000)) {
+        return res.status(200).json(memAdminDepositsCache.data);
+      }
+      try {
+        const queryLimit = parseInt(String(req.query?.limit || "50"), 10) || 50;
+        const deposits = await listRestDocs("deposits", queryLimit);
+        deposits.sort((a, b) => new Date(b.createdAt || b.timestamp || 0).getTime() - new Date(a.createdAt || a.timestamp || 0).getTime());
+        memAdminDepositsCache = { data: deposits, time: Date.now() };
+        return res.status(200).json(deposits);
+      } catch (err: any) {
+        return res.status(200).json(memAdminDepositsCache?.data || []);
       }
     }
 
@@ -561,6 +637,9 @@ export default async function handler(req: any, res: any) {
           notified: false
         };
 
+        memIntents.set(intentId, { data: intentData, time: now });
+        memIntents.set(orderRef, { data: intentData, time: now });
+
         try {
           await Promise.all([
             setRestDoc("payment_intents", intentId, intentData),
@@ -596,38 +675,78 @@ export default async function handler(req: any, res: any) {
         return res.status(400).json({ success: false, error: "Missing intentId" });
       }
 
-      const intent = await getRestDoc("payment_intents", String(intentId));
+      const strId = String(intentId).trim();
+
+      // QUOTA SHIELD 1: Check memory cache first (0 Firestore reads!)
+      const memObj = memIntents.get(strId);
+      if (memObj && memObj.data?.status === "completed") {
+        return res.status(200).json({
+          success: true,
+          status: "completed",
+          intentId: memObj.data.intentId || strId,
+          orderRef: memObj.data.orderRef,
+          amount: memObj.data.amount,
+          creditedAmount: memObj.data.creditedAmount || memObj.data.amount,
+          utr: memObj.data.utr || memObj.data.orderRef,
+          completedAt: memObj.data.completedAt || Date.now()
+        });
+      }
+
+      // QUOTA SHIELD 2: Throttle polling to at most once per 12 seconds per intent (saves 80% reads!)
+      const lastPoll = lastCheckIntentTime.get(strId) || 0;
+      const now = Date.now();
+      if (memObj && memObj.data && (now - lastPoll < 12000)) {
+        return res.status(200).json({
+          success: true,
+          status: "pending",
+          intentId: strId,
+          orderRef: memObj.data.orderRef,
+          amount: memObj.data.amount,
+          message: "Awaiting bank SMS confirmation"
+        });
+      }
+      lastCheckIntentTime.set(strId, now);
+
+      let intent = memObj?.data;
+      if (!intent) {
+        intent = await getRestDoc("payment_intents", strId);
+        if (intent) {
+          memIntents.set(strId, { data: intent, time: now });
+          if (intent.orderRef) memIntents.set(intent.orderRef, { data: intent, time: now });
+        }
+      }
+
       if (!intent) {
         return res.status(200).json({
           success: true,
           status: "pending",
-          intentId: String(intentId),
+          intentId: strId,
           message: "Awaiting bank SMS confirmation"
         });
       }
 
-      // Auto-reconcile against targeted orderRef alert (1 single doc read instead of 100 reads!)
+      if (intent.status === "completed") {
+        memIntents.set(strId, { data: intent, time: now });
+        return res.status(200).json({
+          success: true,
+          status: "completed",
+          intentId: intent.intentId,
+          orderRef: intent.orderRef,
+          amount: intent.amount,
+          creditedAmount: intent.creditedAmount || intent.amount,
+          utr: intent.utr || intent.orderRef,
+          completedAt: intent.completedAt || Date.now()
+        });
+      }
+
+      // Auto-reconcile against targeted orderRef alert (1 single doc read)
       if (intent.status !== "completed" && intent.userId && intent.orderRef) {
         try {
-          // Check distributed lock in claimed_payments to prevent double credit
-          const alreadyClaimed = await getRestDoc("claimed_payments", intent.orderRef).catch(() => null);
-          if (alreadyClaimed || intent.status === "completed" || (intent as any).credited) {
-            return res.status(200).json({
-              success: true,
-              status: "completed",
-              intentId: intent.intentId,
-              orderRef: intent.orderRef,
-              amount: intent.amount,
-              creditedAmount: intent.amount,
-              utr: alreadyClaimed?.utr || intent.utr || intent.orderRef,
-              completedAt: intent.completedAt || Date.now()
-            });
-          }
-
           // Targeted 1-doc lookup by unique 12-digit orderRef
           let match: any = await getRestDoc("bank_alerts", intent.orderRef);
           if (!match || match.isUsed === true || match.status === "claimed") {
-            match = await getRestDoc("sms_forwarder_pool", intent.orderRef);
+            // Also check memory alert if not in bank_alerts
+            match = null;
           }
 
           if (match && !match.isUsed && match.status !== "claimed" && intent.status !== "completed") {
@@ -680,6 +799,19 @@ export default async function handler(req: any, res: any) {
               ...existingDeposits.filter((d: any) => d && d.utr !== matchUtr && d.orderRef !== intent.orderRef)
             ].slice(0, 10);
 
+            const completedIntentData = {
+              ...intent,
+              status: "completed",
+              completedAt: Date.now(),
+              utr: matchUtr,
+              creditedAmount: creditAmt,
+              notified: true
+            };
+
+            // Update memory cache immediately (prevents any subsequent Firestore reads)
+            memIntents.set(strId, { data: completedIntentData, time: Date.now() });
+            if (intent.orderRef) memIntents.set(intent.orderRef, { data: completedIntentData, time: Date.now() });
+
             // Persist updated balance, latestDeposits, completed intent, and deposit record
             await Promise.all([
               setRestDoc("users", intent.userId, { 
@@ -694,14 +826,7 @@ export default async function handler(req: any, res: any) {
                 userEmail: intent.userEmail || "",
                 type: "deposit"
               }),
-              setRestDoc("payment_intents", intent.intentId, {
-                ...intent,
-                status: "completed",
-                completedAt: Date.now(),
-                utr: matchUtr,
-                creditedAmount: creditAmt,
-                notified: true
-              }),
+              setRestDoc("payment_intents", intent.intentId, completedIntentData),
               setRestDoc("bank_alerts", matchUtr, {
                 ...match,
                 isUsed: true,
@@ -717,7 +842,7 @@ export default async function handler(req: any, res: any) {
             intent.completedAt = Date.now();
 
             // Send 2nd confirmation message to Telegram Channel ONLY IF NOT ALREADY NOTIFIED
-            if (!match.notified && !intent.notified && !alreadyClaimed?.notified) {
+            if (!match.notified && !intent.notified) {
               try {
                 const tgDoc = await getRestDoc("settings", "telegram_bot").catch(() => null);
                 const botTok = (tgDoc?.botToken || "").trim();
@@ -894,7 +1019,12 @@ export default async function handler(req: any, res: any) {
     // 10. Bank Alerts: /api/bank-alerts or /api/admin/bank-alerts
     if (pathname === "/api/bank-alerts" || pathname === "/api/admin/bank-alerts") {
       if (req.method === "GET") {
-        const alerts = await listRestDocs("bank_alerts", 50);
+        const now = Date.now();
+        if (memBankAlertsCache && (now - memBankAlertsCache.time < 60 * 1000)) {
+          return res.status(200).json(memBankAlertsCache.data);
+        }
+        const alerts = await listRestDocs("bank_alerts", 30);
+        memBankAlertsCache = { data: alerts, time: Date.now() };
         return res.status(200).json(alerts);
       }
     }
@@ -1053,6 +1183,13 @@ export default async function handler(req: any, res: any) {
         return res.status(400).json({ success: false, error: "Missing userId or email" });
       }
 
+      // Check in-memory 10-minute cache first (0 Firestore reads!)
+      const cacheKey = targetUid || targetEmail;
+      const memCached = memUserDeposits.get(cacheKey);
+      if (memCached && (Date.now() - memCached.time < 10 * 60 * 1000)) {
+        return res.status(200).json({ success: true, deposits: memCached.data });
+      }
+
       const depositMap = new Map<string, any>();
 
       // Check User Profile document latestDeposits first (1 read instead of 100 reads!)
@@ -1060,15 +1197,17 @@ export default async function handler(req: any, res: any) {
         try {
           const uDoc = await getRestDoc("users", targetUid);
           if (uDoc && Array.isArray(uDoc.latestDeposits) && uDoc.latestDeposits.length > 0) {
-            return res.status(200).json({ success: true, deposits: uDoc.latestDeposits.slice(0, 10) });
+            const list = uDoc.latestDeposits.slice(0, 10);
+            memUserDeposits.set(cacheKey, { data: list, time: Date.now() });
+            return res.status(200).json({ success: true, deposits: list });
           }
         } catch (uErr) {}
       }
 
       try {
         const [depList, intentList] = await Promise.all([
-          listRestDocs("deposits", 50),
-          listRestDocs("payment_intents", 50)
+          listRestDocs("deposits", 20),
+          listRestDocs("payment_intents", 20)
         ]);
 
         for (const item of depList) {
@@ -1110,16 +1249,21 @@ export default async function handler(req: any, res: any) {
         const timeA = new Date(a.createdAt || a.timestamp || 0).getTime();
         const timeB = new Date(b.createdAt || b.timestamp || 0).getTime();
         return timeB - timeA;
-      });
+      }).slice(0, 10);
 
-      // Strictly return latest 10 deposits
-      return res.status(200).json({ success: true, deposits: deposits.slice(0, 10) });
+      memUserDeposits.set(cacheKey, { data: deposits, time: Date.now() });
+      return res.status(200).json({ success: true, deposits });
     }
 
     // 15. User Orders History: /api/user-orders/:userId or /api/user-orders
     if (pathname.startsWith("/api/user-orders")) {
       const parts = pathname.split("/").filter(Boolean);
-      const pathUid = parts.length >= 2 && parts[1] !== "user-orders" ? parts[1] : "";
+      let pathUid = "";
+      if (parts.length >= 3 && parts[1] === "user-orders") {
+        pathUid = parts[2];
+      } else if (parts.length === 2 && parts[0] === "api" && parts[1] !== "user-orders") {
+        pathUid = parts[1];
+      }
       const targetUid = String(req.query?.userId || pathUid || "").trim();
       const targetEmail = String(req.query?.email || req.query?.userEmail || "").trim().toLowerCase();
 
@@ -1127,19 +1271,28 @@ export default async function handler(req: any, res: any) {
         return res.status(200).json([]);
       }
 
+      // Check in-memory 10-minute cache first (0 Firestore reads!)
+      const cacheKey = targetUid || targetEmail;
+      const memCached = memUserOrders.get(cacheKey);
+      if (memCached && (Date.now() - memCached.time < 10 * 60 * 1000)) {
+        return res.status(200).json(memCached.data);
+      }
+
       // Check User Profile document latestOrders first (0 extra reads if cached!)
       if (targetUid) {
         try {
           const uDoc = await getRestDoc("users", targetUid);
           if (uDoc && Array.isArray(uDoc.latestOrders) && uDoc.latestOrders.length > 0) {
-            return res.status(200).json(uDoc.latestOrders.slice(0, 10));
+            const list = uDoc.latestOrders.slice(0, 10);
+            memUserOrders.set(cacheKey, { data: list, time: Date.now() });
+            return res.status(200).json(list);
           }
         } catch (e) {}
       }
 
       // Fallback query to orders collection
       try {
-        const ordList = await listRestDocs("orders", 50);
+        const ordList = await listRestDocs("orders", 25);
         const filtered = ordList.filter((item: any) => {
           if (!item) return false;
           const uUid = String(item.userId || item.user_id || "").trim();
@@ -1151,7 +1304,9 @@ export default async function handler(req: any, res: any) {
           const timeB = new Date(b.createdAt || b.created_at || 0).getTime();
           return timeB - timeA;
         });
-        return res.status(200).json(filtered.slice(0, 10));
+        const finalOrders = filtered.slice(0, 10);
+        memUserOrders.set(cacheKey, { data: finalOrders, time: Date.now() });
+        return res.status(200).json(finalOrders);
       } catch (e: any) {
         return res.status(200).json([]);
       }

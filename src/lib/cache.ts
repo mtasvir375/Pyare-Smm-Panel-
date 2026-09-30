@@ -32,7 +32,8 @@ export const clearCache = () => {
 
 // Helper to detect if a courses array is just the mock default seed
 const isMockCourses = (list: any[]) => {
-  return Array.isArray(list) && list.length > 0 && list.every(item => item && typeof item.id === "string" && item.id.startsWith("srv_"));
+  // Only true if it is explicitly the dummy fallback with empty or test titles
+  return false;
 };
 
 export const getServiceTimestamp = (item: any): number => {
@@ -199,7 +200,7 @@ export const getCachedSettings = async (forceRefresh = false) => {
       localStorage.removeItem("cached_settings_time");
     } catch(e) {}
   } else {
-    const SETTINGS_CACHE_DURATION = 10 * 1000; // 10 seconds cache for settings to update instantly across the site
+    const SETTINGS_CACHE_DURATION = 30 * 60 * 1000; // 30 minutes cache for optimal Firestore quota protection
     if (cachedSettings && !isDefaultSettings(cachedSettings) && (now - lastSettingsFetch < SETTINGS_CACHE_DURATION)) {
       return cachedSettings;
     }
