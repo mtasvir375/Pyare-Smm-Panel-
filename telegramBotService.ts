@@ -166,20 +166,8 @@ export function createPaymentIntent(params: {
     (i) => i.status === "pending" && i.expiresAt > now
   );
 
-  // Dynamic Zero-Collision Decimal Avoidance
-  const activeAmountsInPaise = new Set(
-    activePending.map((i) => Math.round(i.amount * 100))
-  );
-
-  const baseInPaise = Math.round(base * 100);
-  let selectedPaise = baseInPaise;
-  let offset = 0;
-  // If exact amount is already pending for another active session, offset by 0.01 up to 0.99
-  while (activeAmountsInPaise.has(selectedPaise) && offset < 99) {
-    offset++;
-    selectedPaise = baseInPaise + offset;
-  }
-  const finalAmount = Number((selectedPaise / 100).toFixed(2));
+  // Clean round amount without decimal paise offset (e.g. ₹10, ₹1, ₹20)
+  const finalAmount = Number(base.toFixed(2));
 
   // Generate unique 12-digit numeric Order Ref: e.g. 252525383637 (exactly 12 numeric digits, no pms prefix)
   const existingRefs = new Set(
@@ -778,12 +766,27 @@ export async function tryMatchAndCompleteIntent(params: {
   const detectedAmount = params.amount && params.amount > 0 ? params.amount : extractAmountOnly(text);
   const detectedBank = params.bank || extractBankOnly(text, params.senderName) || "Google Pay / PhonePe / UPI";
 
-  const matchedIntent = findMatchingIntent({
+  let matchedIntent = findMatchingIntent({
     orderRef: detectedRef,
     all12Digits: all12DigitMatches,
     amount: detectedAmount > 0 ? detectedAmount : undefined,
     utr: detectedUtr && detectedUtr.length === 12 ? detectedUtr : undefined
   });
+
+  // If not found in local memory (e.g. QR generated on custom domain / Vercel),
+  // check remote intent by unique 12-digit orderRef (1 single targeted doc read)
+  if (!matchedIntent && all12DigitMatches.length > 0) {
+    for (const num of all12DigitMatches) {
+      try {
+        const remoteDoc = await getRestDoc("payment_intents", num);
+        if (remoteDoc && remoteDoc.status === "pending") {
+          memoryIntents.set(remoteDoc.intentId, remoteDoc);
+          matchedIntent = remoteDoc;
+          break;
+        }
+      } catch {}
+    }
+  }
 
   if (matchedIntent && matchedIntent.status !== "completed") {
     console.log(`[ZERO-UTR-MATCH] Matched Order: ${matchedIntent.orderRef}, Amount: ₹${matchedIntent.amount} for user: ${matchedIntent.userId}`);
@@ -1059,12 +1062,27 @@ export async function processTelegramUpdate(update: any, token: string): Promise
   const detectedAmount = parsed.amount > 0 ? parsed.amount : extractAmountOnly(text);
   const detectedBank = (parsed.bank && parsed.bank !== "Unknown") ? parsed.bank : (extractBankOnly(text, senderName) || "Google Pay / PhonePe / UPI");
 
-  const matchedIntent = findMatchingIntent({
+  let matchedIntent = findMatchingIntent({
     orderRef: detectedRef,
     all12Digits: all12DigitMatches,
     amount: detectedAmount > 0 ? detectedAmount : undefined,
     utr: detectedUtr && detectedUtr.length === 12 ? detectedUtr : undefined
   });
+
+  // If not found in local memory (e.g. QR generated on custom domain / Vercel),
+  // check remote intent by unique 12-digit orderRef (1 single targeted doc read)
+  if (!matchedIntent && all12DigitMatches.length > 0) {
+    for (const num of all12DigitMatches) {
+      try {
+        const remoteDoc = await getRestDoc("payment_intents", num);
+        if (remoteDoc && remoteDoc.status === "pending") {
+          memoryIntents.set(remoteDoc.intentId, remoteDoc);
+          matchedIntent = remoteDoc;
+          break;
+        }
+      } catch {}
+    }
+  }
 
   if (matchedIntent) {
     console.log(`[ZERO-UTR-MATCH] Matched Order: ${matchedIntent.orderRef}, Amount: ₹${matchedIntent.amount} for user: ${matchedIntent.userId}`);

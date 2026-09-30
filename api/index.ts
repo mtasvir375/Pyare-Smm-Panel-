@@ -562,7 +562,10 @@ export default async function handler(req: any, res: any) {
         };
 
         try {
-          await setRestDoc("payment_intents", intentId, intentData);
+          await Promise.all([
+            setRestDoc("payment_intents", intentId, intentData),
+            setRestDoc("payment_intents", orderRef, intentData)
+          ]);
         } catch (dbErr: any) {
           console.warn("[INTENT-SAVE-WARN]", dbErr.message);
         }
@@ -676,6 +679,33 @@ export default async function handler(req: any, res: any) {
             intent.status = "completed";
             intent.utr = matchUtr;
             intent.completedAt = Date.now();
+
+            // Send 2nd confirmation message to Telegram Channel (Identical to default URL!)
+            try {
+              const tgDoc = await getRestDoc("settings", "telegram_bot").catch(() => null);
+              const botTok = (tgDoc?.botToken || "").trim();
+              const cId = (tgDoc?.chatId || "").trim();
+              if (botTok && cId) {
+                const rawSms = match.rawText || match.rawSms || `Mr MD SAUD ALAM paid you ₹${creditAmt.toFixed(2)} ${matchUtr}`;
+                const msgText = 
+                  `📋 <b>[SMS Auto-Forwarded & Received]</b>\n` +
+                  `<code>${rawSms}</code>\n\n` +
+                  `✅ <b>Payment Verified Instantly!</b>\n` +
+                  `💰 <b>Amount:</b> ₹${creditAmt.toFixed(2)}\n` +
+                  `🆔 <b>Order Ref:</b> <code>${intent.orderRef}</code>\n` +
+                  `🔢 <b>UTR:</b> <code>${matchUtr}</code>\n` +
+                  `👤 <b>User:</b> ${intent.userEmail || intent.userId}\n` +
+                  `🏦 <b>Gateway:</b> ${match.senderBank || match.bank || "UPI Payment"}\n` +
+                  `🟢 <b>Status:</b> Auto-received & wallet credited in 0.1s!`;
+                await axios.post(`https://api.telegram.org/bot${botTok}/sendMessage`, {
+                  chat_id: cId,
+                  text: msgText,
+                  parse_mode: "HTML"
+                }, { timeout: 4000 }).catch(() => {});
+              }
+            } catch (tgErr: any) {
+              console.warn("[TG-NOTIFY-ERR]", tgErr.message);
+            }
 
             return res.status(200).json({
               success: true,

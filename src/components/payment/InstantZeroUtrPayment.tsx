@@ -363,16 +363,16 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
       <div className="flex flex-col items-center p-4 bg-gray-50/70 rounded-3xl border border-gray-200 relative overflow-hidden">
         {/* Payable Amount Highlight */}
         <div className="text-center mb-3">
-          <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Pay Exact Amount</p>
+          <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Pay Amount</p>
           <div className="text-3xl font-black text-gray-900 tracking-tight flex items-baseline justify-center gap-0.5">
             <span className="text-xl text-emerald-600 font-bold">₹</span>
-            <span>{Number(intent?.amount || amount || 0).toFixed(2)}</span>
+            <span>
+              {(() => {
+                const val = Number(intent?.amount || amount || 0);
+                return Number.isInteger(val) ? val : val.toFixed(2);
+              })()}
+            </span>
           </div>
-          {intent && intent.amount !== intent.baseAmount && (
-            <p className="text-[10px] text-amber-700 font-medium bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md mt-1">
-              ⚠️ Pay exact ₹{Number(intent?.amount || amount || 0).toFixed(2)} (decimal ensures instant zero-collision credit)
-            </p>
-          )}
         </div>
 
         {/* Dynamic QR Code */}
