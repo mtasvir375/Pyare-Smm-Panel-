@@ -726,10 +726,10 @@ export default async function handler(req: any, res: any) {
         });
       }
 
-      // QUOTA SHIELD 2: Throttle polling to at most once per 12 seconds per intent (saves 80% reads!)
+      // QUOTA SHIELD 2: Throttle polling to at most once per 4 seconds per intent (saves 80% reads while staying ultra responsive!)
       const lastPoll = lastCheckIntentTime.get(strId) || 0;
       const now = Date.now();
-      if (memObj && memObj.data && (now - lastPoll < 12000)) {
+      if (memObj && memObj.data && memObj.data.status !== "pending" && (now - lastPoll < 4000)) {
         return res.status(200).json({
           success: true,
           status: "pending",
@@ -742,7 +742,7 @@ export default async function handler(req: any, res: any) {
       lastCheckIntentTime.set(strId, now);
 
       let intent = memObj?.data;
-      if (!intent) {
+      if (!intent || intent.status === "pending") {
         intent = await getRestDoc("payment_intents", strId);
         if (intent) {
           memIntents.set(strId, { data: intent, time: now });
