@@ -1406,11 +1406,6 @@ export default function Courses() {
             <p className="text-sm font-medium text-gray-500">
               ₹{Number(successDetails?.amount || 0).toFixed(2)} credited to your wallet.
             </p>
-            {successDetails?.balance !== undefined && (
-              <p className="text-base font-black text-emerald-600 pt-1">
-                Updated Balance: ₹{Number(successDetails.balance).toFixed(2)}
-              </p>
-            )}
           </div>
           <div className="pt-2">
             <Button
