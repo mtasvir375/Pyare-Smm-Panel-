@@ -49,6 +49,7 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
   const [secondsRemaining, setSecondsRemaining] = useState<number>(1800);
   const [isSuccess, setIsSuccess] = useState(false);
   const [completedData, setCompletedData] = useState<{ amount: number; utr?: string; newBalance?: number } | null>(null);
+  const [redirectCountdown, setRedirectCountdown] = useState<number>(3);
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedRef, setCopiedRef] = useState(false);
   const [checkingNow, setCheckingNow] = useState(false);
@@ -58,6 +59,24 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
 
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Auto-redirect timer after successful verification
+  useEffect(() => {
+    if (!isSuccess || !completedData) return;
+
+    const timer = setInterval(() => {
+      setRedirectCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          onSuccess(completedData.amount, completedData.newBalance);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [isSuccess, completedData, onSuccess]);
 
   const handleVerifyManualUtr = async () => {
     const clean = manualUtr.replace(/\D/g, "").trim();
@@ -83,7 +102,6 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
         if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
         if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
         toast.success(`🎉 Payment Verified! ₹${res.data.amount || intent?.amount || amount} added to your wallet!`);
-        onSuccess(res.data.amount || intent?.amount || amount, res.data.newBalance);
       } else {
         toast.error(res.data?.error || "UTR not verified yet. Please check the 12-digit number.");
       }
@@ -171,7 +189,6 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
         if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
 
         toast.success(`🎉 Payment Verified! ₹${res.data.creditedAmount || intent.amount} credited to your wallet!`);
-        onSuccess(res.data.creditedAmount || intent.amount, res.data.newBalance);
       } else if (showToast) {
         toast.info("Still awaiting bank SMS confirmation. Please allow a few seconds for the bank network to update.");
       }
@@ -257,7 +274,7 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
   if (isSuccess && completedData) {
     return (
       <div className="p-6 text-center space-y-5 animate-in zoom-in-95 duration-300">
-        <div className="w-20 h-20 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto shadow-lg shadow-emerald-600/20">
+        <div className="w-20 h-20 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto shadow-lg shadow-emerald-600/20 animate-bounce">
           <CheckCircle2 className="w-12 h-12" />
         </div>
         <div className="space-y-1.5">
@@ -268,10 +285,10 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
             ₹{Number(completedData.amount || 0).toFixed(2)} Credited!
           </h3>
           <p className="text-xs text-gray-500">
-            Payment confirmed via Telegram SMS alert without UTR entry!
+            Payment confirmed via Telegram SMS alert!
           </p>
           {completedData.newBalance !== undefined && (
-            <p className="text-xs font-bold text-emerald-600 pt-1">
+            <p className="text-sm font-black text-emerald-600 pt-1">
               New Wallet Balance: ₹{Number(completedData.newBalance || 0).toFixed(2)}
             </p>
           )}
@@ -288,12 +305,18 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
             </div>
           )}
         </div>
-        <Button
-          onClick={() => onSuccess(completedData.amount, completedData.newBalance)}
-          className="w-full h-12 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-md shadow-emerald-600/20"
-        >
-          Done
-        </Button>
+
+        <div className="space-y-2 pt-1">
+          <p className="text-[11px] font-bold text-emerald-700 animate-pulse">
+            Closing and returning to wallet in {redirectCountdown}s...
+          </p>
+          <Button
+            onClick={() => onSuccess(completedData.amount, completedData.newBalance)}
+            className="w-full h-12 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2"
+          >
+            <span>Done / Back to Wallet ({redirectCountdown}s)</span>
+          </Button>
+        </div>
       </div>
     );
   }
@@ -405,45 +428,6 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
             {intent?.upiId} • {intent?.payeeName}
           </p>
         </div>
-      </div>
-
-      {/* Manual UTR verification option if bank SMS didn't include 12-digit Order Ref */}
-      <div className="pt-1">
-        {!showManualUtrBox ? (
-          <button
-            type="button"
-            onClick={() => setShowManualUtrBox(true)}
-            className="w-full text-center text-xs text-primary hover:underline font-semibold py-1 transition-all"
-          >
-            Paid via UPI? Click here to enter 12-digit UTR if not verified automatically
-          </button>
-        ) : (
-          <div className="p-3.5 bg-blue-50/70 border border-blue-200 rounded-2xl space-y-2 animate-in fade-in duration-200">
-            <p className="text-xs font-bold text-blue-950">Enter 12-Digit UTR from your UPI App Receipt:</p>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                maxLength={12}
-                placeholder="e.g. 159290109800"
-                value={manualUtr}
-                onChange={(e) => setManualUtr(e.target.value.replace(/\D/g, "").slice(0, 12))}
-                className="flex-1 px-3 py-2 text-xs font-mono font-bold bg-white border border-blue-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-              <Button
-                type="button"
-                size="sm"
-                onClick={handleVerifyManualUtr}
-                disabled={submittingUtr || manualUtr.length !== 12}
-                className="rounded-xl bg-primary text-white font-bold text-xs px-4"
-              >
-                {submittingUtr ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : "Verify"}
-              </Button>
-            </div>
-            <p className="text-[10px] text-gray-500">
-              Found on GPay, PhonePe, Paytm receipt as "UPI Ref No" or "UTR No" (12 digits).
-            </p>
-          </div>
-        )}
       </div>
     </div>
   );

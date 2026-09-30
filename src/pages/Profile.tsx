@@ -76,7 +76,7 @@ const getYoutubeEmbedUrl = (url: string) => {
 };
 
 export default function Profile() {
-  const { user, userProfile: profile, loading: authLoading, isAdmin, isPaymentAdmin, signOut, updateUserProfileLocal } = useAuth() as any;
+  const { user, userProfile: profile, loading: authLoading, isAdmin, isPaymentAdmin, signOut, updateUserProfileLocal, refreshUserProfile } = useAuth() as any;
   const navigate = useNavigate();
   const [isAddFundsOpen, setIsAddFundsOpen] = useState(false);
   const [paymentStep, setPaymentStep] = useState<"amount" | "payment">("amount");
@@ -699,6 +699,11 @@ export default function Profile() {
                           onSuccess={(credited, newBal) => {
                             if (newBal !== undefined && updateUserProfileLocal) {
                               updateUserProfileLocal({ balance: newBal });
+                            } else if (updateUserProfileLocal) {
+                              updateUserProfileLocal({ balance: (profile?.balance || 0) + credited });
+                            }
+                            if (refreshUserProfile) {
+                              refreshUserProfile();
                             }
                             resetAddFunds();
                           }}

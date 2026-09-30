@@ -1109,7 +1109,7 @@ export default function Courses() {
           <DialogHeader className="pb-2">
             <DialogTitle className="text-lg sm:text-xl font-bold">Add Funds to Wallet</DialogTitle>
             <DialogDescription className="text-xs font-medium text-gray-500">
-              Enter amount, scan QR, and enter the 12-digit UTR to verify payment instantly.
+              Enter amount, scan QR, and to verify payment instantly
             </DialogDescription>
           </DialogHeader>
 
