@@ -60,6 +60,41 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  const persistApprovedDepositLocally = (depAmount: number, depUtr: string, orderRef?: string) => {
+    try {
+      const depKey = `deposits_${userId}`;
+      const cached = localStorage.getItem(depKey) || sessionStorage.getItem(depKey);
+      let existingList: any[] = [];
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed)) existingList = parsed;
+        } catch (e) {}
+      }
+      const newEntry = {
+        id: `dep_auto_${orderRef || depUtr}_${Date.now()}`,
+        userId,
+        amount: Number(depAmount),
+        utr: depUtr,
+        orderRef: orderRef || depUtr,
+        status: "approved",
+        method: "Instant UPI QR",
+        gateway: "UPI Auto-Verify",
+        createdAt: new Date().toISOString()
+      };
+      const updated = [
+        newEntry,
+        ...existingList.filter((d: any) => d && d.utr !== depUtr && d.orderRef !== orderRef)
+      ].slice(0, 10);
+      const jsonStr = JSON.stringify(updated);
+      const nowStr = Date.now().toString();
+      localStorage.setItem(depKey, jsonStr);
+      localStorage.setItem(`${depKey}_time`, nowStr);
+      sessionStorage.setItem(depKey, jsonStr);
+      sessionStorage.setItem(`${depKey}_time`, nowStr);
+    } catch (e) {}
+  };
+
   // Auto-redirect timer after successful verification
   useEffect(() => {
     if (!isSuccess || !completedData) return;
@@ -93,15 +128,17 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
         userEmail
       });
       if (res.data?.success) {
+        const finalAmt = res.data.amount || intent?.amount || amount;
         setIsSuccess(true);
         setCompletedData({
-          amount: res.data.amount || intent?.amount || amount,
+          amount: finalAmt,
           utr: clean,
           newBalance: res.data.newBalance
         });
+        persistApprovedDepositLocally(finalAmt, clean, intent?.orderRef);
         if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
         if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-        toast.success(`🎉 Payment Verified! ₹${res.data.amount || intent?.amount || amount} added to your wallet!`);
+        toast.success(`🎉 Payment Verified! ₹${finalAmt} added to your wallet!`);
       } else {
         toast.error(res.data?.error || "UTR not verified yet. Please check the 12-digit number.");
       }
@@ -178,17 +215,20 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
     try {
       const res = await axios.get(`/api/payments/check-intent/${intent.intentId}`, { timeout: 6000 });
       if (res.data?.success && res.data.status === "completed") {
+        const finalAmt = res.data.creditedAmount || intent.amount;
+        const finalUtr = res.data.utr || intent.orderRef;
         setIsSuccess(true);
         setCompletedData({
-          amount: res.data.creditedAmount || intent.amount,
-          utr: res.data.utr,
+          amount: finalAmt,
+          utr: finalUtr,
           newBalance: res.data.newBalance
         });
+        persistApprovedDepositLocally(finalAmt, finalUtr, intent.orderRef);
 
         if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
         if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
 
-        toast.success(`🎉 Payment Verified! ₹${res.data.creditedAmount || intent.amount} credited to your wallet!`);
+        toast.success(`🎉 Payment Verified! ₹${finalAmt} credited to your wallet!`);
       } else if (showToast) {
         toast.info("Still awaiting bank SMS confirmation. Please allow a few seconds for the bank network to update.");
       }

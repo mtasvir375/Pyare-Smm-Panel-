@@ -195,27 +195,52 @@ export default function Dashboard() {
       }
     };
 
+    const parseDepositsList = (raw: any[]): any[] => {
+      if (!Array.isArray(raw)) return [];
+      const map = new Map<string, any>();
+      raw.forEach((d: any, idx: number) => {
+        if (!d) return;
+        const key = d.id || d.utr || d.orderRef || `dep_${idx}`;
+        if (key) map.set(key, d);
+      });
+      const list = Array.from(map.values());
+      list.sort((a, b) => {
+        const timeA = getTimestampMs(a.createdAt || a.timestamp || a.completedAt || a.created_at || a.usedAt);
+        const timeB = getTimestampMs(b.createdAt || b.timestamp || b.completedAt || b.created_at || b.usedAt);
+        return timeB - timeA;
+      });
+      return list;
+    };
+
     const fetchDeposits = async () => {
       if (!user) return;
       try {
         const depKey = `deposits_${user.uid}`;
         const cached = localStorage.getItem(depKey) || sessionStorage.getItem(depKey);
-        const cachedTime = Number(localStorage.getItem(`${depKey}_time`) || sessionStorage.getItem(`${depKey}_time`) || 0);
         let hasDeposits = false;
+        let initialDeposits: any[] = [];
 
         if (cached) {
           try {
             const parsed = JSON.parse(cached);
             if (Array.isArray(parsed) && parsed.length > 0) {
-              setDeposits(parsed.slice(0, 10));
-              hasDeposits = true;
+              initialDeposits = parseDepositsList(parsed);
+              if (initialDeposits.length > 0) {
+                setDeposits(initialDeposits.slice(0, 10));
+                hasDeposits = true;
+              }
             }
           } catch (e) {}
-        } else if (userProfile && Array.isArray((userProfile as any).latestDeposits) && (userProfile as any).latestDeposits.length > 0) {
+        }
+        
+        if (!hasDeposits && userProfile && Array.isArray((userProfile as any).latestDeposits) && (userProfile as any).latestDeposits.length > 0) {
           // If browser cache is cleared, load immediately from persistent User Profile (0ms, 0 extra reads!)
-          setDeposits((userProfile as any).latestDeposits.slice(0, 10));
-          hasDeposits = true;
-          console.log(`[DASHBOARD] ✅ Restored ${(userProfile as any).latestDeposits.length} deposits from persistent User Profile!`);
+          initialDeposits = parseDepositsList((userProfile as any).latestDeposits);
+          if (initialDeposits.length > 0) {
+            setDeposits(initialDeposits.slice(0, 10));
+            hasDeposits = true;
+            console.log(`[DASHBOARD] ✅ Restored ${initialDeposits.length} deposits from persistent User Profile!`);
+          }
         }
 
         // Strict Quota Guard: If deposits are already loaded from cache or userProfile, SKIP network read completely!
@@ -225,7 +250,9 @@ export default function Dashboard() {
 
         const fresh = await dbClient.getUserDeposits(user.uid, user.email || undefined);
         if (Array.isArray(fresh) && isMounted) {
-          const latest10Deposits = fresh.slice(0, 10);
+          const combined = [...initialDeposits, ...fresh];
+          const sortedDeposits = parseDepositsList(combined);
+          const latest10Deposits = sortedDeposits.slice(0, 10);
           setDeposits(latest10Deposits);
           try {
             const jsonStr = JSON.stringify(latest10Deposits);
