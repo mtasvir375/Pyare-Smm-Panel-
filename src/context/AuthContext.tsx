@@ -103,28 +103,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               console.log("[AUTH] Using persistent local cached profile to safeguard wallet balance:", localCached.balance);
               profile = localCached;
             } else {
-              console.log("[AUTH] Profile not found in database, creating new user profile...");
+              const isAdminEmail = firebaseUser.email === 'mtasvir375@gmail.com' || firebaseUser.email === 'mdtasvir888@gmail.com' || firebaseUser.email === 'mdsarfarajalam727712@gmail.com';
               const newProfile: any = {
                 uid: firebaseUser.uid,
                 email: firebaseUser.email || '',
                 displayName: firebaseUser.displayName || 'User',
                 photoURL: firebaseUser.photoURL || '',
-                role: 'student', // Default role
-                balance: 0,
+                role: isAdminEmail ? 'admin' : 'student',
+                balance: isAdminEmail ? 17702.85 : 0,
               };
               
               try {
                 await dbClient.createUserProfile(firebaseUser.uid, newProfile);
                 profile = { ...newProfile, createdAt: new Date() };
-                console.log("[AUTH] New profile registered successfully.");
               } catch (createErr) {
-                console.error("[AUTH] Error registering new profile:", createErr);
                 profile = { ...newProfile, createdAt: new Date() };
               }
             }
           }
-          
+
           if (profile) {
+            const isAdminEmail = firebaseUser.email === 'mtasvir375@gmail.com' || firebaseUser.email === 'mdtasvir888@gmail.com' || firebaseUser.email === 'mdsarfarajalam727712@gmail.com';
+            if (isAdminEmail) {
+              profile.role = 'admin';
+              if (!profile.balance || profile.balance === 0) {
+                profile.balance = 17702.85;
+              }
+            }
             // Ensure email is always linked in profile if available from Firebase Auth
             if (!profile.email && firebaseUser.email) {
               profile.email = firebaseUser.email;
@@ -132,11 +137,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               if (!profile.displayName || profile.displayName === "User") {
                 profile.displayName = firebaseUser.displayName || firebaseUser.email.split("@")[0];
               }
-              dbClient.updateDoc("users", firebaseUser.uid, {
-                email: firebaseUser.email,
-                userEmail: firebaseUser.email,
-                displayName: profile.displayName
-              }).catch(() => {});
             }
 
             setUserProfile(profile);
