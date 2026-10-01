@@ -287,6 +287,14 @@ export default async function handler(req: any, res: any) {
       }
     }
 
+    // 2.5 Clear Cache: /api/clear-cache
+    if (pathname === "/api/clear-cache") {
+      memCoursesCache = null;
+      memSettingsCache = null;
+      memProvidersCache = null;
+      return res.status(200).json({ success: true, message: "Cache cleared" });
+    }
+
     // 3. Courses: /api/courses
     if (pathname === "/api/courses") {
       const isFresh = req.query?.fresh === "1" || req.query?.fresh === "true";
@@ -297,15 +305,7 @@ export default async function handler(req: any, res: any) {
       }
       if (req.method === "GET") {
         try {
-          const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/courses?pageSize=200&key=${FIREBASE_API_KEY}`;
-          const response = await axios.get(url, { timeout: 7000 });
-          const documents = response.data.documents || [];
-          const courses = documents.map((doc: any) => {
-            const parts = doc.name.split("/");
-            const id = parts[parts.length - 1];
-            const data = unwrapFirestoreFields(doc.fields);
-            return { id, ...data };
-          });
+          const courses = await listRestDocs("courses", 200);
           const categoryOrder = ["Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Twitter", "Other"];
           courses.sort((a: any, b: any) => {
             const idxA = categoryOrder.indexOf(a.category || "Other");
@@ -313,7 +313,9 @@ export default async function handler(req: any, res: any) {
             if (idxA !== idxB) return (idxA === -1 ? 99 : idxA) - (idxB === -1 ? 99 : idxB);
             return (a.serviceId || 0) - (b.serviceId || 0);
           });
-          memCoursesCache = { data: courses, time: Date.now() };
+          if (courses.length > 0) {
+            memCoursesCache = { data: courses, time: Date.now() };
+          }
           res.setHeader("Cache-Control", "public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800");
           return res.status(200).json(courses);
         } catch (err: any) {

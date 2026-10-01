@@ -50,7 +50,7 @@
       "customGateway2Name": "",
       "selectedTheme": "amber"
     },
-    "time": 1790550381696
+    "time": 1790840683932
   },
   "providers": [
     [
@@ -113,24 +113,19 @@
         "data": {
           "id": "HWCT6z827SOA4eheAbQU",
           "title": "Followers indian 🇮🇳 (Lifetime ♻️)",
+          "pricePerThousand": 399,
+          "minLimit": 50,
+          "providerId": "3eaZMZbSKVvMUbRI4kei",
+          "providerServiceId": "6175",
           "category": "Instagram",
           "serviceType": "followers",
           "preventDuplicateLink": false,
-          "status": "published",
-          "description": "High quality followers service",
-          "createdAt": "2026-07-17T11:40:35.181Z",
           "isPackage": false,
-          "comboItems": [],
           "isCombo": false,
-          "providerId": "z4luhVVgYKgHULKPXj8j",
-          "packagePrice": null,
-          "providerServiceId": "5120",
-          "packageQuantity": null,
-          "minLimit": 100,
-          "pricePerThousand": 320,
-          "updatedAt": "2026-09-12T07:59:23.275Z"
+          "comboItems": [],
+          "updatedAt": "2026-09-30T17:58:57.080Z"
         },
-        "time": 1789408774524
+        "time": 1790840780302
       }
     ],
     [
@@ -173,7 +168,6 @@
           "category": "Instagram",
           "status": "published",
           "providerServiceId": "4136",
-          "title": "Share reels/post ",
           "providerId": "z9lfdj7ByNCeGNO6WbGZ",
           "preventDuplicateLink": false,
           "iconUrl": null,
@@ -181,10 +175,11 @@
           "minLimit": 100,
           "packagePrice": null,
           "packageQuantity": null,
-          "pricePerThousand": 12,
-          "updatedAt": "2026-09-10T18:13:36.024Z"
+          "pricePerThousand": 9,
+          "title": "Share reels/post ♻️",
+          "updatedAt": "2026-09-17T10:20:41.972Z"
         },
-        "time": 1789408774524
+        "time": 1790840780302
       }
     ],
     [
@@ -192,26 +187,20 @@
       {
         "data": {
           "id": "EUEsSLoKiJziaepvTUpw",
+          "title": "Like (Lifetime ♻️) ",
+          "pricePerThousand": 12,
+          "minLimit": 100,
+          "providerId": "3eaZMZbSKVvMUbRI4kei",
+          "providerServiceId": "5998",
           "category": "Instagram",
           "serviceType": "likes",
           "preventDuplicateLink": false,
-          "iconUrl": null,
-          "status": "published",
-          "description": "High quality likes service",
-          "createdAt": "2026-05-01T14:43:18.201Z",
           "isPackage": false,
-          "title": "Like (Lifetime ♻️) ",
-          "comboItems": [],
           "isCombo": false,
-          "packagePrice": null,
-          "packageQuantity": null,
-          "minLimit": 50,
-          "providerServiceId": "5998",
-          "providerId": "z4luhVVgYKgHULKPXj8j",
-          "pricePerThousand": 10,
-          "updatedAt": "2026-09-07T09:30:05.354Z"
+          "comboItems": [],
+          "updatedAt": "2026-09-30T17:52:41.879Z"
         },
-        "time": 1789408774524
+        "time": 1790840780302
       }
     ],
     [
@@ -220,25 +209,19 @@
         "data": {
           "id": "h2yHtDh9LZfpggbHBte1",
           "title": "Comment Positive 🥰",
-          "category": "Instagram",
-          "minLimit": 100,
-          "serviceType": "other",
-          "providerServiceId": "6239",
-          "preventDuplicateLink": false,
-          "iconUrl": null,
-          "status": "published",
-          "description": "High quality other service",
-          "createdAt": "2026-05-04T09:28:36.709Z",
           "pricePerThousand": 95,
+          "minLimit": 100,
+          "providerId": "item_1790647662103_pnjh2",
+          "providerServiceId": "6239",
+          "category": "Instagram",
+          "serviceType": "other",
+          "preventDuplicateLink": false,
           "isPackage": false,
-          "comboItems": [],
-          "packagePrice": null,
           "isCombo": false,
-          "packageQuantity": null,
-          "providerId": "z9lfdj7ByNCeGNO6WbGZ",
-          "updatedAt": "2026-09-06T08:18:31.357Z"
+          "comboItems": [],
+          "updatedAt": "2026-09-30T18:00:35.327Z"
         },
-        "time": 1789408774524
+        "time": 1790840780302
       }
     ],
     [
@@ -265,7 +248,7 @@
           "packageQuantity": null,
           "updatedAt": "2026-08-31T10:53:41.899Z"
         },
-        "time": 1789408774524
+        "time": 1790840780302
       }
     ],
     [
@@ -292,7 +275,7 @@
           "isCombo": false,
           "updatedAt": "2026-08-31T10:52:13.501Z"
         },
-        "time": 1789408774524
+        "time": 1790840780302
       }
     ],
     [
@@ -301,25 +284,19 @@
         "data": {
           "id": "FakhHsBeCCnOxIyAMiLY",
           "title": "Like ( Refill ♻️ )",
-          "category": "YouTube",
+          "pricePerThousand": 95,
           "minLimit": 50,
+          "providerId": "3eaZMZbSKVvMUbRI4kei",
+          "providerServiceId": "6030",
+          "category": "YouTube",
           "serviceType": "likes",
           "preventDuplicateLink": true,
-          "iconUrl": null,
-          "status": "published",
-          "description": "High quality likes service",
-          "createdAt": "2026-05-07T09:15:28.044Z",
           "isPackage": false,
-          "providerServiceId": "6030",
-          "providerId": "z4luhVVgYKgHULKPXj8j",
-          "pricePerThousand": 85,
-          "comboItems": [],
-          "packagePrice": null,
           "isCombo": false,
-          "packageQuantity": null,
-          "updatedAt": "2026-08-31T10:50:22.385Z"
+          "comboItems": [],
+          "updatedAt": "2026-09-30T18:12:20.413Z"
         },
-        "time": 1789408774524
+        "time": 1790840780302
       }
     ],
     [
@@ -373,7 +350,7 @@
           "title": "Followers Lifetime Refill ♻️",
           "updatedAt": "2026-09-14T17:46:16.772Z"
         },
-        "time": 1789408774524
+        "time": 1790840780302
       }
     ],
     [
@@ -400,7 +377,7 @@
           "minLimit": 500,
           "updatedAt": "2026-09-04T17:45:57.323Z"
         },
-        "time": 1789408774524
+        "time": 1790840780302
       }
     ],
     [
@@ -408,26 +385,20 @@
       {
         "data": {
           "id": "g4HYE7cXPxfUFnbDg83T",
-          "description": "High quality followers service",
-          "isCombo": false,
+          "title": "Facebook Followers ( Lifetime Garantee ♻️ ) ",
+          "pricePerThousand": 99,
+          "minLimit": 100,
+          "providerId": "3eaZMZbSKVvMUbRI4kei",
+          "providerServiceId": "6124",
+          "category": "Facebook",
           "serviceType": "followers",
           "preventDuplicateLink": false,
           "isPackage": false,
-          "category": "Facebook",
-          "status": "published",
-          "iconUrl": null,
+          "isCombo": false,
           "comboItems": [],
-          "pricePerThousand": 99,
-          "title": "Facebook Followers ",
-          "createdAt": "2026-08-30T09:54:22.190Z",
-          "packagePrice": null,
-          "providerServiceId": "6124",
-          "packageQuantity": null,
-          "providerId": "z4luhVVgYKgHULKPXj8j",
-          "minLimit": 100,
-          "updatedAt": "2026-08-31T11:03:48.476Z"
+          "updatedAt": "2026-09-30T18:02:22.462Z"
         },
-        "time": 1789408774524
+        "time": 1790840780302
       }
     ],
     [
@@ -454,7 +425,7 @@
           "pricePerThousand": 46,
           "updatedAt": "2026-08-31T10:57:50.123Z"
         },
-        "time": 1789408774524
+        "time": 1790840780302
       }
     ],
     [
@@ -481,7 +452,7 @@
           "isCombo": false,
           "updatedAt": "2026-08-31T10:51:14.552Z"
         },
-        "time": 1789408774524
+        "time": 1790840780302
       }
     ],
     [
@@ -509,7 +480,7 @@
           "packageQuantity": null,
           "updatedAt": "2026-09-05T23:28:11.098Z"
         },
-        "time": 1789408774524
+        "time": 1790840780302
       }
     ],
     [
@@ -517,27 +488,20 @@
       {
         "data": {
           "id": "88lFc5cuxmpbsUxVjYSF",
-          "serviceType": "followers",
-          "providerServiceId": "6181",
-          "status": "published",
-          "preventDuplicateLink": false,
-          "description": "High quality followers service",
           "title": "Tg Members ( Lifetime Refill ♻️ )",
-          "comboItems": [],
-          "minLimit": 20,
-          "category": "Telegram",
-          "updatedAt": "2026-09-05T12:42:18.944Z",
-          "packagePrice": null,
-          "iconUrl": null,
-          "packageQuantity": null,
-          "pricePerThousand": 95,
-          "isCombo": false,
-          "isPackage": false,
-          "createdAt": "2026-09-05T12:42:20.222Z",
+          "pricePerThousand": 165,
+          "minLimit": 50,
           "providerId": "talVdnSEg8QGpNVpaUTi",
-          "providerName": "Wholesale Smm Store"
+          "providerServiceId": "6181",
+          "category": "Telegram",
+          "serviceType": "followers",
+          "preventDuplicateLink": false,
+          "isPackage": false,
+          "isCombo": false,
+          "comboItems": [],
+          "updatedAt": "2026-09-30T18:11:40.401Z"
         },
-        "time": 1789408774524
+        "time": 1790840780302
       }
     ],
     [
@@ -546,25 +510,19 @@
         "data": {
           "id": "q8qGCtLBRRbfv7aqeGvU",
           "title": "Post View ♻️",
+          "pricePerThousand": 5,
+          "minLimit": 500,
+          "providerId": "3eaZMZbSKVvMUbRI4kei",
+          "providerServiceId": "4808",
           "category": "Telegram",
-          "minLimit": 1000,
           "serviceType": "views",
           "preventDuplicateLink": true,
-          "iconUrl": null,
-          "status": "published",
-          "description": "High quality views service",
-          "createdAt": "2026-05-02T20:47:12.729Z",
           "isPackage": false,
-          "providerId": "z4luhVVgYKgHULKPXj8j",
-          "pricePerThousand": 7,
-          "comboItems": [],
-          "packagePrice": null,
           "isCombo": false,
-          "providerServiceId": "4808",
-          "packageQuantity": null,
-          "updatedAt": "2026-08-31T10:56:50.712Z"
+          "comboItems": [],
+          "updatedAt": "2026-09-30T18:04:04.052Z"
         },
-        "time": 1789408774524
+        "time": 1790840780302
       }
     ],
     [
@@ -591,7 +549,7 @@
           "pricePerThousand": 12,
           "updatedAt": "2026-09-14T17:47:03.011Z"
         },
-        "time": 1789408774524
+        "time": 1790840780302
       }
     ],
     [
@@ -618,7 +576,7 @@
           "minLimit": 300,
           "updatedAt": "2026-09-05T23:45:45.337Z"
         },
-        "time": 1789408774524
+        "time": 1790840780302
       }
     ],
     [
@@ -647,6 +605,51 @@
         },
         "time": 1789408774524
       }
+    ],
+    [
+      "item_1790792133883_0oavo",
+      {
+        "data": {
+          "id": "item_1790792133883_0oavo",
+          "title": "Reels view ",
+          "category": "Instagram",
+          "pricePerThousand": 1.2,
+          "minLimit": 1000,
+          "serviceType": "views",
+          "providerId": "item_1790647662103_pnjh2",
+          "providerServiceId": "4545",
+          "preventDuplicateLink": false,
+          "status": "published",
+          "description": "High quality views service",
+          "createdAt": "2026-09-30T18:15:33.121Z",
+          "updatedAt": "2026-09-30T18:15:33.121Z",
+          "isPackage": false,
+          "isCombo": false,
+          "comboItems": []
+        },
+        "time": 1790840780302
+      }
+    ],
+    [
+      "item_1790658127118_dcs8y",
+      {
+        "data": {
+          "id": "item_1790658127118_dcs8y",
+          "title": "Telegram Members ♻️ Lifetime Garantee ",
+          "pricePerThousand": 175,
+          "minLimit": 100,
+          "providerId": "item_1790647662103_pnjh2",
+          "providerServiceId": "4545",
+          "category": "Telegram",
+          "serviceType": "views",
+          "preventDuplicateLink": false,
+          "isPackage": false,
+          "isCombo": false,
+          "comboItems": [],
+          "updatedAt": "2026-09-30T18:06:30.868Z"
+        },
+        "time": 1790840780302
+      }
     ]
   ],
   "users": [
@@ -654,19 +657,162 @@
       "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
       {
         "data": {
-          "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-          "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIVDCPXKVjVCP0jqcCpWx5c759WFIsH20U7smDKXtVCJQmldT5A=s96-c",
-          "balance": 475038.03,
-          "last_ordered_at": "2026-07-12T20:24:51.921Z",
-          "lastActive": "2026-06-17T09:24:31.827Z",
-          "updatedAt": "2026-09-27T23:20:25.931Z",
-          "lastOrderedAt": "2026-09-27T23:20:26.347Z",
-          "displayName": "Md Saad Alam",
-          "email": "mtasvir375@gmail.com",
-          "createdAt": "2026-09-14T13:39:37.418Z",
-          "role": "student"
+          "balance": 17705.52,
+          "latestOrders": [
+            {
+              "title": "Reels view ",
+              "totalPrice": 6,
+              "createdAt": "2026-10-01T05:47:12.153Z",
+              "targetLink": "https://www.instagram.com/reel/Dbkxk4QykfW/?stkn=MWpubDI2NWlxdTFyaQ==",
+              "userEmail": "mtasvir375@gmail.com",
+              "category": "Instagram",
+              "courseId": "item_1790792133883_0oavo",
+              "providerOrderId": "2840311",
+              "serviceId": "item_1790792133883_0oavo",
+              "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+              "quantity": 5000,
+              "id": "ord_1790833626814_pnawo",
+              "status": "In progress"
+            },
+            {
+              "quantity": 1000,
+              "title": "Reels view ",
+              "providerOrderId": "2839342",
+              "serviceId": "item_1790792133883_0oavo",
+              "courseId": "item_1790792133883_0oavo",
+              "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+              "totalPrice": 1.2,
+              "createdAt": "2026-09-30T20:47:35.608Z",
+              "id": "ord_1790801250448_86ee8",
+              "userEmail": "mtasvir375@gmail.com",
+              "targetLink": "Cccccxx.bbh",
+              "status": "In progress",
+              "category": "Instagram"
+            },
+            {
+              "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+              "courseId": "item_1790792133883_0oavo",
+              "status": "In progress",
+              "category": "Instagram",
+              "serviceId": "item_1790792133883_0oavo",
+              "providerOrderId": "2839265",
+              "quantity": 1000,
+              "id": "ord_1790798325237_ox9em",
+              "title": "Reels view ",
+              "targetLink": "Evvssvsgsv",
+              "createdAt": "2026-09-30T19:58:49.255Z",
+              "userEmail": "mtasvir375@gmail.com",
+              "totalPrice": 1.2
+            },
+            {
+              "providerOrderId": "2838984",
+              "category": "Instagram",
+              "serviceId": "item_1790792133883_0oavo",
+              "courseId": "item_1790792133883_0oavo",
+              "createdAt": "2026-09-30T18:17:43.878Z",
+              "userEmail": "mtasvir375@gmail.com",
+              "targetLink": "https://www.instagram.com/reel/DXPELjdCS3d/?stkn=MWt1dmVoenZsMW90Zg==",
+              "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+              "id": "ord_1790792259338_ei89z",
+              "totalPrice": 18,
+              "quantity": 15000,
+              "title": "Reels view ",
+              "status": "In progress"
+            },
+            {
+              "id": "ord_1790781454975_rwei5",
+              "category": "Instagram",
+              "courseId": "item_1790658127118_dcs8y",
+              "totalPrice": 0.1,
+              "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+              "serviceId": "item_1790658127118_dcs8y",
+              "targetLink": "Htjeyjatjs.fnjsng",
+              "quantity": 200,
+              "status": "In progress",
+              "createdAt": "2026-09-30T15:17:40.898Z",
+              "userEmail": "mtasvir375@gmail.com",
+              "title": "Reels view ♻️",
+              "providerOrderId": "2838225"
+            },
+            {
+              "status": "In progress",
+              "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+              "quantity": 200,
+              "id": "ord_1790781436706_1yt20",
+              "category": "Instagram",
+              "serviceId": "item_1790658127118_dcs8y",
+              "courseId": "item_1790658127118_dcs8y",
+              "providerOrderId": "2838222",
+              "totalPrice": 0.1,
+              "title": "Reels view ♻️",
+              "createdAt": "2026-09-30T15:17:21.690Z",
+              "targetLink": "Ggfddd.bggf",
+              "userEmail": "mtasvir375@gmail.com"
+            },
+            {
+              "totalPrice": 1.2,
+              "targetLink": "BlfusuYsy.fyfttt",
+              "quantity": 100,
+              "id": "ord_1790772370764_3jvdp",
+              "serviceId": "kZuLCxdvTWoiP17qwKGw",
+              "status": "In progress",
+              "providerOrderId": "2837721",
+              "category": "Telegram",
+              "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+              "courseId": "kZuLCxdvTWoiP17qwKGw",
+              "title": "Telegram mix positive reaction 😀🥰❤️🤪",
+              "userEmail": "mtasvir375@gmail.com",
+              "createdAt": "2026-09-30T12:46:12.378Z"
+            },
+            {
+              "status": "In progress",
+              "quantity": 200,
+              "targetLink": "Gjxjggnhkgxxjhkjgjgxkukpuupig.bh",
+              "id": "ord_1790771666696_znzox",
+              "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+              "totalPrice": 0.1,
+              "title": "Reels view ♻️",
+              "serviceId": "item_1790658127118_dcs8y",
+              "courseId": "item_1790658127118_dcs8y",
+              "providerOrderId": "2837675",
+              "category": "Instagram",
+              "userEmail": "mtasvir375@gmail.com",
+              "createdAt": "2026-09-30T12:34:31.082Z"
+            },
+            {
+              "totalPrice": 0.1,
+              "targetLink": "Gjgekehkeyk.egwgng",
+              "id": "ord_1790767073287_j1u6m",
+              "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+              "courseId": "item_1790658127118_dcs8y",
+              "category": "Instagram",
+              "status": "In progress",
+              "providerOrderId": "2837391",
+              "title": "Reels view ♻️",
+              "quantity": 200,
+              "createdAt": "2026-09-30T11:17:58.592Z",
+              "userEmail": "mtasvir375@gmail.com",
+              "serviceId": "item_1790658127118_dcs8y"
+            },
+            {
+              "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+              "category": "Instagram",
+              "status": "In progress",
+              "courseId": "item_1790658127118_dcs8y",
+              "providerOrderId": "2837014",
+              "targetLink": "Mvvgf.hgrrv.t",
+              "serviceId": "item_1790658127118_dcs8y",
+              "totalPrice": 0.1,
+              "id": "ord_1790759775205_7c2k3",
+              "quantity": 200,
+              "createdAt": "2026-09-30T09:16:20.609Z",
+              "userEmail": "mtasvir375@gmail.com",
+              "title": "Reels view ♻️"
+            }
+          ],
+          "lastOrderedAt": "2026-10-01T05:47:12.154Z"
         },
-        "time": 1790551227204
+        "time": 1790840705798
       }
     ],
     [
@@ -685,6 +831,7 @@
       "w1VAF0MJoYducsSTQtMRW907OBX2",
       {
         "data": {
+          "id": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "referralEarnings": 26875,
           "balance": 205.98,
           "lastOrderedAt": "2026-09-18T20:49:43.838Z",
