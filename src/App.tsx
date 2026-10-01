@@ -16,18 +16,16 @@ import Login from "./pages/Login";
 import LandingPage from "./pages/LandingPage";
 import { auth } from "@/lib/firebase";
 
-export const STABLE_CLOUD_RUN_BACKEND = "";
+import { getApiBaseUrl } from "./lib/apiConfig";
+
+export const STABLE_CLOUD_RUN_BACKEND = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
 
 export const CLOUD_RUN_BACKENDS = [
-  ""
+  "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app"
 ];
 
-export function getApiBaseUrl(): string {
-  return "";
-}
-
 // Global setup for axios base URL and request/response interceptors
-axios.defaults.baseURL = "";
+axios.defaults.baseURL = getApiBaseUrl();
 
 axios.interceptors.request.use(
   async (config) => {

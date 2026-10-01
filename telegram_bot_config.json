@@ -1,14 +1,15 @@
 {
   "botToken": "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0",
   "chatId": "-1004483507103",
-  "upiId": "mycustomupi@ybl",
-  "payeeName": "My Custom SMM Panel Name",
+  "upiId": "9122557342@ybl",
+  "payeeName": "Pyare SMM Panel - Custom Domain Live",
   "enabled": true,
   "lastUpdateId": 33028605,
   "botUsername": "BbbSmart_bot",
-  "startedAt": "2026-10-01T19:17:35.625Z",
-  "lastPolledAt": "2026-10-01T19:17:35.625Z",
+  "startedAt": "2026-10-01T19:37:19.971Z",
+  "lastPolledAt": "2026-10-01T19:37:19.971Z",
   "mode": "polling",
   "instantQrEnabled": true,
-  "manualQrEnabled": false
+  "manualQrEnabled": false,
+  "lastError": "Conflict: Waiting for other connection to close..."
 }

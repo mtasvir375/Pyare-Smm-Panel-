@@ -1,12 +1,12 @@
 {
   "settings": {
     "data": {
-      "upiId": "mycustomupi@ybl",
-      "merchantName": "My Custom SMM Panel Name",
-      "minDeposit": 20,
-      "updatedAt": "2026-10-01T19:17:36.268Z"
+      "upiId": "9122557342@ybl",
+      "merchantName": "Pyare SMM Panel - Custom Domain Live",
+      "minDeposit": 10,
+      "updatedAt": "2026-10-01T19:37:21.471Z"
     },
-    "time": 1790882256268
+    "time": 1790883441471
   },
   "providers": [],
   "courses": [],
@@ -17,6 +17,21 @@
         "data": {
           "id": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "latestOrders": [
+            {
+              "id": "ord_1790882496723_yp670",
+              "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+              "userEmail": "mtasvir375@gmail.com",
+              "courseId": "srv_test_auto_save",
+              "serviceId": "srv_test_auto_save",
+              "title": "Reels view 😄",
+              "category": "Instagram",
+              "quantity": 330,
+              "targetLink": "Hsdhhddhs.jssjsjs",
+              "totalPrice": 8.25,
+              "status": "In progress",
+              "providerOrderId": "2843093",
+              "createdAt": "2026-10-01T19:21:37.801Z"
+            },
             {
               "serviceId": "item_1790792133883_0oavo",
               "totalPrice": 1.2,
@@ -150,26 +165,11 @@
               "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
               "courseId": "kZuLCxdvTWoiP17qwKGw",
               "title": "Telegram mix positive reaction 😀🥰❤️🤪"
-            },
-            {
-              "createdAt": "2026-09-30T12:34:31.082Z",
-              "serviceId": "item_1790658127118_dcs8y",
-              "totalPrice": 0.1,
-              "providerOrderId": "2837675",
-              "quantity": 200,
-              "targetLink": "Gjxjggnhkgxxjhkjgjgxkukpuupig.bh",
-              "userEmail": "mtasvir375@gmail.com",
-              "category": "Instagram",
-              "status": "In progress",
-              "id": "ord_1790771666696_znzox",
-              "courseId": "item_1790658127118_dcs8y",
-              "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-              "title": "Reels view ♻️"
             }
           ],
-          "balance": 17716.1,
-          "updatedAt": "2026-10-01T19:08:51.451Z",
-          "lastOrderedAt": "2026-10-01T08:05:47.145Z",
+          "balance": 17707.85,
+          "updatedAt": "2026-10-01T19:21:38.066Z",
+          "lastOrderedAt": "2026-10-01T19:21:37.802Z",
           "lastDepositedAt": "2026-10-01T08:14:32.873Z",
           "latestDeposits": [
             {
@@ -206,7 +206,7 @@
           "email": "mtasvir375@gmail.com",
           "displayName": "mtasvir375"
         },
-        "time": 1790881731451
+        "time": 1790882498939
       }
     ],
     [
@@ -4685,6 +4685,48 @@
           "updatedAt": "2026-10-01T19:08:51.413Z"
         },
         "time": 1790881731413
+      }
+    ],
+    [
+      "ord_1790882485994_kdpv9",
+      {
+        "data": {
+          "id": "ord_1790882485994_kdpv9",
+          "status": "Failed",
+          "needsProviderTransmission": false,
+          "providerTransmissionStatus": "failed",
+          "error": "Provider Rejected Order (Min amount of this order is: 200 And Max Amount of order is: 150000)",
+          "updatedAt": "2026-10-01T19:21:28.194Z"
+        },
+        "time": 1790882488194
+      }
+    ],
+    [
+      "ord_1790882496723_yp670",
+      {
+        "data": {
+          "id": "ord_1790882496723_yp670",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "serviceId": "srv_test_auto_save",
+          "courseId": "srv_test_auto_save",
+          "title": "Reels view 😄",
+          "category": "Instagram",
+          "quantity": 330,
+          "targetLink": "Hsdhhddhs.jssjsjs",
+          "totalPrice": 8.25,
+          "isCombo": false,
+          "comboItems": [],
+          "status": "Completed",
+          "providerOrderId": "2843093",
+          "needsProviderTransmission": false,
+          "providerTransmissionStatus": "completed",
+          "balanceAlreadyDeducted": true,
+          "updatedAt": "2026-10-01T19:21:38.609Z",
+          "createdAt": "2026-10-01T19:21:38.608Z",
+          "providerRawResponse": "{\"order\":2843093}"
+        },
+        "time": 1790882498609
       }
     ]
   ],
