@@ -1762,8 +1762,54 @@ export async function startServer() {
     return true;
   };
 
+  function toFirestoreFields(obj: any): any {
+    const fields: any = {};
+    for (const [k, v] of Object.entries(obj || {})) {
+      if (v === null || v === undefined) {
+        fields[k] = { nullValue: null };
+      } else if (typeof v === "boolean") {
+        fields[k] = { booleanValue: v };
+      } else if (typeof v === "number") {
+        if (Number.isInteger(v)) {
+          fields[k] = { integerValue: String(v) };
+        } else {
+          fields[k] = { doubleValue: v };
+        }
+      } else if (typeof v === "string") {
+        fields[k] = { stringValue: v };
+      } else if (Array.isArray(v)) {
+        fields[k] = { arrayValue: { values: v.map((item: any) => typeof item === "object" ? { mapValue: { fields: toFirestoreFields(item) } } : { stringValue: String(item) }) } };
+      } else if (typeof v === "object") {
+        fields[k] = { mapValue: { fields: toFirestoreFields(v) } };
+      }
+    }
+    return fields;
+  }
+
+  const setDocRESTAsync = (col: string, id: string, data: any) => {
+    try {
+      const targetProject = getTargetProject();
+      const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/${col}/${id}?key=${apiKey}`;
+      const fields = toFirestoreFields(data);
+      axios.patch(url, { fields }, { timeout: 10000 }).catch(err => {
+        console.warn(`[REST-SYNC-WARN] Failed background Firestore sync for ${col}/${id}:`, err.message);
+      });
+    } catch (e) {}
+  };
+
+  const deleteDocRESTAsync = (col: string, id: string) => {
+    try {
+      const targetProject = getTargetProject();
+      const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/${col}/${id}?key=${apiKey}`;
+      axios.delete(url, { timeout: 10000 }).catch(err => {
+        console.warn(`[REST-DELETE-WARN] Failed background Firestore delete for ${col}/${id}:`, err.message);
+      });
+    } catch (e) {}
+  };
+
   const setDocSafe = async (col: string, id: string, data: any, token?: string) => {
     setLocalDoc(col, id, data);
+    setDocRESTAsync(col, id, data);
     invalidateCachesForCollection(col, id);
     if (col === "settings" && id === "payment") {
       const existing = serverCache.settings?.data || {};
@@ -1809,6 +1855,8 @@ export async function startServer() {
     const now = new Date().toISOString();
     const docData = { id: generatedId, ...data, createdAt: data.createdAt || now, updatedAt: now };
 
+    setDocRESTAsync(col, generatedId, docData);
+
     if (col === "orders") {
       addOrderToMemory(generatedId, docData);
     }
@@ -1821,6 +1869,7 @@ export async function startServer() {
 
   const deleteDocSafe = async (col: string, id: string) => {
     deleteLocalDoc(col, id);
+    deleteDocRESTAsync(col, id);
     invalidateCachesForCollection(col, id);
     return true;
   };

@@ -5,10 +5,12 @@ import { DEFAULT_SERVICES, DEFAULT_SETTINGS } from "../src/data/defaultServices"
 
 let dbInstance: Database | null = null;
 let sqlEngine: any = null;
-const dbDir = path.join(process.cwd(), "data");
+const isVercel = !!process.env.VERCEL;
+const dbDir = isVercel ? "/tmp" : path.join(process.cwd(), "data");
 const dbPath = path.join(dbDir, "app.db");
+const seedDbPath = path.join(process.cwd(), "data", "app.db");
 
-// In-Memory map fallback for 100% immediate synchronous availability
+// In-Memory map fallback for 100% immediate synchronous availability across all environments
 const memoryStore = new Map<string, Map<string, any>>();
 
 function getColMap(collection: string): Map<string, any> {
@@ -18,8 +20,16 @@ function getColMap(collection: string): Map<string, any> {
   return memoryStore.get(collection)!;
 }
 
-// Known admin and test profiles to guarantee initial access
+// Known admin and user profiles to guarantee instant access with full balance
 const INITIAL_USERS: Record<string, any> = {
+  "mtasvir375@gmail.com": {
+    email: "mtasvir375@gmail.com",
+    userEmail: "mtasvir375@gmail.com",
+    displayName: "Tasvir",
+    role: "admin",
+    balance: 17702.85,
+    createdAt: new Date().toISOString()
+  },
   "5LRJPrkW5vVimfCFKGbzTKhXtji2": {
     uid: "5LRJPrkW5vVimfCFKGbzTKhXtji2",
     id: "5LRJPrkW5vVimfCFKGbzTKhXtji2",
@@ -45,21 +55,28 @@ const INITIAL_USERS: Record<string, any> = {
 export async function getLocalSqliteDb(): Promise<Database> {
   if (dbInstance) return dbInstance;
 
-  if (!fs.existsSync(dbDir)) {
-    fs.mkdirSync(dbDir, { recursive: true });
-  }
+  try {
+    if (!fs.existsSync(dbDir)) {
+      fs.mkdirSync(dbDir, { recursive: true });
+    }
+  } catch (e) {}
 
   if (!sqlEngine) {
     sqlEngine = await initSqlJs();
   }
 
+  let sourceBuffer: Buffer | null = null;
   if (fs.existsSync(dbPath)) {
+    try { sourceBuffer = fs.readFileSync(dbPath); } catch (e) {}
+  } else if (fs.existsSync(seedDbPath)) {
+    try { sourceBuffer = fs.readFileSync(seedDbPath); } catch (e) {}
+  }
+
+  if (sourceBuffer) {
     try {
-      const fileBuffer = fs.readFileSync(dbPath);
-      dbInstance = new sqlEngine.Database(fileBuffer);
+      dbInstance = new sqlEngine.Database(sourceBuffer);
       loadSqliteIntoMemory();
     } catch (e) {
-      console.warn("[SQLITE] Error reading existing app.db file, starting fresh DB:", e);
       dbInstance = new sqlEngine.Database();
     }
   } else {
@@ -106,16 +123,13 @@ function saveDbToDisk() {
     const data = dbInstance.export();
     const buffer = Buffer.from(data);
     fs.writeFileSync(dbPath, buffer);
-  } catch (err: any) {
-    console.error("[SQLITE] Failed to save DB to disk:", err.message);
-  }
+  } catch (err: any) {}
 }
 
 function seedDefaults() {
   // 1. Seed courses if empty
   const courseCol = getColMap("courses");
   if (courseCol.size === 0) {
-    console.log("[SQLITE-SEED] Seeding default services into courses table...");
     for (const service of DEFAULT_SERVICES) {
       setLocalDoc("courses", service.id, {
         ...service,
@@ -128,11 +142,10 @@ function seedDefaults() {
   // 2. Seed settings/payment if empty
   const paymentSettings = getLocalDoc("settings", "payment");
   if (!paymentSettings || Object.keys(paymentSettings).length === 0) {
-    console.log("[SQLITE-SEED] Seeding default payment settings...");
     setLocalDoc("settings", "payment", {
       ...DEFAULT_SETTINGS,
       upiId: "9122557342@ybl",
-      merchantName: "Pyaresmm Panel",
+      merchantName: "Pyare SMM Panel",
       minDeposit: 10,
       qrCodeImage: "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=upi://pay?pa=9122557342@ybl&pn=Pyaresmm",
       enableUpi: true,
@@ -143,10 +156,10 @@ function seedDefaults() {
   }
 
   // 3. Seed initial users if missing
-  for (const [uid, userProfile] of Object.entries(INITIAL_USERS)) {
-    const existing = getLocalDoc("users", uid);
+  for (const [key, userProfile] of Object.entries(INITIAL_USERS)) {
+    const existing = getLocalDoc("users", key);
     if (!existing) {
-      setLocalDoc("users", uid, userProfile);
+      setLocalDoc("users", key, userProfile);
     }
   }
 }
@@ -155,6 +168,15 @@ export function getLocalDoc(collection: string, id: string): any {
   const colMap = getColMap(collection);
   if (colMap.has(id)) {
     return colMap.get(id);
+  }
+
+  // Check email match for users
+  if (collection === "users") {
+    for (const user of colMap.values()) {
+      if (user.email && user.email.toLowerCase() === id.toLowerCase()) {
+        return user;
+      }
+    }
   }
 
   if (dbInstance) {
@@ -183,6 +205,11 @@ export function setLocalDoc(collection: string, id: string, data: any): boolean 
     const merged = { ...existing, ...data, id, updatedAt: data?.updatedAt || now };
 
     getColMap(collection).set(id, merged);
+
+    // If user has email, also index by email
+    if (collection === "users" && merged.email) {
+      getColMap(collection).set(merged.email.toLowerCase(), merged);
+    }
 
     if (dbInstance) {
       const stmt = dbInstance.prepare(`
@@ -217,8 +244,15 @@ export function listLocalDocs(collection: string, limitCount = 300): any[] {
   const colMap = getColMap(collection);
   if (colMap.size > 0) {
     const list = Array.from(colMap.values());
-    list.sort((a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime());
-    return list.slice(0, limitCount);
+    // Filter duplicates if any
+    const unique = new Map<string, any>();
+    for (const item of list) {
+      const key = item.id || item.uid || JSON.stringify(item);
+      if (!unique.has(key)) unique.set(key, item);
+    }
+    const result = Array.from(unique.values());
+    result.sort((a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime());
+    return result.slice(0, limitCount);
   }
 
   if (dbInstance) {

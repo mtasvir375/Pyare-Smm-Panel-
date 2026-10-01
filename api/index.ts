@@ -1,4 +1,5 @@
 import axios from "axios";
+import { getLocalDoc, setLocalDoc, updateLocalDoc, listLocalDocs, addLocalDoc, deleteLocalDoc, getLocalSqliteDb, queryLocalDocs } from "./localDb";
 
 // Environment & Configuration
 const FIREBASE_PROJECT_ID = "gen-lang-client-0629912823";
@@ -104,8 +105,6 @@ const userEmailRegistry = new Map<string, string>();
 for (const [uid, info] of Object.entries(KNOWN_USER_EMAILS)) {
   userEmailRegistry.set(uid, info.email);
 }
-
-import { getLocalDoc, setLocalDoc, listLocalDocs, queryLocalDocs } from "./localDb";
 
 async function getRestDoc(collection: string, docId: string): Promise<any> {
   const local = getLocalDoc(collection, docId);
@@ -1103,7 +1102,7 @@ export default async function handler(req: any, res: any) {
     if (pathname === "/api/db/get") {
       const { collection: colName, id } = body || {};
       if (!colName || !id) return res.status(400).json({ success: false, error: "Missing collection or id" });
-      const data = await getRestDoc(colName, id);
+      const data = getLocalDoc(colName, id);
       return res.status(200).json({ success: true, data });
     }
 
@@ -1113,7 +1112,7 @@ export default async function handler(req: any, res: any) {
       if (colName === "courses") memCoursesCache = null;
       if (colName === "settings") memSettingsCache = null;
       if (colName === "providers") memProvidersCache = null;
-      const saved = await setRestDoc(colName, id, data || {});
+      const saved = setLocalDoc(colName, id, data || {});
       return res.status(200).json({ success: true, data: saved });
     }
 
@@ -1123,14 +1122,14 @@ export default async function handler(req: any, res: any) {
       if (colName === "courses") memCoursesCache = null;
       if (colName === "settings") memSettingsCache = null;
       if (colName === "providers") memProvidersCache = null;
-      const updated = await setRestDoc(colName, id, data || {});
+      const updated = updateLocalDoc(colName, id, data || {});
       return res.status(200).json({ success: true, data: updated });
     }
 
     if (pathname === "/api/db/list" || pathname === "/api/db/query") {
       const { collection: colName, limit: queryLimit } = body || {};
       if (!colName) return res.status(400).json({ success: false, error: "Missing collection" });
-      const docs = await listRestDocs(colName, queryLimit || 100);
+      const docs = listLocalDocs(colName, queryLimit || 100);
       return res.status(200).json({ success: true, data: docs });
     }
 
@@ -1140,9 +1139,8 @@ export default async function handler(req: any, res: any) {
       if (colName === "courses") memCoursesCache = null;
       if (colName === "settings") memSettingsCache = null;
       if (colName === "providers") memProvidersCache = null;
-      const autoId = `item_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      const saved = await setRestDoc(colName, autoId, { id: autoId, ...(data || {}) });
-      return res.status(200).json({ success: true, id: autoId, data: saved });
+      const autoId = addLocalDoc(colName, data || {});
+      return res.status(200).json({ success: true, id: autoId, data: { id: autoId, ...(data || {}) } });
     }
 
     // 12. Admin User Management: /api/admin/search-user & /api/admin/update-balance
