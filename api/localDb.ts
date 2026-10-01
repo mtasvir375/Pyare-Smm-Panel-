@@ -8,6 +8,16 @@ let sqlEngine: any = null;
 const dbDir = path.join(process.cwd(), "data");
 const dbPath = path.join(dbDir, "app.db");
 
+// In-Memory map fallback for 100% immediate synchronous availability
+const memoryStore = new Map<string, Map<string, any>>();
+
+function getColMap(collection: string): Map<string, any> {
+  if (!memoryStore.has(collection)) {
+    memoryStore.set(collection, new Map<string, any>());
+  }
+  return memoryStore.get(collection)!;
+}
+
 // Known admin and test profiles to guarantee initial access
 const INITIAL_USERS: Record<string, any> = {
   "5LRJPrkW5vVimfCFKGbzTKhXtji2": {
@@ -47,6 +57,7 @@ export async function getLocalSqliteDb(): Promise<Database> {
     try {
       const fileBuffer = fs.readFileSync(dbPath);
       dbInstance = new sqlEngine.Database(fileBuffer);
+      loadSqliteIntoMemory();
     } catch (e) {
       console.warn("[SQLITE] Error reading existing app.db file, starting fresh DB:", e);
       dbInstance = new sqlEngine.Database();
@@ -72,6 +83,23 @@ export async function getLocalSqliteDb(): Promise<Database> {
   return dbInstance;
 }
 
+function loadSqliteIntoMemory() {
+  if (!dbInstance) return;
+  try {
+    const stmt = dbInstance.prepare("SELECT collection, id, data FROM documents");
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      if (row.collection && row.id && row.data) {
+        try {
+          const parsed = JSON.parse(String(row.data));
+          getColMap(String(row.collection)).set(String(row.id), parsed);
+        } catch (e) {}
+      }
+    }
+    stmt.free();
+  } catch (e) {}
+}
+
 function saveDbToDisk() {
   if (!dbInstance) return;
   try {
@@ -84,11 +112,9 @@ function saveDbToDisk() {
 }
 
 function seedDefaults() {
-  if (!dbInstance) return;
-
   // 1. Seed courses if empty
-  const courseRows = listLocalDocs("courses");
-  if (courseRows.length === 0) {
+  const courseCol = getColMap("courses");
+  if (courseCol.size === 0) {
     console.log("[SQLITE-SEED] Seeding default services into courses table...");
     for (const service of DEFAULT_SERVICES) {
       setLocalDoc("courses", service.id, {
@@ -126,44 +152,47 @@ function seedDefaults() {
 }
 
 export function getLocalDoc(collection: string, id: string): any {
-  if (!dbInstance) {
-    if (!fs.existsSync(dbPath)) return null;
+  const colMap = getColMap(collection);
+  if (colMap.has(id)) {
+    return colMap.get(id);
   }
-  try {
-    const db = dbInstance;
-    if (!db) return null;
-    const stmt = db.prepare("SELECT data FROM documents WHERE collection = ? AND id = ?");
-    stmt.bind([collection, String(id)]);
-    let result: any = null;
-    if (stmt.step()) {
-      const row = stmt.getAsObject();
-      if (row.data) {
-        result = JSON.parse(String(row.data));
+
+  if (dbInstance) {
+    try {
+      const stmt = dbInstance.prepare("SELECT data FROM documents WHERE collection = ? AND id = ?");
+      stmt.bind([collection, String(id)]);
+      let result: any = null;
+      if (stmt.step()) {
+        const row = stmt.getAsObject();
+        if (row.data) {
+          result = JSON.parse(String(row.data));
+          colMap.set(id, result);
+        }
       }
-    }
-    stmt.free();
-    return result;
-  } catch (err: any) {
-    console.error(`[SQLITE-GET-ERR] ${collection}/${id}:`, err.message);
-    return null;
+      stmt.free();
+      return result;
+    } catch (err: any) {}
   }
+  return null;
 }
 
 export function setLocalDoc(collection: string, id: string, data: any): boolean {
   try {
-    if (!dbInstance) return false;
     const now = new Date().toISOString();
     const existing = getLocalDoc(collection, id) || {};
     const merged = { ...existing, ...data, id, updatedAt: data?.updatedAt || now };
 
-    const stmt = dbInstance.prepare(`
-      INSERT OR REPLACE INTO documents (collection, id, data, updated_at)
-      VALUES (?, ?, ?, ?)
-    `);
-    stmt.run([collection, String(id), JSON.stringify(merged), now]);
-    stmt.free();
+    getColMap(collection).set(id, merged);
 
-    saveDbToDisk();
+    if (dbInstance) {
+      const stmt = dbInstance.prepare(`
+        INSERT OR REPLACE INTO documents (collection, id, data, updated_at)
+        VALUES (?, ?, ?, ?)
+      `);
+      stmt.run([collection, String(id), JSON.stringify(merged), now]);
+      stmt.free();
+      saveDbToDisk();
+    }
     return true;
   } catch (err: any) {
     console.error(`[SQLITE-SET-ERR] ${collection}/${id}:`, err.message);
@@ -185,28 +214,35 @@ export function addLocalDoc(collection: string, data: any): string {
 }
 
 export function listLocalDocs(collection: string, limitCount = 300): any[] {
-  try {
-    if (!dbInstance) return [];
-    const stmt = dbInstance.prepare(`
-      SELECT id, data FROM documents WHERE collection = ? ORDER BY rowid DESC LIMIT ?
-    `);
-    stmt.bind([collection, limitCount]);
-    const list: any[] = [];
-    while (stmt.step()) {
-      const row = stmt.getAsObject();
-      if (row.data) {
-        try {
-          const parsed = JSON.parse(String(row.data));
-          list.push({ id: row.id, ...parsed });
-        } catch (e) {}
-      }
-    }
-    stmt.free();
-    return list;
-  } catch (err: any) {
-    console.error(`[SQLITE-LIST-ERR] ${collection}:`, err.message);
-    return [];
+  const colMap = getColMap(collection);
+  if (colMap.size > 0) {
+    const list = Array.from(colMap.values());
+    list.sort((a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime());
+    return list.slice(0, limitCount);
   }
+
+  if (dbInstance) {
+    try {
+      const stmt = dbInstance.prepare(`
+        SELECT id, data FROM documents WHERE collection = ? ORDER BY rowid DESC LIMIT ?
+      `);
+      stmt.bind([collection, limitCount]);
+      const list: any[] = [];
+      while (stmt.step()) {
+        const row = stmt.getAsObject();
+        if (row.data) {
+          try {
+            const parsed = JSON.parse(String(row.data));
+            colMap.set(String(row.id), parsed);
+            list.push({ id: row.id, ...parsed });
+          } catch (e) {}
+        }
+      }
+      stmt.free();
+      return list;
+    } catch (err: any) {}
+  }
+  return [];
 }
 
 export function queryLocalDocs(collection: string, field: string, value: any, limitCount = 50): any[] {
@@ -217,14 +253,15 @@ export function queryLocalDocs(collection: string, field: string, value: any, li
 
 export function deleteLocalDoc(collection: string, id: string): boolean {
   try {
-    if (!dbInstance) return false;
-    const stmt = dbInstance.prepare("DELETE FROM documents WHERE collection = ? AND id = ?");
-    stmt.run([collection, String(id)]);
-    stmt.free();
-    saveDbToDisk();
+    getColMap(collection).delete(id);
+    if (dbInstance) {
+      const stmt = dbInstance.prepare("DELETE FROM documents WHERE collection = ? AND id = ?");
+      stmt.run([collection, String(id)]);
+      stmt.free();
+      saveDbToDisk();
+    }
     return true;
   } catch (err: any) {
-    console.error(`[SQLITE-DEL-ERR] ${collection}/${id}:`, err.message);
     return false;
   }
 }

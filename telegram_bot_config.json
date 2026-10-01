@@ -1,12 +1,14 @@
 {
   "botToken": "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0",
   "chatId": "-1004483507103",
-  "upiId": "mdsaudalam621@okicici",
+  "upiId": "9122557342@ybl",
   "payeeName": "Pyare SMM Panel",
   "enabled": true,
   "lastUpdateId": 33028605,
   "botUsername": "BbbSmart_bot",
-  "startedAt": "2026-10-01T18:40:23.148Z",
-  "lastPolledAt": "2026-10-01T18:52:01.277Z",
-  "mode": "polling"
+  "startedAt": "2026-10-01T19:06:30.521Z",
+  "lastPolledAt": "2026-10-01T19:06:30.521Z",
+  "mode": "polling",
+  "instantQrEnabled": true,
+  "manualQrEnabled": false
 }

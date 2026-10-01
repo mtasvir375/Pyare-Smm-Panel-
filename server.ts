@@ -2052,159 +2052,30 @@ export async function startServer() {
 
   // Express API for Courses list with server-side in-memory caching
   app.get("/api/courses", async (req, res) => {
-    const isFresh = req.query.fresh === "1" || req.query.fresh === "true";
-    const now = Date.now();
-    if (!isFresh && serverCachedCourses && serverCachedCourses.length > 0 && (now - serverCachedCoursesTime < BACKEND_CACHE_DURATION)) {
-      console.log("[SERVER-CACHE] Serving courses from backend memory to save reads (0 Firestore reads)");
-      return res.json(serverCachedCourses);
-    }
-
-    // Check if courses are already in serverCache map from disk/memory
-    if (!isFresh && serverCache.courses.size > 0) {
-      const fromMap = Array.from(serverCache.courses.entries()).map(([id, c]) => ({ id, ...(c?.data ? c.data : c) }));
-      if (fromMap.length > 0) {
-        serverCachedCourses = fromMap;
-        serverCachedCoursesTime = now;
-        console.log(`[SERVER-CACHE] Serving ${fromMap.length} courses loaded from memory disk cache`);
-        return res.json(fromMap);
-      }
-    }
-
-    // If quota circuit breaker is active, avoid hitting Firestore and return cached or default seed courses immediately
-    if (checkQuotaCooldown()) {
-      console.log("[SERVER-CACHE] Quota circuit breaker active: serving in-memory/default courses (0 reads)");
-      if (serverCachedCourses && serverCachedCourses.length > 0) return res.json(serverCachedCourses);
-      return res.json([]); // Do not use default seed
-    }
-
     try {
-      console.log("[SERVER-DB] Fetching courses from Firestore to refresh cache...");
-      let services: any[] = [];
-      if (!useRestFallback) {
-        try {
-          const snap = await fdb.collection("courses").limit(100).get();
-          services = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        } catch (e: any) {
-          handleFirestoreQuotaError(e);
-          if (e.message?.includes("permissions") || e.message?.includes("PERMISSION_DENIED") || e.code === 7) {
-            console.warn("[COURSES] Permission denied on courses fetch. Activating REST fallback.");
-            useRestFallback = true;
-          } else {
-            throw e;
-          }
-        }
+      const localCourses = listLocalDocs("courses", 500);
+      if (localCourses && localCourses.length > 0) {
+        const activeServices = localCourses.filter((s: any) => s.status !== "archived" && s.status !== "hidden");
+        return res.json(activeServices);
       }
-
-      if (useRestFallback && !checkQuotaCooldown()) {
-        try {
-          const queryRes = await runQueryREST({
-            structuredQuery: {
-              from: [{ collectionId: "courses" }],
-              limit: 100
-            }
-          });
-          services = queryRes.map(item => ({ id: item.id, ...item.data() }));
-        } catch (restErr: any) {
-          handleFirestoreQuotaError(restErr);
-        }
-      }
-
-      if (services.length === 0) {
-        if (serverCachedCourses && serverCachedCourses.length > 0) return res.json(serverCachedCourses);
-        if (serverCache.courses.size > 0) {
-          return res.json(Array.from(serverCache.courses.values()).map(c => c.data || c));
-        }
-        return res.json([]); // Do not use default seed
-      }
-
-      // Only show services that are not explicitly 'archived' or 'hidden'
-      const activeServices = services.filter((s: any) => s.status !== "archived" && s.status !== "hidden");
-
-      // Sort services by category priority
-      const categoryOrder = ["Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Twitter", "Other"];
-      const getTimestamp = (item: any) => {
-        const val = item.updatedAt || item.updated_at || item.createdAt || item.created_at;
-        if (!val) return 0;
-        if (typeof val.toDate === "function") return val.toDate().getTime();
-        if (typeof val.seconds === "number") return val.seconds * 1000;
-        if (val._seconds !== undefined) return val._seconds * 1000;
-        const t = new Date(val).getTime();
-        return isNaN(t) ? 0 : t;
-      };
-
-      activeServices.sort((a: any, b: any) => {
-        const catA = a.category || "Other";
-        const catB = b.category || "Other";
-
-        if (catA.toLowerCase() === "instagram" && catB.toLowerCase() !== "instagram") return -1;
-        if (catB.toLowerCase() === "instagram" && catA.toLowerCase() !== "instagram") return 1;
-
-        const orderA = categoryOrder.findIndex(c => c.toLowerCase() === catA.toLowerCase());
-        const orderB = categoryOrder.findIndex(c => c.toLowerCase() === catB.toLowerCase());
-        const rankA = orderA === -1 ? 999 : orderA;
-        const rankB = orderB === -1 ? 999 : orderB;
-        if (rankA !== rankB) return rankA - rankB;
-        
-        const timeA = getTimestamp(a);
-        const timeB = getTimestamp(b);
-        return timeB - timeA;
-      });
-
-      serverCachedCourses = activeServices;
-      serverCachedCoursesTime = now;
-      activeServices.forEach(s => serverCache.courses.set(s.id, { data: s, time: now }));
-      savePersistentCache();
-      res.json(activeServices);
+      return res.json([]);
     } catch (err: any) {
-      handleFirestoreQuotaError(err);
       console.error("[SERVER-DB] Error fetching services from database:", err.message);
-      if (serverCachedCourses && serverCachedCourses.length > 0) {
-        console.log("[SERVER-CACHE] Fallback to cached courses on DB error");
-        return res.json(serverCachedCourses);
-      }
-      if (serverCache.courses.size > 0) {
-        return res.json(Array.from(serverCache.courses.values()).map(c => c.data || c));
-      }
-      return res.json([]); // Do not use default seed
+      return res.json([]);
     }
   });
 
   // Express API for Settings with server-side in-memory caching
   app.get("/api/settings", async (req, res) => {
-    const isFresh = req.query.fresh === "1" || req.query.fresh === "true" || req.query.force === "true";
-    const now = Date.now();
-    if (!isFresh && serverCachedSettings && (now - serverCachedSettingsTime < BACKEND_CACHE_DURATION)) {
-      if (serverCachedSettings.providerApiKey !== "f55bb2dfdc035f9c3c9e737bb72922a51d64309f") {
-        return res.json(serverCachedSettings);
-      }
-    }
-
-    if (checkQuotaCooldown() && serverCache.settings?.data) {
-      if (serverCache.settings.data.providerApiKey !== "f55bb2dfdc035f9c3c9e737bb72922a51d64309f") {
-        return res.json(serverCache.settings.data);
-      }
-    }
-
     try {
-      const snap = await getDocSafe("settings", "payment", undefined, isFresh);
-      let settingsData = snap.exists ? snap.data() : (serverCache.settings?.data || {});
-      if (settingsData && Object.keys(settingsData).length > 0) {
-        serverCachedSettings = settingsData;
-        serverCachedSettingsTime = now;
-        serverCache.settings = { data: settingsData, time: now };
-        savePersistentCache();
+      const localSet = getLocalDoc("settings", "payment");
+      if (localSet && Object.keys(localSet).length > 0) {
+        return res.json(localSet);
       }
-      res.json(settingsData);
+      return res.json({});
     } catch (err: any) {
-      handleFirestoreQuotaError(err);
       console.error("[SERVER-DB] Error fetching settings:", err.message);
-      if (serverCachedSettings) return res.json(serverCachedSettings);
-      if (serverCache.settings?.data) return res.json(serverCache.settings.data);
-      res.json({
-        upiId: "",
-        merchantName: "Pyare SMM Panel",
-        selectedTheme: "charcoal"
-      });
+      return res.json({});
     }
   });
 
