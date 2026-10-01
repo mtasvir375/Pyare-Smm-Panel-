@@ -292,17 +292,20 @@ export default async function handler(req: any, res: any) {
       memCoursesCache = null;
       memSettingsCache = null;
       memProvidersCache = null;
-      return res.status(200).json({ success: true, message: "Cache cleared" });
+      return res.status(200).json({ success: true, message: "Server cache cleared" });
     }
 
     // 3. Courses: /api/courses
     if (pathname === "/api/courses") {
       const isFresh = req.query?.fresh === "1" || req.query?.fresh === "true";
       const now = Date.now();
-      if (!isFresh && memCoursesCache && (now - memCoursesCache.time < 24 * 60 * 60 * 1000)) {
-        res.setHeader("Cache-Control", "public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800");
+      
+      // Serve from Node RAM memory (0 Firestore reads!) if cache exists and not explicitly forced
+      if (!isFresh && memCoursesCache && memCoursesCache.data && memCoursesCache.data.length > 0) {
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
         return res.status(200).json(memCoursesCache.data);
       }
+
       if (req.method === "GET") {
         try {
           const courses = await listRestDocs("courses", 200);
@@ -316,10 +319,11 @@ export default async function handler(req: any, res: any) {
           if (courses.length > 0) {
             memCoursesCache = { data: courses, time: Date.now() };
           }
-          res.setHeader("Cache-Control", "public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800");
+          res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
           return res.status(200).json(courses);
         } catch (err: any) {
           if (memCoursesCache?.data) {
+            res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
             return res.status(200).json(memCoursesCache.data);
           }
           return res.status(500).json({ error: err.message });
@@ -1103,6 +1107,9 @@ export default async function handler(req: any, res: any) {
     if (pathname === "/api/db/set") {
       const { collection: colName, id, data } = body || {};
       if (!colName || !id) return res.status(400).json({ success: false, error: "Missing collection or id" });
+      if (colName === "courses") memCoursesCache = null;
+      if (colName === "settings") memSettingsCache = null;
+      if (colName === "providers") memProvidersCache = null;
       const saved = await setRestDoc(colName, id, data || {});
       return res.status(200).json({ success: true, data: saved });
     }
@@ -1110,6 +1117,9 @@ export default async function handler(req: any, res: any) {
     if (pathname === "/api/db/update") {
       const { collection: colName, id, data } = body || {};
       if (!colName || !id) return res.status(400).json({ success: false, error: "Missing collection or id" });
+      if (colName === "courses") memCoursesCache = null;
+      if (colName === "settings") memSettingsCache = null;
+      if (colName === "providers") memProvidersCache = null;
       const updated = await setRestDoc(colName, id, data || {});
       return res.status(200).json({ success: true, data: updated });
     }
@@ -1124,6 +1134,9 @@ export default async function handler(req: any, res: any) {
     if (pathname === "/api/db/add") {
       const { collection: colName, data } = body || {};
       if (!colName) return res.status(400).json({ success: false, error: "Missing collection" });
+      if (colName === "courses") memCoursesCache = null;
+      if (colName === "settings") memSettingsCache = null;
+      if (colName === "providers") memProvidersCache = null;
       const autoId = `item_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       const saved = await setRestDoc(colName, autoId, { id: autoId, ...(data || {}) });
       return res.status(200).json({ success: true, id: autoId, data: saved });

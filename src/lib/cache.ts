@@ -80,24 +80,9 @@ export const getCachedCourses = async (forceRefresh = false) => {
     if (cachedCourses && Array.isArray(cachedCourses) && cachedCourses.length > 0) {
       return cachedCourses;
     }
-    
-    // Check localStorage (0 Firestore reads!)
-    try {
-      const lsTime = localStorage.getItem("cached_courses_time");
-      const lsData = localStorage.getItem("cached_courses");
-      // If cached less than 1 hour ago, use immediately
-      if (lsTime && lsData && (now - parseInt(lsTime) < 60 * 60 * 1000)) {
-        const parsed = JSON.parse(lsData);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          cachedCourses = sortServicesList(parsed);
-          lastCoursesFetch = now;
-          return cachedCourses;
-        }
-      }
-    } catch(e) {}
   }
   
-  // 1. Primary path: Fetch from server API proxy (serves from Node memory cache)
+  // 1. Primary path: Fetch from server API proxy (serves from Node memory cache in 5ms with 0 Firestore reads)
   try {
     const res = await axios.get(forceRefresh ? "/api/courses?fresh=1" : "/api/courses");
     if (Array.isArray(res.data) && res.data.length > 0) {

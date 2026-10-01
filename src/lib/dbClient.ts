@@ -96,6 +96,9 @@ export const dbClient = {
   },
 
   async setDoc(table: string, id: string, data: any): Promise<void> {
+    if (table === 'courses' || table === 'settings' || table === 'providers') {
+      axios.post('/api/clear-cache').catch(() => {});
+    }
     try {
       const docRef = doc(db, table, id);
       await setDoc(docRef, { ...data, updatedAt: serverTimestamp() }, { merge: true });
@@ -111,6 +114,9 @@ export const dbClient = {
   },
 
   async updateDoc(table: string, id: string, data: any): Promise<void> {
+    if (table === 'courses' || table === 'settings' || table === 'providers') {
+      axios.post('/api/clear-cache').catch(() => {});
+    }
     try {
       const docRef = doc(db, table, id);
       await setDoc(docRef, { ...data, updatedAt: serverTimestamp() }, { merge: true });
@@ -126,6 +132,9 @@ export const dbClient = {
   },
 
   async addDoc(table: string, data: any): Promise<any> {
+    if (table === 'courses' || table === 'settings' || table === 'providers') {
+      axios.post('/api/clear-cache').catch(() => {});
+    }
     try {
       // Single authoritative insert via server proxy (0 extra reads, exact 1 write)
       const res = await axios.post('/api/db/add', { collection: table, data });
@@ -146,6 +155,9 @@ export const dbClient = {
   },
 
   async deleteDoc(table: string, id: string): Promise<void> {
+    if (table === 'courses' || table === 'settings' || table === 'providers') {
+      axios.post('/api/clear-cache').catch(() => {});
+    }
     const docRef = doc(db, table, id);
     await deleteDoc(docRef);
   },
