@@ -323,16 +323,6 @@ export default async function handler(req: any, res: any) {
       const localProviders = listLocalDocs("providers", 200);
       return res.status(200).json(localProviders);
     }
-      if (req.method === "GET") {
-        try {
-          const providers = await listRestDocs("providers", 100);
-          memProvidersCache = { data: providers, time: Date.now() };
-          return res.status(200).json(providers);
-        } catch (err: any) {
-          return res.status(500).json({ error: err.message });
-        }
-      }
-    }
 
     // 4.1 Admin All Orders: /api/admin/all-orders
     if (pathname === "/api/admin/all-orders") {

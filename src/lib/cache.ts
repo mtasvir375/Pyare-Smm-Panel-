@@ -192,61 +192,20 @@ export const getCachedSettings = async (forceRefresh = false) => {
     console.warn("[CACHE] Express API proxy /api/settings call failed:", apiErr);
   }
 
-  // 2. Direct Firestore fallback (crucial for custom domain / Vercel where Express backend isn't mounted)
+  // Use localStorage cache if Express API proxy failed temporarily
   try {
-    const snap = await getDoc(doc(db, "settings", "payment"));
-    if (snap.exists()) {
-      const data = snap.data() || {};
-      const settingsData = {
-        ...DEFAULT_SETTINGS,
-        ...data,
-        upiId: data.upiId || DEFAULT_SETTINGS.upiId,
-        paymentQrUrl: data.paymentQrUrl || "",
-        merchantName: data.merchantName || DEFAULT_SETTINGS.merchantName,
-        razorpayEnabled: !!data.razorpayEnabled,
-        razorpayKeyId: data.razorpayKeyId || "",
-        razorpayKeySecret: data.razorpayKeySecret || "",
-        phonepeEnabled: !!data.phonepeEnabled,
-        phonepeMerchantId: data.phonepeMerchantId || "",
-        phonepeSaltKey: data.phonepeSaltKey || "",
-        phonepeSaltIndex: data.phonepeSaltIndex || "1",
-        phonepeEnv: data.phonepeEnv || "sandbox",
-        paytmEnabled: !!data.paytmEnabled,
-        paytmMid: data.paytmMid || "",
-        paytmMerchantKey: data.paytmMerchantKey || "",
-        paytmEnv: data.paytmEnv || "sandbox",
-        whatsappLink: data.whatsappLink || DEFAULT_SETTINGS.whatsappLink,
-        whatsappChatNumber: data.whatsappChatNumber || DEFAULT_SETTINGS.whatsappChatNumber,
-        backendApiUrl: data.backendApiUrl || "",
-        qrAutoEnabled: !!data.qrAutoEnabled,
-        instantQrEnabled: data.instantQrEnabled !== undefined ? !!data.instantQrEnabled : true,
-        manualQrEnabled: data.manualQrEnabled !== undefined ? !!data.manualQrEnabled : true,
-        selectedTheme: data.selectedTheme || "charcoal",
-        selectedFestivalTheme: data.selectedFestivalTheme || "none",
-      };
-
-      cachedSettings = settingsData;
-      lastSettingsFetch = now;
-      try {
-        localStorage.setItem("cached_settings_time", now.toString());
-        localStorage.setItem("cached_settings", JSON.stringify(cachedSettings));
-      } catch(e) {}
-      console.log("[CACHE] Successfully loaded settings directly from Firestore!");
-      return cachedSettings;
+    const lsData = localStorage.getItem("cached_settings");
+    if (lsData) {
+      const parsed = JSON.parse(lsData);
+      if (parsed) {
+        cachedSettings = parsed;
+        return cachedSettings;
+      }
     }
-  } catch (fsErr) {
-    console.warn("[CACHE] Direct Firestore fetch for settings failed:", fsErr);
-  }
-
-  // 3. Graceful zero-read fallback to default settings only if both failed
-  console.log("[CACHE] Serving default settings as last resort.");
-  cachedSettings = DEFAULT_SETTINGS;
-  lastSettingsFetch = now;
-  try {
-    localStorage.setItem("cached_settings_time", now.toString());
-    localStorage.setItem("cached_settings", JSON.stringify(cachedSettings));
   } catch(e) {}
-  return cachedSettings;
+
+  // Graceful zero-read fallback to default settings only as last resort
+  return DEFAULT_SETTINGS;
 };
 
 let cachedProviders: any = null;
@@ -289,22 +248,14 @@ export const getCachedProviders = async (forceRefresh = false) => {
     console.warn("[CACHE] Failed to load providers from /api/providers:", apiErr);
   }
 
-  // Direct Firestore fallback
+  // Use localStorage cache if Express API proxy failed temporarily
   try {
-    const snap = await getDocs(collection(db, "providers"));
-    if (!snap.empty) {
-      cachedProviders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      lastProvidersFetch = now;
-      try {
-        localStorage.setItem("cached_providers_time", now.toString());
-        localStorage.setItem("cached_providers", JSON.stringify(cachedProviders));
-      } catch(e) {}
-      console.log("[CACHE] Successfully loaded providers directly from Firestore!");
+    const lsData = localStorage.getItem("cached_providers");
+    if (lsData) {
+      cachedProviders = JSON.parse(lsData);
       return cachedProviders;
     }
-  } catch (fsErr) {
-    console.warn("[CACHE] Direct Firestore fetch for providers failed:", fsErr);
-  }
+  } catch(e) {}
   
   return cachedProviders || [];
 };
