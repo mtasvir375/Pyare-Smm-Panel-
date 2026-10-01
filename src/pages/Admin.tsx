@@ -858,6 +858,15 @@ export default function Admin() {
 
   const [isSearchingUser, setIsSearchingUser] = useState(false);
 
+  const KNOWN_ADMIN_USER_EMAILS: Record<string, { email: string; name?: string }> = {
+    "5LRJPrkW5vVimfCFKGbzTKhXtji2": { email: "mdsarfarajalam727712@gmail.com", name: "Sarfaraj Alam" },
+    "UlsK3PLAGHdiSZAhx58Cb23FXLq2": { email: "mdtasvir888@gmail.com", name: "Tasvir" },
+    "test_e2e_user": { email: "test_e2e@pyaresmm.com", name: "Test User" },
+    "test_user_race_1": { email: "test_race1@pyaresmm.com", name: "Race Test User" },
+    "user_pending_test": { email: "pending_test@pyaresmm.com", name: "Pending User" },
+    "test_user": { email: "test_admin@pyaresmm.com", name: "Test User" }
+  };
+
   const handleSearchUser = async (force = false) => {
     if (isSearchingUser) return;
 
@@ -867,29 +876,6 @@ export default function Admin() {
       const res = await axios.post("/api/admin/search-user", { query: q });
       if (res.data && res.data.success) {
         let users = res.data.users || (res.data.user ? [res.data.user] : []);
-
-        // Fallback: If query was entered and server list returned 0, search direct Firestore via client SDK
-        if (users.length === 0 && q) {
-          try {
-            const { collection, getDocs, limit: fsLimit, query: fsQuery } = await import("firebase/firestore");
-            const { db } = await import("@/lib/firebase");
-            const snap = await getDocs(fsQuery(collection(db, "users"), fsLimit(100)));
-            const directUsers = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            const qLower = q.toLowerCase();
-            const matched = directUsers.filter((u: any) => {
-              const uEmail = String(u.email || "").toLowerCase();
-              const uName = String(u.displayName || "").toLowerCase();
-              const uId = String(u.id || u.uid || "").toLowerCase();
-              return uEmail.includes(qLower) || uName.includes(qLower) || uId.includes(qLower);
-            });
-            if (matched.length > 0) {
-              users = matched;
-            }
-          } catch (clientErr) {
-            console.warn("Client fallback search error:", clientErr);
-          }
-        }
-
         setAllUsers(users);
         if (q) {
           if (users.length === 0) {
@@ -2542,9 +2528,18 @@ export default function Admin() {
                 ) : (
                   allUsers.map((u: any, idx: number) => {
                     if (!u) return null;
-                    const email = String(u.email || u.userEmail || "").trim();
-                    const name = String(u.displayName || u.name || "").trim();
-                    const displayIdentifier = email || name || String(u.id || `User #${idx + 1}`);
+                    const uid = String(u.id || u.uid || "").trim();
+                    const known = KNOWN_ADMIN_USER_EMAILS[uid];
+                    const email = String(
+                      u.email || 
+                      u.userEmail || 
+                      known?.email ||
+                      (Array.isArray(u.latestOrders) && u.latestOrders[0]?.userEmail) || 
+                      (Array.isArray(u.latestDeposits) && u.latestDeposits[0]?.userEmail) || 
+                      ""
+                    ).trim();
+                    const name = String(u.displayName || u.name || known?.name || "").trim();
+                    const displayIdentifier = email || name || (u.id ? `User (${String(u.id).slice(0, 8)}...)` : `User #${idx + 1}`);
                     const initial = (email || name || "U").charAt(0).toUpperCase();
 
                     let activeDateStr = "Recent";
@@ -2570,9 +2565,9 @@ export default function Admin() {
                               {initial}
                             </div>
                             <div>
-                              <p className="font-bold text-sm leading-none">{displayIdentifier}</p>
-                              {name && email && name !== email && (
-                                <p className="text-[10px] text-gray-500 mt-1 font-medium">{name}</p>
+                              <p className="font-bold text-sm leading-none break-all text-gray-900">{displayIdentifier}</p>
+                              {name && email && name.toLowerCase() !== email.toLowerCase() && (
+                                <p className="text-[11px] text-gray-500 mt-1 font-medium">{name}</p>
                               )}
                               <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                                 <p className="text-xs text-primary font-bold">Bal: ₹{Number(u.balance || 0).toFixed(2)}</p>

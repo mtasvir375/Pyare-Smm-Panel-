@@ -2573,6 +2573,25 @@ export async function startServer() {
             const d = typeof docItem.data === "function" ? docItem.data() : docItem.data;
             const uid = docItem.id;
             if (d && uid) {
+              // Automatically extract and enrich email if top-level email was missing
+              let email = String(d.email || d.userEmail || "").trim();
+              if (!email && Array.isArray(d.latestOrders)) {
+                for (const o of d.latestOrders) {
+                  if (o?.userEmail) { email = String(o.userEmail).trim(); break; }
+                }
+              }
+              if (!email && Array.isArray(d.latestDeposits)) {
+                for (const dep of d.latestDeposits) {
+                  if (dep?.userEmail) { email = String(dep.userEmail).trim(); break; }
+                }
+              }
+              if (email) {
+                d.email = email;
+                if (!d.displayName || d.displayName === "User") {
+                  d.displayName = email.split("@")[0];
+                }
+              }
+
               const merged = { ...d, id: uid, uid };
               userMap.set(uid, merged);
               serverCache.users.set(uid, { data: merged, time: Date.now() });
@@ -2614,18 +2633,39 @@ export async function startServer() {
         }
       }
 
+      // 3.5 Enrich all users with missing emails from latestOrders or latestDeposits
+      userMap.forEach((uData) => {
+        let email = String(uData.email || uData.userEmail || "").trim();
+        if (!email && Array.isArray(uData.latestOrders)) {
+          for (const o of uData.latestOrders) {
+            if (o?.userEmail) { email = String(o.userEmail).trim(); break; }
+          }
+        }
+        if (!email && Array.isArray(uData.latestDeposits)) {
+          for (const dep of uData.latestDeposits) {
+            if (dep?.userEmail) { email = String(dep.userEmail).trim(); break; }
+          }
+        }
+        if (email) {
+          uData.email = email;
+          if (!uData.displayName || uData.displayName === "User") {
+            uData.displayName = email.split("@")[0];
+          }
+        }
+      });
+
       // 4. Filter users based on query
       let allFoundUsers = Array.from(userMap.values());
       if (searchLower) {
         allFoundUsers = allFoundUsers.filter((u: any) => {
-          const uEmail = String(u.email || "").toLowerCase();
+          const uEmail = String(u.email || u.userEmail || "").toLowerCase();
           const uName = String(u.displayName || "").toLowerCase();
           const uId = String(u.id || u.uid || "").toLowerCase();
           return uEmail.includes(searchLower) || uName.includes(searchLower) || uId.includes(searchLower);
         });
       }
 
-      // 5. Compute balances and sort (latest/most relevant first)
+      // 5. Compute balances and sort (highest balance and active users first)
       const results = allFoundUsers.map((uData: any) => {
         const uid = uData.id || uData.uid;
         let bal = Number(uData.balance ?? uData.walletBalance ?? 0);
@@ -2656,6 +2696,15 @@ export async function startServer() {
           uid: uid,
           balance: bal
         };
+      });
+
+      results.sort((a: any, b: any) => {
+        const balA = Number(a.balance || 0);
+        const balB = Number(b.balance || 0);
+        if (balB !== balA) return balB - balA;
+        const timeA = new Date(a.updatedAt || a.lastOrderedAt || a.lastDepositedAt || a.createdAt || 0).getTime();
+        const timeB = new Date(b.updatedAt || b.lastOrderedAt || b.lastDepositedAt || b.createdAt || 0).getTime();
+        return timeB - timeA;
       });
 
       console.log(`[SEARCH-USERS] Query "${query}" returned ${results.length} users`);

@@ -125,6 +125,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
           
           if (profile) {
+            // Ensure email is always linked in profile if available from Firebase Auth
+            if (!profile.email && firebaseUser.email) {
+              profile.email = firebaseUser.email;
+              profile.userEmail = firebaseUser.email;
+              if (!profile.displayName || profile.displayName === "User") {
+                profile.displayName = firebaseUser.displayName || firebaseUser.email.split("@")[0];
+              }
+              dbClient.updateDoc("users", firebaseUser.uid, {
+                email: firebaseUser.email,
+                userEmail: firebaseUser.email,
+                displayName: profile.displayName
+              }).catch(() => {});
+            }
+
             setUserProfile(profile);
             try {
               localStorage.setItem(`user_profile_${firebaseUser.uid}`, JSON.stringify(profile));

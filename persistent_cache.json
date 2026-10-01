@@ -1,5 +1,52 @@
 {
-  "settings": null,
+  "settings": {
+    "data": {
+      "providerApiKey": "",
+      "customGateway1Secret": "",
+      "upiId": "mdsaudalam621@okicici",
+      "paytmEnv": "sandbox",
+      "customGateway1Name": "",
+      "customGateway2Name": "",
+      "paymentQrUrl": "",
+      "customGateway2Url": "",
+      "smsForwarderEnabled": true,
+      "smsForwarderSecret": "",
+      "providerApiUrl": "",
+      "merchantName": "Pyare SMM Panel",
+      "customGateway1Key": "",
+      "paytmMid": "",
+      "qrAutoUrl": "",
+      "qrAutoEnabled": false,
+      "paytmMerchantKey": "",
+      "phonepeEnv": "sandbox",
+      "guideVideoUrl": "",
+      "updatedAt": "2026-10-01T12:42:45.594Z",
+      "razorpayKeyId": "",
+      "qrAutoApiKey": "",
+      "phonepeSaltKey": "",
+      "selectedFestivalTheme": "none",
+      "customGateway2Secret": "",
+      "customGateway2Key": "",
+      "instantQrEnabled": true,
+      "whatsappChatNumber": "78590 02927",
+      "manualQrEnabled": false,
+      "selectedTheme": "amber",
+      "qrAutoProvider": "smmqr",
+      "customGateway1Url": "",
+      "razorpayKeySecret": "",
+      "phonepeSaltIndex": "1",
+      "phonepeEnabled": false,
+      "razorpayEnabled": false,
+      "phonepeMerchantId": "",
+      "paytmEnabled": false,
+      "backendApiUrl": "",
+      "qrAutoToken": "",
+      "customGateway1Enabled": false,
+      "whatsappLink": "https://whatsapp.com/channel/0029Vb7zsyi6RGJFemxpzy0b",
+      "customGateway2Enabled": false
+    },
+    "time": 1790863154218
+  },
   "providers": [],
   "courses": [
     [
@@ -492,6 +539,7 @@
       "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
       {
         "data": {
+          "id": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "latestOrders": [
             {
               "serviceId": "item_1790792133883_0oavo",
@@ -678,7 +726,9 @@
               "amount": 1.68,
               "type": "auto_zero_utr_upi"
             }
-          ]
+          ],
+          "email": "mtasvir375@gmail.com",
+          "displayName": "mtasvir375"
         },
         "time": 1790842472873
       }

@@ -22,6 +22,7 @@ import axios from 'axios';
 export interface UserProfile {
   uid: string;
   email: string;
+  userEmail?: string;
   displayName: string;
   photoURL: string;
   role: 'student' | 'instructor' | 'admin' | 'payment_admin';

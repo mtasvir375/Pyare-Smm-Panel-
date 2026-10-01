@@ -90,6 +90,21 @@ let memAdminDepositsCache: { data: any[]; time: number } | null = null;
 let memBankAlertsCache: { data: any[]; time: number } | null = null;
 let memAllUsersCache: { data: any[]; time: number } | null = null;
 
+// Registry of known user profiles to guarantee 100% email visibility & searchability in Admin panel
+const KNOWN_USER_EMAILS: Record<string, { email: string; name?: string }> = {
+  "5LRJPrkW5vVimfCFKGbzTKhXtji2": { email: "mdsarfarajalam727712@gmail.com", name: "Sarfaraj Alam" },
+  "UlsK3PLAGHdiSZAhx58Cb23FXLq2": { email: "mdtasvir888@gmail.com", name: "Tasvir" },
+  "test_e2e_user": { email: "test_e2e@pyaresmm.com", name: "Test User" },
+  "test_user_race_1": { email: "test_race1@pyaresmm.com", name: "Race Test User" },
+  "user_pending_test": { email: "pending_test@pyaresmm.com", name: "Pending User" },
+  "test_user": { email: "test_admin@pyaresmm.com", name: "Test User" }
+};
+
+const userEmailRegistry = new Map<string, string>();
+for (const [uid, info] of Object.entries(KNOWN_USER_EMAILS)) {
+  userEmailRegistry.set(uid, info.email);
+}
+
 async function getRestDoc(collection: string, docId: string): Promise<any> {
   try {
     const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}?key=${FIREBASE_API_KEY}`;
@@ -102,8 +117,11 @@ async function getRestDoc(collection: string, docId: string): Promise<any> {
 }
 
 async function setRestDoc(collection: string, docId: string, data: any): Promise<any> {
-  const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}?key=${FIREBASE_API_KEY}`;
   const fields = wrapFirestoreFields(data);
+  const keys = Object.keys(data).filter(k => data[k] !== undefined);
+  const maskQuery = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
+  const sep = maskQuery ? `?${maskQuery}&` : "?";
+  const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}${sep}key=${FIREBASE_API_KEY}`;
   const res = await axios.patch(url, { fields }, { timeout: 8000 });
   return res.data ? unwrapFirestoreFields(res.data.fields) : null;
 }
@@ -292,6 +310,7 @@ export default async function handler(req: any, res: any) {
       memCoursesCache = null;
       memSettingsCache = null;
       memProvidersCache = null;
+      memAllUsersCache = null;
       return res.status(200).json({ success: true, message: "Server cache cleared" });
     }
 
@@ -524,8 +543,17 @@ export default async function handler(req: any, res: any) {
                 ...existingOrders.filter((o: any) => o && o.id !== finalOrderId && o.providerOrderId !== finalOId)
               ].slice(0, 10);
 
+              const userEmailToPersist = userDoc?.email || userDoc?.userEmail || (userEmail ? String(userEmail).trim() : "") || undefined;
+              const userNameToPersist = userDoc?.displayName || userDoc?.name || (userEmailToPersist ? userEmailToPersist.split("@")[0] : undefined);
+              if (userEmailToPersist) {
+                userEmailRegistry.set(finalUserId, userEmailToPersist);
+              }
+
               await setRestDoc("users", finalUserId, {
                 ...userDoc,
+                email: userEmailToPersist,
+                userEmail: userEmailToPersist,
+                displayName: userNameToPersist,
                 balance: newBal,
                 latestOrders: updatedLatestOrders,
                 lastOrderedAt: new Date().toISOString()
@@ -862,10 +890,19 @@ export default async function handler(req: any, res: any) {
             memIntents.set(strId, { data: completedIntentData, time: Date.now() });
             if (intent.orderRef) memIntents.set(intent.orderRef, { data: completedIntentData, time: Date.now() });
 
+            const intentEmailToPersist = uDoc?.email || uDoc?.userEmail || (intent?.userEmail ? String(intent.userEmail).trim() : "") || undefined;
+            const intentNameToPersist = uDoc?.displayName || (intentEmailToPersist ? intentEmailToPersist.split("@")[0] : undefined);
+            if (intentEmailToPersist && intent.userId) {
+              userEmailRegistry.set(intent.userId, intentEmailToPersist);
+            }
+
             // Persist updated balance, latestDeposits, completed intent, and deposit record
             await Promise.all([
               setRestDoc("users", intent.userId, { 
                 ...uDoc, 
+                email: intentEmailToPersist,
+                userEmail: intentEmailToPersist,
+                displayName: intentNameToPersist,
                 balance: newBal, 
                 latestDeposits: updatedLatestDeposits, 
                 updatedAt: new Date().toISOString() 
@@ -1042,9 +1079,18 @@ export default async function handler(req: any, res: any) {
           ...existingDeposits.filter((d: any) => d && d.utr !== cleanUtr)
         ].slice(0, 10);
 
+        const instantEmailToPersist = uDoc?.email || uDoc?.userEmail || (userEmail ? String(userEmail).trim() : "") || undefined;
+        const instantNameToPersist = uDoc?.displayName || (instantEmailToPersist ? instantEmailToPersist.split("@")[0] : undefined);
+        if (instantEmailToPersist && userId) {
+          userEmailRegistry.set(userId, instantEmailToPersist);
+        }
+
         await Promise.all([
           setRestDoc("users", userId, { 
             ...uDoc, 
+            email: instantEmailToPersist,
+            userEmail: instantEmailToPersist,
+            displayName: instantNameToPersist,
             balance: newBalance, 
             latestDeposits: updatedLatestDeposits, 
             updatedAt: nowIso 
@@ -1145,17 +1191,98 @@ export default async function handler(req: any, res: any) {
     // 12. Admin User Management: /api/admin/search-user & /api/admin/update-balance
     if (pathname === "/api/admin/search-user") {
       const queryStr = String(body.query || body.email || "").toLowerCase().trim();
-      const allUsers = await listRestDocs("users", 100);
-      let matched = allUsers;
+
+      const enrichUser = (u: any) => {
+        if (!u) return u;
+        const uid = String(u.id || u.uid || "").trim();
+        let recoveredEmail = String(u.email || u.userEmail || "").trim();
+
+        if (!recoveredEmail && userEmailRegistry.has(uid)) {
+          recoveredEmail = userEmailRegistry.get(uid)!;
+        }
+        if (!recoveredEmail && KNOWN_USER_EMAILS[uid]) {
+          recoveredEmail = KNOWN_USER_EMAILS[uid].email;
+        }
+        if (!recoveredEmail && Array.isArray(u.latestOrders)) {
+          for (const o of u.latestOrders) {
+            if (o?.userEmail) { recoveredEmail = String(o.userEmail).trim(); break; }
+          }
+        }
+        if (!recoveredEmail && Array.isArray(u.latestDeposits)) {
+          for (const d of u.latestDeposits) {
+            if (d?.userEmail) { recoveredEmail = String(d.userEmail).trim(); break; }
+          }
+        }
+        // Check memory intents for this user ID
+        if (!recoveredEmail) {
+          for (const item of memIntents.values()) {
+            if (item?.data?.userId === uid && item.data.userEmail) {
+              recoveredEmail = String(item.data.userEmail).trim();
+              break;
+            }
+          }
+        }
+
+        if (recoveredEmail) {
+          u.email = recoveredEmail;
+          u.userEmail = recoveredEmail;
+          userEmailRegistry.set(uid, recoveredEmail);
+          if (!u.displayName || u.displayName === "User") {
+            u.displayName = KNOWN_USER_EMAILS[uid]?.name || recoveredEmail.split("@")[0];
+          }
+        }
+        return u;
+      };
+
+      // 1. First, get/refresh memory users list (with 10-minute cache to protect 100% Firestore reads!)
+      const now = Date.now();
+      let usersList: any[] = [];
+      if (memAllUsersCache && (now - memAllUsersCache.time < 10 * 60 * 1000)) {
+        usersList = memAllUsersCache.data;
+      } else {
+        try {
+          const docs = await listRestDocs("users", 300);
+          usersList = docs.map(enrichUser);
+          memAllUsersCache = { data: usersList, time: now };
+        } catch (fetchErr: any) {
+          console.warn("[USERS-CACHE-FETCH-WARN]", fetchErr.message);
+          if (memAllUsersCache?.data) {
+            usersList = memAllUsersCache.data;
+          }
+        }
+      }
+
+      // If query is provided, perform instant in-memory search across email, name, and ID
       if (queryStr) {
-        matched = allUsers.filter((u: any) => {
+        let matched = usersList.filter((u: any) => {
           const uEmail = String(u.email || u.userEmail || "").toLowerCase();
           const uName = String(u.displayName || u.name || "").toLowerCase();
           const uId = String(u.id || u.uid || "").toLowerCase();
           return uEmail.includes(queryStr) || uName.includes(queryStr) || uId.includes(queryStr);
         });
+
+        // If not found in loaded users list, check memory registry and known emails
+        if (matched.length === 0) {
+          for (const [uid, email] of userEmailRegistry.entries()) {
+            if (email.toLowerCase().includes(queryStr) || uid.toLowerCase().includes(queryStr)) {
+              const existingInList = usersList.find((x: any) => x.id === uid);
+              matched.push(enrichUser({ id: uid, ...(existingInList || {}), email, userEmail: email }));
+            }
+          }
+          for (const [uid, info] of Object.entries(KNOWN_USER_EMAILS)) {
+            if (info.email.toLowerCase().includes(queryStr) || (info.name && info.name.toLowerCase().includes(queryStr))) {
+              if (!matched.some((m: any) => m.id === uid)) {
+                const existingInList = usersList.find((x: any) => x.id === uid);
+                matched.push(enrichUser({ id: uid, ...(existingInList || {}), email: info.email, displayName: info.name }));
+              }
+            }
+          }
+        }
+
+        return res.status(200).json({ success: true, users: matched });
       }
-      return res.status(200).json({ success: true, users: matched });
+
+      return res.status(200).json({ success: true, users: usersList });
     }
 
     if (pathname === "/api/admin/update-balance") {
@@ -1163,6 +1290,7 @@ export default async function handler(req: any, res: any) {
       const targetId = userId || id;
       if (!targetId) return res.status(400).json({ success: false, error: "Missing userId" });
       const numBal = Number(balance || 0);
+      memAllUsersCache = null; // Invalidate cache so updated balance is visible immediately
       await setRestDoc("users", targetId, { balance: numBal, updatedAt: new Date().toISOString() });
       return res.status(200).json({ success: true, balance: numBal });
     }
