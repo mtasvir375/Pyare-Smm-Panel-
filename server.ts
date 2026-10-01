@@ -10,6 +10,8 @@ import crypto from "crypto";
 import { createClient } from "@supabase/supabase-js";
 import https from "https";
 import http from "http";
+import { getLocalSqliteDb, getLocalDoc, setLocalDoc, updateLocalDoc, addLocalDoc, listLocalDocs, deleteLocalDoc } from "./api/localDb";
+import { migrateAllFromFirebase } from "./api/migrateFromFirebase";
 
 import admin from "firebase-admin";
 import { getFirestore } from "firebase-admin/firestore";
@@ -1354,6 +1356,10 @@ export async function startServer() {
 
   // Firebase-Firestore Helpers that replace Supabase ones
   const getDocSafe = async (collect: string, id: string, token?: string, forceFresh?: boolean) => {
+    const local = getLocalDoc(collect, id);
+    if (local) {
+      return { exists: true, data: () => local };
+    }
     const now = Date.now();
     
     // 24 hours in-memory caching for semi-static config (settings, providers, courses) to strictly protect Firestore 50k quota
@@ -1704,6 +1710,7 @@ export async function startServer() {
   };
 
   const updateDocSafe = async (col: string, id: string, data: any, token?: string) => {
+    updateLocalDoc(col, id, data);
     invalidateCachesForCollection(col, id);
     if (col === "settings" && id === "payment") {
       const existing = serverCache.settings?.data || {};
@@ -1743,28 +1750,11 @@ export async function startServer() {
       const existing = serverCache.deposits.get(id) || {};
       serverCache.deposits.set(id, { ...existing, ...data, updatedAt: new Date().toISOString() });
     }
-    const isCore = col === "providers" || col === "settings" || col === "courses" || col === "services";
-    if (!useRestFallback || (adminSdkSucceeded && isCore)) {
-      try {
-        await fdb.collection(col).doc(id).set({ ...data, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
-        return true;
-      } catch (err: any) {
-        console.warn(`[FIREBASE-UPDATE] Error updating ${col}/${id}:`, err.message);
-        if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
-          if (!adminSdkSucceeded) {
-            console.warn("[FIREBASE] Permission denied. Engaging REST Fallback.");
-            useRestFallback = true;
-          }
-        } else {
-          return false;
-        }
-      }
-    }
-
-    return updateDocREST(col, id, data, token);
+    return true;
   };
 
   const setDocSafe = async (col: string, id: string, data: any, token?: string) => {
+    setLocalDoc(col, id, data);
     invalidateCachesForCollection(col, id);
     if (col === "settings" && id === "payment") {
       const existing = serverCache.settings?.data || {};
@@ -1801,36 +1791,12 @@ export async function startServer() {
     if (col === "deposits") {
       serverCache.deposits.set(id, { ...data, updatedAt: new Date().toISOString() });
     }
-    const isCore = col === "providers" || col === "settings" || col === "courses" || col === "services";
-    if (!useRestFallback || (adminSdkSucceeded && isCore)) {
-      try {
-        await fdb.collection(col).doc(id).set({ ...data, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
-        return true;
-      } catch (err: any) {
-        console.warn(`[FIREBASE-SET] Error upserting ${col}/${id}:`, err.message);
-        if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
-          if (!adminSdkSucceeded) {
-            console.warn("[FIREBASE] Permission denied. Engaging REST Fallback.");
-            useRestFallback = true;
-          }
-        } else {
-          return false;
-        }
-      }
-    }
-
-    const restRes = await setDocREST(col, id, data, token);
-    if (!restRes && col === "orders") {
-      console.log(`[SETDOCSAFE-MEMORY] setDocREST returned false for order ${id}, but order is cached in memory. Proceeding.`);
-      return true;
-    }
-    return restRes;
+    return true;
   };
 
   const addDocSafe = async (col: string, data: any, token?: string) => {
     invalidateCachesForCollection(col);
-    const prefix = col === "orders" ? "ord_" : col === "deposits" ? "dep_" : col === "transactions" ? "txn_" : "doc_";
-    const generatedId = prefix + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
+    const generatedId = addLocalDoc(col, data);
     const now = new Date().toISOString();
     const docData = { id: generatedId, ...data, createdAt: data.createdAt || now, updatedAt: now };
 
@@ -1841,56 +1807,13 @@ export async function startServer() {
       serverCache.deposits.set(generatedId, { data: docData, time: Date.now() });
     }
 
-    if (!useRestFallback) {
-      try {
-        await fdb.collection(col).doc(generatedId).set({ ...docData, createdAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
-        return generatedId;
-      } catch (err: any) {
-        console.warn(`[FIREBASE-ADD] Error adding to ${col}:`, err.message);
-        if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
-          console.warn("[FIREBASE] Permission denied. Engaging REST Fallback.");
-          useRestFallback = true;
-        }
-      }
-    }
-
-    const success = await setDocREST(col, generatedId, docData, token);
-    if (success || col === "orders" || col === "deposits") {
-      return generatedId;
-    }
-    return null;
-  };
-
-  const deleteDocREST = async (collect: string, id: string) => {
-    try {
-      const targetProject = getTargetProject();
-      const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/${collect}/${id}?key=${apiKey}`;
-      await axios.delete(url, { timeout: 10000 });
-      return true;
-    } catch (err: any) {
-      console.error(`[REST-DELETE-ERR] Failed REST delete for ${collect}/${id}:`, err.response?.data || err.message);
-      return false;
-    }
+    return generatedId;
   };
 
   const deleteDocSafe = async (col: string, id: string) => {
+    deleteLocalDoc(col, id);
     invalidateCachesForCollection(col, id);
-    if (!useRestFallback) {
-      try {
-        await fdb.collection(col).doc(id).delete();
-        return true;
-      } catch (err: any) {
-        console.warn(`[FIREBASE-DELETE] Error deleting ${col}/${id}:`, err.message);
-        if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
-          console.warn("[FIREBASE] Permission denied. Engaging REST Fallback.");
-          useRestFallback = true;
-        } else {
-          return false;
-        }
-      }
-    }
-
-    return deleteDocREST(col, id);
+    return true;
   };
 
   // Activate auto-ensure on startup only if absolutely missing
@@ -4108,8 +4031,13 @@ export async function startServer() {
   });
 
   app.post("/api/db/list", async (req, res) => {
-    const { collection: collect, limit: pageSize = 25 } = req.body;
+    const { collection: collect, limit: pageSize = 100 } = req.body;
     if (!collect) return res.status(400).json({ error: "Missing collection" });
+    
+    const localList = listLocalDocs(collect, pageSize);
+    if (localList.length > 0) {
+      return res.json({ success: true, data: localList });
+    }
     
     // Check serverCache first (0 Reads)
     if (collect === "courses" && serverCache.courses.size > 0) {
@@ -7167,8 +7095,19 @@ export async function startServer() {
   }
 
   if (!process.env.VERCEL) {
-    app.listen(PORT, "0.0.0.0", () => {
+    app.listen(PORT, "0.0.0.0", async () => {
       console.log(`[READY] Server running on http://localhost:${PORT}`);
+      try {
+        await getLocalSqliteDb();
+        console.log("[SQLITE] Local SQLite database successfully initialized and ready!");
+        migrateAllFromFirebase().then((res) => {
+          console.log("[MIGRATION-COMPLETE]", JSON.stringify(res.migrated));
+        }).catch((err) => {
+          console.warn("[MIGRATION-WARN]", err.message);
+        });
+      } catch (e: any) {
+        console.error("[SQLITE-INIT-ERR]", e.message);
+      }
       // Auto-start Telegram bot polling on startup if enabled
       try {
         initTelegramBotService();

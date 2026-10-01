@@ -53,9 +53,7 @@ export const dbClient = {
       if (res.data && res.data.error === "Document not found") {
         return null;
       }
-    } catch (proxyErr: any) {
-      console.warn(`[DB-CLIENT] Proxy getDoc failed for ${table}/${id}:`, proxyErr.message);
-    }
+    } catch (proxyErr: any) {}
 
     // 2. Direct Web SDK as safe fallback
     try {
@@ -64,7 +62,6 @@ export const dbClient = {
       if (snap.exists()) return { id: snap.id, ...snap.data() };
       return null;
     } catch (err: any) {
-      console.warn(`[DB-CLIENT] Direct getDoc failed for ${table}/${id}:`, err.message);
       return null;
     }
   },
@@ -76,9 +73,7 @@ export const dbClient = {
       if (res.data && res.data.success && Array.isArray(res.data.data)) {
         return res.data.data;
       }
-    } catch (proxyErr: any) {
-      console.warn(`[DB-CLIENT] Proxy getDocs failed for ${table}:`, proxyErr.message);
-    }
+    } catch (proxyErr: any) {}
 
     // 2. Safe capped fallback only if proxy fails
     try {
@@ -91,7 +86,6 @@ export const dbClient = {
       const snap = await getDocs(qSafe);
       return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     } catch (err: any) {
-      console.warn(`[DB-CLIENT] Direct getDocs fallback failed for ${table}:`, err.message);
       return [];
     }
   },
@@ -101,17 +95,13 @@ export const dbClient = {
       axios.post('/api/clear-cache').catch(() => {});
     }
     try {
-      const docRef = doc(db, table, id);
-      await setDoc(docRef, { ...data, updatedAt: serverTimestamp() }, { merge: true });
-    } catch (fsErr: any) {
-      console.warn(`[DB-CLIENT] Direct SDK setDoc failed for ${table}/${id}:`, fsErr.message);
-    }
+      await axios.post('/api/db/set', { collection: table, id, data });
+    } catch (proxyErr: any) {}
 
     try {
-      await axios.post('/api/db/set', { collection: table, id, data });
-    } catch (proxyErr: any) {
-      console.warn(`[DB-CLIENT] Proxy setDoc failed for ${table}/${id}:`, proxyErr.message);
-    }
+      const docRef = doc(db, table, id);
+      await setDoc(docRef, { ...data, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
+    } catch (fsErr: any) {}
   },
 
   async updateDoc(table: string, id: string, data: any): Promise<void> {
@@ -119,17 +109,13 @@ export const dbClient = {
       axios.post('/api/clear-cache').catch(() => {});
     }
     try {
-      const docRef = doc(db, table, id);
-      await setDoc(docRef, { ...data, updatedAt: serverTimestamp() }, { merge: true });
-    } catch (fsErr: any) {
-      console.warn(`[DB-CLIENT] Direct SDK updateDoc failed for ${table}/${id}:`, fsErr.message);
-    }
+      await axios.post('/api/db/update', { collection: table, id, data });
+    } catch (e: any) {}
 
     try {
-      await axios.post('/api/db/update', { collection: table, id, data });
-    } catch (e: any) {
-      console.warn(`[DB-CLIENT] Proxy update failed for ${table}/${id}:`, e.message);
-    }
+      const docRef = doc(db, table, id);
+      await setDoc(docRef, { ...data, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
+    } catch (fsErr: any) {}
   },
 
   async addDoc(table: string, data: any): Promise<any> {

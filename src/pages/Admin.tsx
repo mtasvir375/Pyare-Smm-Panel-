@@ -768,9 +768,16 @@ export default function Admin() {
         // Find user by email or pending claim
         let matchedUserId = "";
         if (emailToUse) {
-          const allUsers = await dbClient.getDocs("users");
-          const target = allUsers.find((u: any) => (u.email || "").toLowerCase() === emailToUse.toLowerCase());
-          if (target) matchedUserId = target.id;
+          const targetInState = allUsers.find((u: any) => (u.email || "").toLowerCase() === emailToUse.toLowerCase());
+          if (targetInState) {
+            matchedUserId = targetInState.id;
+          } else {
+            try {
+              const res = await axios.post("/api/admin/search-user", { query: emailToUse });
+              const found = res.data?.users?.[0];
+              if (found) matchedUserId = found.id;
+            } catch (e) {}
+          }
         }
 
         if (!matchedUserId) {

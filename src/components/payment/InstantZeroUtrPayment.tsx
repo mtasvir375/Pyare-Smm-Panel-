@@ -241,14 +241,14 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
     }
   };
 
-  // 3. Gentle Polling Loop to check verification status without asking UTR
+  // 3. Gentle Polling Loop to check verification status without asking UTR (15s interval, strictly pauses if tab hidden)
   useEffect(() => {
     if (!intent || isSuccess) return;
 
     pollIntervalRef.current = setInterval(() => {
-      if (typeof document !== "undefined" && document.hidden) return;
+      if (typeof document !== "undefined" && (document.hidden || document.visibilityState === "hidden")) return;
       verifyStatus(false);
-    }, 5000);
+    }, 15000);
 
     return () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);

@@ -105,28 +105,39 @@ for (const [uid, info] of Object.entries(KNOWN_USER_EMAILS)) {
   userEmailRegistry.set(uid, info.email);
 }
 
+import { getLocalDoc, setLocalDoc, listLocalDocs, queryLocalDocs } from "./localDb";
+
 async function getRestDoc(collection: string, docId: string): Promise<any> {
+  const local = getLocalDoc(collection, docId);
+  if (local) return local;
   try {
     const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}?key=${FIREBASE_API_KEY}`;
-    const res = await axios.get(url, { timeout: 7000 });
-    return res.data ? unwrapFirestoreFields(res.data.fields) : null;
+    const res = await axios.get(url, { timeout: 4000 });
+    const fetched = res.data ? unwrapFirestoreFields(res.data.fields) : null;
+    if (fetched) setLocalDoc(collection, docId, fetched);
+    return fetched;
   } catch (err: any) {
     if (err.response && err.response.status === 404) return null;
-    throw err;
+    return local || null;
   }
 }
 
 async function setRestDoc(collection: string, docId: string, data: any): Promise<any> {
-  const fields = wrapFirestoreFields(data);
-  const keys = Object.keys(data).filter(k => data[k] !== undefined);
-  const maskQuery = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
-  const sep = maskQuery ? `?${maskQuery}&` : "?";
-  const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}${sep}key=${FIREBASE_API_KEY}`;
-  const res = await axios.patch(url, { fields }, { timeout: 8000 });
-  return res.data ? unwrapFirestoreFields(res.data.fields) : null;
+  setLocalDoc(collection, docId, data);
+  try {
+    const fields = wrapFirestoreFields(data);
+    const keys = Object.keys(data).filter(k => data[k] !== undefined);
+    const maskQuery = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
+    const sep = maskQuery ? `?${maskQuery}&` : "?";
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}${sep}key=${FIREBASE_API_KEY}`;
+    await axios.patch(url, { fields }, { timeout: 4000 }).catch(() => {});
+  } catch (e) {}
+  return getLocalDoc(collection, docId);
 }
 
 async function listRestDocs(collection: string, pageSize = 100): Promise<any[]> {
+  const localList = listLocalDocs(collection, pageSize);
+  if (localList.length > 0) return localList;
   try {
     const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents:runQuery?key=${FIREBASE_API_KEY}`;
     const payload = {
@@ -135,25 +146,27 @@ async function listRestDocs(collection: string, pageSize = 100): Promise<any[]> 
         limit: pageSize
       }
     };
-    const res = await axios.post(url, payload, { timeout: 8000 });
+    const res = await axios.post(url, payload, { timeout: 4000 });
     if (res.data && Array.isArray(res.data)) {
-      return res.data
+      const fetched = res.data
         .filter((item: any) => item.document)
         .map((item: any) => {
           const doc = item.document;
           const id = doc.name.split("/").pop();
           const data = unwrapFirestoreFields(doc.fields || {});
-          return { id, ...data };
+          const merged = { id, ...data };
+          setLocalDoc(collection, id, merged);
+          return merged;
         });
+      return fetched.length > 0 ? fetched : localList;
     }
-    return [];
-  } catch (err: any) {
-    console.error(`[REST-QUERY-ERR] Failed for ${collection}:`, err.response?.data || err.message);
-    return [];
-  }
+  } catch (err: any) {}
+  return localList;
 }
 
 async function queryRestDocs(collection: string, field: string, value: string, pageSize = 50): Promise<any[]> {
+  const localList = queryLocalDocs(collection, field, value, pageSize);
+  if (localList.length > 0) return localList;
   try {
     const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents:runQuery?key=${FIREBASE_API_KEY}`;
     const payload = {
@@ -169,22 +182,22 @@ async function queryRestDocs(collection: string, field: string, value: string, p
         limit: pageSize
       }
     };
-    const res = await axios.post(url, payload, { timeout: 8000 });
+    const res = await axios.post(url, payload, { timeout: 4000 });
     if (res.data && Array.isArray(res.data)) {
-      return res.data
+      const fetched = res.data
         .filter((item: any) => item.document)
         .map((item: any) => {
           const doc = item.document;
           const id = doc.name.split("/").pop();
           const data = unwrapFirestoreFields(doc.fields || {});
-          return { id, ...data };
+          const merged = { id, ...data };
+          setLocalDoc(collection, id, merged);
+          return merged;
         });
+      return fetched;
     }
-    return [];
-  } catch (err: any) {
-    console.error(`[REST-QUERY-ERR] Failed query for ${collection} (${field}==${value}):`, err.response?.data || err.message);
-    return [];
-  }
+  } catch (err: any) {}
+  return localList;
 }
 
 // Known Providers for proxy
