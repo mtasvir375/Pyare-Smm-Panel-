@@ -79,7 +79,7 @@ export const getCachedCourses = async (forceRefresh = false) => {
   
   // 1. Primary path: Fetch from server API proxy (serves from Node/SQLite memory in 1ms)
   try {
-    const res = await axios.get(formatApiUrl(forceRefresh ? "/api/courses?fresh=1" : "/api/courses"));
+    const res = await axios.get(formatApiUrl(`/api/courses?t=${now}`));
     if (Array.isArray(res.data) && res.data.length > 0) {
       const activeServices = res.data.map((data: any) => ({
         id: data.id,

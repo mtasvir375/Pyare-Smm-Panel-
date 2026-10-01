@@ -236,6 +236,15 @@ export async function startServer() {
 
   app.use(cors(corsOptions));
   app.options("*", cors(corsOptions));
+
+  // Global Cache-Control middleware to prevent CDN / Cloudflare / Vercel edge caching on custom domain
+  app.use("/api", (req, res, next) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    res.setHeader("Surrogate-Control", "no-store");
+    next();
+  });
   
   // Storage for basic app config that doesn't change often
   const serverCache = {

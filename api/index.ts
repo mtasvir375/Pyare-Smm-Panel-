@@ -287,35 +287,16 @@ export default async function handler(req: any, res: any) {
 
     // 2. Settings: /api/settings
     if (pathname === "/api/settings") {
-      const isFresh = req.query?.fresh === "1" || req.query?.fresh === "true";
-      const now = Date.now();
-      if (!isFresh && memSettingsCache && (now - memSettingsCache.time < 15 * 60 * 1000)) {
-        res.setHeader("Cache-Control", "public, max-age=60, s-maxage=900, stale-while-revalidate=86400");
-        return res.status(200).json(memSettingsCache.data);
-      }
-      if (req.method === "GET") {
-        try {
-          const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/settings/payment?key=${FIREBASE_API_KEY}`;
-          const response = await axios.get(url, { timeout: 6000 });
-          const data = unwrapFirestoreFields(response.data.fields);
-          memSettingsCache = { data, time: Date.now() };
-          res.setHeader("Cache-Control", "public, max-age=60, s-maxage=900, stale-while-revalidate=86400");
-          return res.status(200).json(data);
-        } catch (err: any) {
-          if (memSettingsCache?.data) {
-            return res.status(200).json(memSettingsCache.data);
-          }
-          console.warn("[REST-SETTINGS-GET-ERR]", err.response?.data || err.message);
-          return res.status(err.response?.status || 500).json({
-            error: "Failed to fetch settings from Firestore REST API",
-            message: err.message
-          });
-        }
-      } else if (req.method === "POST") {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
+      res.setHeader("Pragma", "no-cache");
+      if (req.method === "POST") {
         memSettingsCache = null;
-        await setRestDoc("settings", "payment", body);
-        return res.status(200).json({ success: true, message: "Settings saved" });
+        const updated = { ...body, updatedAt: new Date().toISOString() };
+        setLocalDoc("settings", "payment", updated);
+        return res.status(200).json({ success: true, message: "Settings saved", settings: updated });
       }
+      const settings = getLocalDoc("settings", "payment") || {};
+      return res.status(200).json(settings);
     }
 
     // 2.5 Clear Cache: /api/clear-cache
@@ -329,46 +310,19 @@ export default async function handler(req: any, res: any) {
 
     // 3. Courses: /api/courses
     if (pathname === "/api/courses") {
-      const isFresh = req.query?.fresh === "1" || req.query?.fresh === "true";
-      const now = Date.now();
-      
-      // Serve from Node RAM memory (0 Firestore reads!) if cache exists and not explicitly forced
-      if (!isFresh && memCoursesCache && memCoursesCache.data && memCoursesCache.data.length > 0) {
-        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-        return res.status(200).json(memCoursesCache.data);
-      }
-
-      if (req.method === "GET") {
-        try {
-          const courses = await listRestDocs("courses", 200);
-          const categoryOrder = ["Instagram", "YouTube", "Facebook", "TikTok", "Telegram", "Twitter", "Other"];
-          courses.sort((a: any, b: any) => {
-            const idxA = categoryOrder.indexOf(a.category || "Other");
-            const idxB = categoryOrder.indexOf(b.category || "Other");
-            if (idxA !== idxB) return (idxA === -1 ? 99 : idxA) - (idxB === -1 ? 99 : idxB);
-            return (a.serviceId || 0) - (b.serviceId || 0);
-          });
-          if (courses.length > 0) {
-            memCoursesCache = { data: courses, time: Date.now() };
-          }
-          res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-          return res.status(200).json(courses);
-        } catch (err: any) {
-          if (memCoursesCache?.data) {
-            res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-            return res.status(200).json(memCoursesCache.data);
-          }
-          return res.status(500).json({ error: err.message });
-        }
-      }
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
+      res.setHeader("Pragma", "no-cache");
+      const localCourses = listLocalDocs("courses", 500);
+      return res.status(200).json(localCourses);
     }
 
     // 4. Providers: /api/providers
     if (pathname === "/api/providers") {
-      const now = Date.now();
-      if (memProvidersCache && (now - memProvidersCache.time < 30 * 60 * 1000)) {
-        return res.status(200).json(memProvidersCache.data);
-      }
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
+      res.setHeader("Pragma", "no-cache");
+      const localProviders = listLocalDocs("providers", 200);
+      return res.status(200).json(localProviders);
+    }
       if (req.method === "GET") {
         try {
           const providers = await listRestDocs("providers", 100);
