@@ -5,7 +5,7 @@ import { DEFAULT_SERVICES, DEFAULT_SETTINGS } from "@/data/defaultServices";
 
 let cachedCourses: any = null;
 let lastCoursesFetch = 0;
-const CACHE_DURATION = 120 * 60 * 1000; // 2 hours cache for optimal Firestore read quota savings
+const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours cache for maximum Firestore read quota protection
 
 // Clear cache (useful for admin when they update something)
 export const clearCache = () => {
@@ -32,7 +32,6 @@ export const clearCache = () => {
 
 // Helper to detect if a courses array is just the mock default seed
 const isMockCourses = (list: any[]) => {
-  // Only true if it is explicitly the dummy fallback with empty or test titles
   return false;
 };
 
@@ -78,28 +77,25 @@ export const getCachedCourses = async (forceRefresh = false) => {
   const now = Date.now();
   
   if (!forceRefresh) {
-    if (cachedCourses && !isMockCourses(cachedCourses) && (now - lastCoursesFetch < CACHE_DURATION)) {
+    if (cachedCourses && Array.isArray(cachedCourses) && cachedCourses.length > 0) {
       return cachedCourses;
     }
     
-    // Check localStorage
+    // Check localStorage (0 Firestore reads!)
     try {
-      const lsTime = localStorage.getItem("cached_courses_time");
-      if (lsTime && (now - parseInt(lsTime) < CACHE_DURATION)) {
-        const lsData = localStorage.getItem("cached_courses");
-        if (lsData) {
-          const parsed = JSON.parse(lsData);
-          if (Array.isArray(parsed) && parsed.length > 0 && !isMockCourses(parsed)) {
-            cachedCourses = sortServicesList(parsed);
-            lastCoursesFetch = parseInt(lsTime);
-            return cachedCourses;
-          }
+      const lsData = localStorage.getItem("cached_courses");
+      if (lsData) {
+        const parsed = JSON.parse(lsData);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          cachedCourses = sortServicesList(parsed);
+          lastCoursesFetch = now;
+          return cachedCourses;
         }
       }
     } catch(e) {}
   }
   
-  // 1. Primary path: Fetch from server Express API proxy (serves from Node memory with 0 Firestore reads)
+  // 1. Primary path: Fetch from server API proxy
   try {
     const res = await axios.get(forceRefresh ? "/api/courses?fresh=1" : "/api/courses");
     if (Array.isArray(res.data) && res.data.length > 0) {
@@ -116,8 +112,8 @@ export const getCachedCourses = async (forceRefresh = false) => {
         is_package: data.isPackage !== undefined ? !!data.isPackage : !!data.is_package,
         packagePrice: data.packagePrice !== undefined ? Number(data.packagePrice) : (data.package_price !== undefined ? Number(data.package_price) : 0),
         package_price: data.packagePrice !== undefined ? Number(data.packagePrice) : (data.package_price !== undefined ? Number(data.package_price) : 0),
-        packageQuantity: data.packageQuantity !== undefined ? Number(data.packageQuantity) : (data.package_quantity !== undefined ? Number(data.package_quantity) : 1000),
-        package_quantity: data.packageQuantity !== undefined ? Number(data.packageQuantity) : (data.package_quantity !== undefined ? Number(data.package_quantity) : 1000),
+        packageQuantity: data.packageQuantity !== undefined ? Number(data.packageQuantity) : (data.package_quantity !== undefined ? Number(data.packageQuantity) : 1000),
+        package_quantity: data.packageQuantity !== undefined ? Number(data.packageQuantity) : (data.package_quantity !== undefined ? Number(data.packageQuantity) : 1000),
         iconUrl: data.iconUrl || data.icon_url || null,
         icon_url: data.iconUrl || data.icon_url || null,
       }));
@@ -128,61 +124,28 @@ export const getCachedCourses = async (forceRefresh = false) => {
         localStorage.setItem("cached_courses_time", now.toString());
         localStorage.setItem("cached_courses", JSON.stringify(cachedCourses));
       } catch(e) {}
-      console.log("[CACHE] Successfully loaded courses from Express memory cache!");
       return cachedCourses;
     }
   } catch (apiErr) {
-    console.warn("[CACHE] Express API proxy /api/courses call failed:", apiErr);
+    console.warn("[CACHE] API proxy /api/courses call failed:", apiErr);
   }
 
-  // 2. Direct Firestore fallback (crucial for custom domain / Vercel where Express backend isn't mounted)
+  // Fallback to localStorage if API failed
   try {
-    const colRef = collection(db, "courses");
-    const snap = await getDocs(colRef);
-    if (!snap.empty) {
-      const activeServices = snap.docs.map((docSnap) => {
-        const data = docSnap.data() as any;
-        return {
-          id: docSnap.id,
-          ...data,
-          price: data.pricePerThousand !== undefined ? Number(data.pricePerThousand) : (data.price !== undefined ? Number(data.price) : 0),
-          pricePerThousand: data.pricePerThousand !== undefined ? Number(data.pricePerThousand) : (data.price !== undefined ? Number(data.price) : 0),
-          minLimit: data.minLimit !== undefined ? Number(data.minLimit) : (data.min_limit !== undefined ? Number(data.min_limit) : 1000),
-          min_limit: data.minLimit !== undefined ? Number(data.minLimit) : (data.min_limit !== undefined ? Number(data.min_limit) : 1000),
-          providerServiceId: data.providerServiceId !== undefined ? String(data.providerServiceId) : (data.provider_service_id !== undefined ? String(data.provider_service_id) : "0"),
-          provider_service_id: data.providerServiceId !== undefined ? String(data.providerServiceId) : (data.provider_service_id !== undefined ? String(data.provider_service_id) : "0"),
-          isPackage: data.isPackage !== undefined ? !!data.isPackage : !!data.is_package,
-          is_package: data.isPackage !== undefined ? !!data.isPackage : !!data.is_package,
-          packagePrice: data.packagePrice !== undefined ? Number(data.packagePrice) : (data.package_price !== undefined ? Number(data.package_price) : 0),
-          package_price: data.packagePrice !== undefined ? Number(data.packagePrice) : (data.package_price !== undefined ? Number(data.package_price) : 0),
-          packageQuantity: data.packageQuantity !== undefined ? Number(data.packageQuantity) : (data.package_quantity !== undefined ? Number(data.package_quantity) : 1000),
-          package_quantity: data.packageQuantity !== undefined ? Number(data.packageQuantity) : (data.package_quantity !== undefined ? Number(data.package_quantity) : 1000),
-          iconUrl: data.iconUrl || data.icon_url || null,
-          icon_url: data.iconUrl || data.icon_url || null,
-        };
-      });
-
-      cachedCourses = sortServicesList(activeServices);
-      lastCoursesFetch = now;
-      try {
-        localStorage.setItem("cached_courses_time", now.toString());
-        localStorage.setItem("cached_courses", JSON.stringify(cachedCourses));
-      } catch(e) {}
-      console.log("[CACHE] Successfully loaded courses directly from Firestore!");
-      return cachedCourses;
+    const lsData = localStorage.getItem("cached_courses");
+    if (lsData) {
+      const parsed = JSON.parse(lsData);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        cachedCourses = sortServicesList(parsed);
+        return cachedCourses;
+      }
     }
-  } catch (fsErr) {
-    console.warn("[CACHE] Direct Firestore fetch for courses failed:", fsErr);
-  }
+  } catch(e) {}
 
-  // 3. Fallback to local default services only if both failed and Firestore is empty
-  console.log("[CACHE] Serving default seed services as last resort.");
+  // Final fallback to default seed services (0 Firestore reads)
+  console.log("[CACHE] Serving default seed services as quota guard.");
   cachedCourses = DEFAULT_SERVICES;
   lastCoursesFetch = now;
-  try {
-    localStorage.setItem("cached_courses_time", now.toString());
-    localStorage.setItem("cached_courses", JSON.stringify(cachedCourses));
-  } catch(e) {}
   return cachedCourses;
 };
 

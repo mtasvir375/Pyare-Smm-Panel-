@@ -470,41 +470,8 @@ export const dbClient = {
   },
 
   async getUserDeposits(userId: string, userEmail?: string): Promise<any[]> {
-    // 1. Try server endpoint
-    try {
-      const emailParam = userEmail ? `&email=${encodeURIComponent(userEmail)}` : '';
-      const res = await axios.get(`/api/user/deposits?userId=${encodeURIComponent(userId)}${emailParam}`, { timeout: 6000 });
-      if (res.data?.success && Array.isArray(res.data.deposits) && res.data.deposits.length > 0) {
-        return res.data.deposits.slice(0, 10);
-      }
-    } catch (e) {}
-
-    // 2. Try User Profile document (0 extra Firestore read if cached, 1 read otherwise)
-    try {
-      const userDoc = await this.getDoc('users', userId);
-      if (userDoc && Array.isArray(userDoc.latestDeposits) && userDoc.latestDeposits.length > 0) {
-        return userDoc.latestDeposits.slice(0, 10);
-      }
-    } catch (uErr) {}
-
-    // 3. Fallback targeted query on 'deposits' collection (strictly limit to 10!)
-    try {
-      const q = query(
-        collection(db, 'deposits'),
-        where('userId', '==', userId),
-        limit(10)
-      );
-      const snapshot = await getDocs(q);
-      const deposits = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      deposits.sort((a: any, b: any) => {
-        const tA = new Date(a.createdAt || a.timestamp || 0).getTime();
-        const tB = new Date(b.createdAt || b.timestamp || 0).getTime();
-        return tB - tA;
-      });
-      return deposits.slice(0, 10);
-    } catch (fallbackErr) {
-      return [];
-    }
+    // Deposit history viewing disabled to save 100% Firestore read quota
+    return [];
   },
 
   observeOrder(id: string, callback: (data: any) => void): () => void {

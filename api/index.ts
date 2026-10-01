@@ -291,13 +291,13 @@ export default async function handler(req: any, res: any) {
     if (pathname === "/api/courses") {
       const isFresh = req.query?.fresh === "1" || req.query?.fresh === "true";
       const now = Date.now();
-      if (!isFresh && memCoursesCache && (now - memCoursesCache.time < 30 * 60 * 1000)) {
-        res.setHeader("Cache-Control", "public, max-age=300, s-maxage=1800, stale-while-revalidate=86400");
+      if (!isFresh && memCoursesCache && (now - memCoursesCache.time < 24 * 60 * 60 * 1000)) {
+        res.setHeader("Cache-Control", "public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800");
         return res.status(200).json(memCoursesCache.data);
       }
       if (req.method === "GET") {
         try {
-          const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/courses?pageSize=300&key=${FIREBASE_API_KEY}`;
+          const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/courses?pageSize=200&key=${FIREBASE_API_KEY}`;
           const response = await axios.get(url, { timeout: 7000 });
           const documents = response.data.documents || [];
           const courses = documents.map((doc: any) => {
@@ -314,7 +314,7 @@ export default async function handler(req: any, res: any) {
             return (a.serviceId || 0) - (b.serviceId || 0);
           });
           memCoursesCache = { data: courses, time: Date.now() };
-          res.setHeader("Cache-Control", "public, max-age=300, s-maxage=1800, stale-while-revalidate=86400");
+          res.setHeader("Cache-Control", "public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800");
           return res.status(200).json(courses);
         } catch (err: any) {
           if (memCoursesCache?.data) {
@@ -726,16 +726,18 @@ export default async function handler(req: any, res: any) {
         });
       }
 
-      // QUOTA SHIELD 2: Throttle polling to at most once per 4 seconds per intent (saves 80% reads while staying ultra responsive!)
+      // QUOTA SHIELD 2: Throttle Firestore reads to at most once per 10 seconds per intent
       const lastPoll = lastCheckIntentTime.get(strId) || 0;
       const now = Date.now();
-      if (memObj && memObj.data && memObj.data.status !== "pending" && (now - lastPoll < 4000)) {
+      if (memObj && (now - lastPoll < 10000)) {
         return res.status(200).json({
           success: true,
-          status: "pending",
+          status: memObj.data?.status || "pending",
           intentId: strId,
-          orderRef: memObj.data.orderRef,
-          amount: memObj.data.amount,
+          orderRef: memObj.data?.orderRef,
+          amount: memObj.data?.amount,
+          creditedAmount: memObj.data?.creditedAmount || memObj.data?.amount,
+          utr: memObj.data?.utr || memObj.data?.orderRef,
           message: "Awaiting bank SMS confirmation"
         });
       }
@@ -1233,99 +1235,9 @@ export default async function handler(req: any, res: any) {
       }
     }
 
-    // 14. User Deposits History: /api/user/deposits
+    // 14. User Deposits History: /api/user/deposits (Disabled to save Firestore read quota)
     if (pathname === "/api/user/deposits") {
-      const targetUid = String(req.query?.userId || "").trim();
-      const targetEmail = String(req.query?.email || "").trim().toLowerCase();
-
-      if (!targetUid && !targetEmail) {
-        return res.status(400).json({ success: false, error: "Missing userId or email" });
-      }
-
-      // Check in-memory 10-minute cache first (0 Firestore reads!)
-      const cacheKey = targetUid || targetEmail;
-      const memCached = memUserDeposits.get(cacheKey);
-      if (memCached && (Date.now() - memCached.time < 10 * 60 * 1000)) {
-        return res.status(200).json({ success: true, deposits: memCached.data });
-      }
-
-      const depositMap = new Map<string, any>();
-
-      // Check User Profile document latestDeposits first (1 read instead of 100 reads!)
-      if (targetUid) {
-        try {
-          const uDoc = await getRestDoc("users", targetUid);
-          if (uDoc && Array.isArray(uDoc.latestDeposits) && uDoc.latestDeposits.length > 0) {
-            const list = uDoc.latestDeposits.slice(0, 10);
-            memUserDeposits.set(cacheKey, { data: list, time: Date.now() });
-            return res.status(200).json({ success: true, deposits: list });
-          }
-        } catch (uErr) {}
-      }
-
-      try {
-        let depList: any[] = [];
-        let intentList: any[] = [];
-
-        if (targetUid) {
-          const [d1, i1] = await Promise.all([
-            queryRestDocs("deposits", "userId", targetUid, 30),
-            queryRestDocs("payment_intents", "userId", targetUid, 30)
-          ]);
-          depList = d1;
-          intentList = i1;
-        } else if (targetEmail) {
-          const [d2, i2] = await Promise.all([
-            queryRestDocs("deposits", "userEmail", targetEmail, 30),
-            queryRestDocs("payment_intents", "userEmail", targetEmail, 30)
-          ]);
-          depList = d2;
-          intentList = i2;
-        }
-
-        for (const item of depList) {
-          if (!item) continue;
-          const uUid = String(item.userId || item.user_id || "").trim();
-          const uEmail = String(item.userEmail || item.user_email || "").trim().toLowerCase();
-          if ((targetUid && uUid === targetUid) || (targetEmail && uEmail && uEmail === targetEmail)) {
-            depositMap.set(item.id, item);
-          }
-        }
-
-        for (const item of intentList) {
-          if (!item || item.status !== "completed") continue;
-          const uUid = String(item.userId || "").trim();
-          const uEmail = String(item.userEmail || "").trim().toLowerCase();
-          if ((targetUid && uUid === targetUid) || (targetEmail && uEmail && uEmail === targetEmail)) {
-            const depId = `intent_${item.intentId}`;
-            if (!depositMap.has(depId)) {
-              depositMap.set(depId, {
-                id: depId,
-                userId: item.userId,
-                userEmail: item.userEmail,
-                amount: item.amount,
-                status: "approved",
-                utr: item.utr || item.orderRef,
-                orderRef: item.orderRef,
-                method: "Instant UPI QR",
-                gateway: item.senderBank || "Instant QR",
-                createdAt: item.completedAt ? new Date(item.completedAt).toISOString() : (item.createdAt ? new Date(item.createdAt).toISOString() : new Date().toISOString())
-              });
-            }
-          }
-        }
-      } catch (e: any) {
-        console.warn("[USER-DEPOSITS-ERR]", e.message);
-      }
-
-      const deposits = Array.from(depositMap.values()).sort((a, b) => {
-        const timeA = new Date(a.createdAt || a.timestamp || 0).getTime();
-        const timeB = new Date(b.createdAt || b.timestamp || 0).getTime();
-        return timeB - timeA;
-      }).slice(0, 10);
-
-      memUserDeposits.set(cacheKey, { data: deposits, time: Date.now() });
-      return res.status(200).json({ success: true, deposits });
+      return res.status(200).json({ success: true, deposits: [] });
     }
 
     // 15. User Orders History: /api/user-orders/:userId or /api/user-orders
