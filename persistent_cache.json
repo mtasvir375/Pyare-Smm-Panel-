@@ -1,12 +1,12 @@
 {
   "settings": {
     "data": {
-      "upiId": "9122557342@ybl",
-      "merchantName": "Pyare SMM Panel",
-      "minDeposit": 10,
-      "updatedAt": "2026-10-01T19:06:29.904Z"
+      "upiId": "mycustomupi@ybl",
+      "merchantName": "My Custom SMM Panel Name",
+      "minDeposit": 20,
+      "updatedAt": "2026-10-01T19:17:36.268Z"
     },
-    "time": 1790881589904
+    "time": 1790882256268
   },
   "providers": [],
   "courses": [],
@@ -168,7 +168,7 @@
             }
           ],
           "balance": 17716.1,
-          "updatedAt": "2026-10-01T18:56:11.756Z",
+          "updatedAt": "2026-10-01T19:08:51.451Z",
           "lastOrderedAt": "2026-10-01T08:05:47.145Z",
           "lastDepositedAt": "2026-10-01T08:14:32.873Z",
           "latestDeposits": [
@@ -206,7 +206,7 @@
           "email": "mtasvir375@gmail.com",
           "displayName": "mtasvir375"
         },
-        "time": 1790880971756
+        "time": 1790881731451
       }
     ],
     [
@@ -4671,6 +4671,20 @@
           "updatedAt": "2026-10-01T18:56:11.695Z"
         },
         "time": 1790880971695
+      }
+    ],
+    [
+      "ord_1790881729882_zv6ol",
+      {
+        "data": {
+          "id": "ord_1790881729882_zv6ol",
+          "status": "Failed",
+          "needsProviderTransmission": false,
+          "providerTransmissionStatus": "failed",
+          "error": "Service ID for service \"Test Auto Save Service [Instant]\" is missing or not configured with a valid provider service ID.",
+          "updatedAt": "2026-10-01T19:08:51.413Z"
+        },
+        "time": 1790881731413
       }
     ]
   ],

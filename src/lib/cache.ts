@@ -76,13 +76,7 @@ const isDefaultSettings = (s: any) => {
 export const getCachedCourses = async (forceRefresh = false) => {
   const now = Date.now();
   
-  if (!forceRefresh) {
-    if (cachedCourses && Array.isArray(cachedCourses) && cachedCourses.length > 0) {
-      return cachedCourses;
-    }
-  }
-  
-  // 1. Primary path: Fetch from server API proxy (serves from Node memory cache in 5ms with 0 Firestore reads)
+  // 1. Primary path: Fetch from server API proxy (serves from Node/SQLite memory in 1ms)
   try {
     const res = await axios.get(forceRefresh ? "/api/courses?fresh=1" : "/api/courses");
     if (Array.isArray(res.data) && res.data.length > 0) {
@@ -98,7 +92,7 @@ export const getCachedCourses = async (forceRefresh = false) => {
         isPackage: data.isPackage !== undefined ? !!data.isPackage : !!data.is_package,
         is_package: data.isPackage !== undefined ? !!data.isPackage : !!data.is_package,
         packagePrice: data.packagePrice !== undefined ? Number(data.packagePrice) : (data.package_price !== undefined ? Number(data.package_price) : 0),
-        package_price: data.packagePrice !== undefined ? Number(data.packagePrice) : (data.package_price !== undefined ? Number(data.package_price) : 0),
+        package_price: data.packagePrice !== undefined ? Number(data.packagePrice) : (data.package_price !== undefined ? Number(data.packagePrice) : 0),
         packageQuantity: data.packageQuantity !== undefined ? Number(data.packageQuantity) : (data.package_quantity !== undefined ? Number(data.packageQuantity) : 1000),
         package_quantity: data.packageQuantity !== undefined ? Number(data.packageQuantity) : (data.package_quantity !== undefined ? Number(data.packageQuantity) : 1000),
         iconUrl: data.iconUrl || data.icon_url || null,
@@ -149,30 +143,9 @@ export const getCachedSettings = async (forceRefresh = false) => {
       localStorage.removeItem("cached_settings");
       localStorage.removeItem("cached_settings_time");
     } catch(e) {}
-  } else {
-    const SETTINGS_CACHE_DURATION = 30 * 60 * 1000; // 30 minutes cache for optimal Firestore quota protection
-    if (cachedSettings && !isDefaultSettings(cachedSettings) && (now - lastSettingsFetch < SETTINGS_CACHE_DURATION)) {
-      return cachedSettings;
-    }
-    
-    // Check localStorage
-    try {
-      const lsTime = localStorage.getItem("cached_settings_time");
-      if (lsTime && (now - parseInt(lsTime) < SETTINGS_CACHE_DURATION)) {
-        const lsData = localStorage.getItem("cached_settings");
-        if (lsData) {
-          const parsed = JSON.parse(lsData);
-          if (parsed && !isDefaultSettings(parsed)) {
-            cachedSettings = parsed;
-            lastSettingsFetch = parseInt(lsTime);
-            return cachedSettings;
-          }
-        }
-      }
-    } catch(e) {}
   }
-  
-  // 1. Primary path: Fetch from server Express API proxy (serves from Node memory with 0 Firestore reads)
+
+  // Primary path: Fetch from server Express API proxy (serves from Node/SQLite memory with 0 Firestore reads)
   try {
     const url = forceRefresh ? `/api/settings?fresh=1&t=${now}` : "/api/settings";
     const res = await axios.get(url);
@@ -180,9 +153,9 @@ export const getCachedSettings = async (forceRefresh = false) => {
       const settingsData = {
         ...DEFAULT_SETTINGS,
         ...res.data,
-        upiId: res.data.upiId || DEFAULT_SETTINGS.upiId,
+        upiId: res.data.upiId !== undefined ? res.data.upiId : DEFAULT_SETTINGS.upiId,
         paymentQrUrl: res.data.paymentQrUrl || "",
-        merchantName: res.data.merchantName || DEFAULT_SETTINGS.merchantName,
+        merchantName: res.data.merchantName !== undefined ? res.data.merchantName : DEFAULT_SETTINGS.merchantName,
         razorpayEnabled: !!res.data.razorpayEnabled,
         razorpayKeyId: res.data.razorpayKeyId || "",
         razorpayKeySecret: res.data.razorpayKeySecret || "",
