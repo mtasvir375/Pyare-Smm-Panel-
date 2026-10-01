@@ -18,6 +18,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import axios from 'axios';
+import { formatApiUrl } from './apiConfig';
 
 export interface UserProfile {
   uid: string;
@@ -46,7 +47,7 @@ export const dbClient = {
     }
     // 1. Try authoritative backend proxy first
     try {
-      const res = await axios.post('/api/db/get', { collection: table, id, fresh: forceFresh });
+      const res = await axios.post(formatApiUrl('/api/db/get'), { collection: table, id, fresh: forceFresh });
       if (res.data && res.data.success && res.data.data && Object.keys(res.data.data).length > 0) {
         return { id, ...res.data.data };
       }
@@ -69,7 +70,7 @@ export const dbClient = {
   async getDocs(table: string, constraints: any[] = []): Promise<any[]> {
     // 1. Try authoritative backend proxy first (0 reads if cached in server/disk memory)
     try {
-      const res = await axios.post('/api/db/list', { collection: table, limit: table === 'courses' ? 100 : 30 });
+      const res = await axios.post(formatApiUrl('/api/db/list'), { collection: table, limit: table === 'courses' ? 100 : 30 });
       if (res.data && res.data.success && Array.isArray(res.data.data)) {
         return res.data.data;
       }
@@ -92,10 +93,10 @@ export const dbClient = {
 
   async setDoc(table: string, id: string, data: any): Promise<void> {
     if (table === 'courses' || table === 'settings' || table === 'providers') {
-      axios.post('/api/clear-cache').catch(() => {});
+      axios.post(formatApiUrl('/api/clear-cache')).catch(() => {});
     }
     try {
-      await axios.post('/api/db/set', { collection: table, id, data });
+      await axios.post(formatApiUrl('/api/db/set'), { collection: table, id, data });
     } catch (proxyErr: any) {}
 
     try {
@@ -106,10 +107,10 @@ export const dbClient = {
 
   async updateDoc(table: string, id: string, data: any): Promise<void> {
     if (table === 'courses' || table === 'settings' || table === 'providers') {
-      axios.post('/api/clear-cache').catch(() => {});
+      axios.post(formatApiUrl('/api/clear-cache')).catch(() => {});
     }
     try {
-      await axios.post('/api/db/update', { collection: table, id, data });
+      await axios.post(formatApiUrl('/api/db/update'), { collection: table, id, data });
     } catch (e: any) {}
 
     try {
@@ -120,11 +121,11 @@ export const dbClient = {
 
   async addDoc(table: string, data: any): Promise<any> {
     if (table === 'courses' || table === 'settings' || table === 'providers') {
-      axios.post('/api/clear-cache').catch(() => {});
+      axios.post(formatApiUrl('/api/clear-cache')).catch(() => {});
     }
     try {
       // Single authoritative insert via server proxy (0 extra reads, exact 1 write)
-      const res = await axios.post('/api/db/add', { collection: table, data });
+      const res = await axios.post(formatApiUrl('/api/db/add'), { collection: table, data });
       if (res.data && res.data.success !== false && res.data.id) {
         return { id: res.data.id, ...data };
       }
@@ -155,13 +156,11 @@ export const dbClient = {
     
     // 1. Try authoritative backend proxy first (avoids stale client-side cache and guarantees real-time balance)
     try {
-      const res = await axios.post('/api/db/get', { collection: 'users', id: uid, fresh: true });
+      const res = await axios.post(formatApiUrl('/api/db/get'), { collection: 'users', id: uid, fresh: true });
       if (res.data && res.data.success && res.data.data) {
         return { id: uid, uid, ...res.data.data };
       }
-    } catch (proxyErr: any) {
-      console.warn(`[DB-CLIENT] Proxy getUserProfile failed for ${uid}:`, proxyErr.message);
-    }
+    } catch (proxyErr: any) {}
 
     // 2. Direct Firestore fallback
     try {
@@ -171,9 +170,7 @@ export const dbClient = {
         const data = snap.data() as any;
         return { id: snap.id, uid, ...data };
       }
-    } catch (err: any) {
-      console.warn(`[DB-CLIENT] Direct getUserProfile failed for ${uid}: ${err.message}`);
-    }
+    } catch (err: any) {}
 
     return null;
   },
@@ -181,7 +178,6 @@ export const dbClient = {
   async createUserProfile(uid: string, profileData: Partial<UserProfile>): Promise<void> {
     const existing = await this.getUserProfile(uid);
     if (existing) {
-      console.log(`[DB-CLIENT] Profile ${uid} already exists with balance ${existing.balance}. Skipping creation.`);
       return;
     }
     const data = {
@@ -208,10 +204,9 @@ export const dbClient = {
 
   async getMyOrders(userId: string): Promise<any[]> {
     try {
-      const response = await axios.get(`/api/user-orders/${userId}?limit=50`);
+      const response = await axios.get(formatApiUrl(`/api/user-orders/${userId}?limit=50`));
       return response.data;
     } catch (e) {
-      console.warn("[DB-CLIENT] Memory order fetch failed, falling back to empty list to save quota.");
       return [];
     }
   },
@@ -221,13 +216,11 @@ export const dbClient = {
     // 1. Try server endpoint
     try {
       const emailQuery = email ? `&email=${encodeURIComponent(email)}` : "";
-      const response = await axios.get(`/api/user-orders/${userId}?limit=${limitCount}${emailQuery}`, { timeout: 6000 });
+      const response = await axios.get(formatApiUrl(`/api/user-orders/${userId}?limit=${limitCount}${emailQuery}`), { timeout: 6000 });
       if (Array.isArray(response.data) && response.data.length > 0) {
         return response.data.slice(0, 10);
       }
-    } catch (e) {
-      console.warn("[DB-CLIENT] Server order fetch failed, checking user profile...");
-    }
+    } catch (e) {}
 
     // 2. Try User Profile document (0 extra Firestore read if cached, 1 read otherwise)
     try {
@@ -259,7 +252,7 @@ export const dbClient = {
 
   async getAllOrders(): Promise<any[]> {
     try {
-      const response = await axios.get(`/api/admin/all-orders`);
+      const response = await axios.get(formatApiUrl(`/api/admin/all-orders`));
       return response.data;
     } catch (e) {
       return [];
@@ -268,23 +261,19 @@ export const dbClient = {
 
   async getPendingDeposits(force = false): Promise<any[]> {
     try {
-      const res = await axios.get(`/api/admin/all-deposits?limit=50&force=${force}`);
+      const res = await axios.get(formatApiUrl(`/api/admin/all-deposits?limit=50&force=${force}`));
       if (Array.isArray(res.data)) {
         return res.data.filter((d: any) => (d.status || '').toLowerCase() === 'pending');
       }
-    } catch (e) {
-      console.warn("[DB-CLIENT] getPendingDeposits API failed:", e);
-    }
+    } catch (e) {}
     return [];
   },
 
   async getDepositsAdmin(l = 50, force = false): Promise<any[]> {
     try {
-      const res = await axios.get(`/api/admin/all-deposits?limit=${l}&force=${force}`);
+      const res = await axios.get(formatApiUrl(`/api/admin/all-deposits?limit=${l}&force=${force}`));
       if (Array.isArray(res.data) && res.data.length > 0) return res.data;
-    } catch (e) {
-      console.warn("[DB-CLIENT] getDepositsAdmin API failed:", e);
-    }
+    } catch (e) {}
     // Direct Firestore fallback
     try {
       const q = query(collection(db, 'deposits'), limit(l));
@@ -297,7 +286,7 @@ export const dbClient = {
 
   async processDepositAction(depositId: string, action: 'approved' | 'cancelled', deposit?: any, adminEmail?: string): Promise<any> {
     try {
-      const res = await axios.post('/api/admin/process-deposit', {
+      const res = await axios.post(formatApiUrl('/api/admin/process-deposit'), {
         depositId,
         action,
         adminEmail,
@@ -308,7 +297,6 @@ export const dbClient = {
       }
       throw new Error(res.data?.error || "Process deposit failed");
     } catch (err: any) {
-      console.warn(`[DB-CLIENT] Backend process-deposit failed: ${err.message}, attempting client-side update...`);
       if (action === 'approved' && deposit) {
         const uId = deposit.userId || deposit.user_id;
         const depositAmount = Number(deposit.amount || 0);
@@ -341,7 +329,7 @@ export const dbClient = {
       if (Array.isArray(cached) && cached.length > 0) return cached;
     } catch (e) {}
     try {
-      const res = await axios.get('/api/providers');
+      const res = await axios.get(formatApiUrl('/api/providers'));
       if (Array.isArray(res.data) && res.data.length > 0) return res.data;
     } catch (e) {}
     return this.getDocs('providers', [orderBy('createdAt', 'desc')]);

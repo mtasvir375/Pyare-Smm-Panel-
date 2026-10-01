@@ -2,6 +2,7 @@ import axios from "axios";
 import { db } from "@/lib/firebase";
 import { collection, doc, getDocs, getDoc } from "firebase/firestore";
 import { DEFAULT_SERVICES, DEFAULT_SETTINGS } from "@/data/defaultServices";
+import { formatApiUrl } from "./apiConfig";
 
 let cachedCourses: any = null;
 let lastCoursesFetch = 0;
@@ -25,7 +26,7 @@ export const clearCache = () => {
     } catch(e) {}
     
     // Concurrently clear server-side cache so visitors fetch fresh data immediately
-    axios.post("/api/clear-cache").catch((err) => {
+    axios.post(formatApiUrl("/api/clear-cache")).catch((err) => {
         console.error("Failed to clear server-side cache via API proxy:", err);
     });
 }
@@ -78,7 +79,7 @@ export const getCachedCourses = async (forceRefresh = false) => {
   
   // 1. Primary path: Fetch from server API proxy (serves from Node/SQLite memory in 1ms)
   try {
-    const res = await axios.get(forceRefresh ? "/api/courses?fresh=1" : "/api/courses");
+    const res = await axios.get(formatApiUrl(forceRefresh ? "/api/courses?fresh=1" : "/api/courses"));
     if (Array.isArray(res.data) && res.data.length > 0) {
       const activeServices = res.data.map((data: any) => ({
         id: data.id,
@@ -147,7 +148,7 @@ export const getCachedSettings = async (forceRefresh = false) => {
 
   // Primary path: Fetch from server Express API proxy (serves from Node/SQLite memory with 0 Firestore reads)
   try {
-    const url = forceRefresh ? `/api/settings?fresh=1&t=${now}` : "/api/settings";
+    const url = formatApiUrl(forceRefresh ? `/api/settings?fresh=1&t=${now}` : "/api/settings");
     const res = await axios.get(url);
     if (res.data && typeof res.data === "object" && Object.keys(res.data).length > 0) {
       const settingsData = {
