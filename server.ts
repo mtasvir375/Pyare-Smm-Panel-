@@ -2225,7 +2225,20 @@ export async function startServer() {
   // Express API for Courses list with server-side in-memory caching
   app.get("/api/courses", async (req, res) => {
     try {
-      const localCourses = listLocalDocs("courses", 500);
+      let localCourses = listLocalDocs("courses", 500);
+      
+      // If empty locally, fetch from Supabase first!
+      if (!localCourses || localCourses.length === 0) {
+        const snap = await listDocsFromSupabase("courses", 500);
+        if (snap && snap.length > 0) {
+          localCourses = snap;
+          // Save to SQLite
+          snap.forEach((item: any) => {
+            if (item.id) setLocalDoc("courses", item.id, item);
+          });
+        }
+      }
+      
       if (localCourses && localCourses.length > 0) {
         const activeServices = localCourses.filter((s: any) => s.status !== "archived" && s.status !== "hidden");
         return res.json(activeServices);
@@ -2240,9 +2253,10 @@ export async function startServer() {
   // Express API for Settings with server-side in-memory caching
   app.get("/api/settings", async (req, res) => {
     try {
-      const localSet = getLocalDoc("settings", "payment");
-      if (localSet && Object.keys(localSet).length > 0) {
-        return res.json(localSet);
+      // Use getDocSafe to dynamically load from memory, SQLite, or Supabase
+      const snap = await getDocSafe("settings", "payment", undefined, false);
+      if (snap.exists) {
+        return res.json(snap.data());
       }
       return res.json({});
     } catch (err: any) {
