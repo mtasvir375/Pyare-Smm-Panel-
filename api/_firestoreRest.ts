@@ -112,6 +112,25 @@ export async function deleteRestDoc(collection: string, docId: string): Promise<
 }
 
 export async function listRestDocs(collection: string, pageSize = 100): Promise<any[]> {
+  const fetchedDocs: any[] = [];
+  
+  // 1. Standard Collection List API
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}?pageSize=${pageSize}&key=${FIREBASE_API_KEY}`;
+    const res = await axios.get(url, { timeout: 8000 });
+    if (res.data && Array.isArray(res.data.documents)) {
+      res.data.documents.forEach((doc: any) => {
+        const id = doc.name.split("/").pop();
+        const data = unwrapFirestoreFields(doc.fields || {});
+        fetchedDocs.push({ id, ...data });
+      });
+      if (fetchedDocs.length > 0) return fetchedDocs;
+    }
+  } catch (listErr: any) {
+    console.warn(`[REST-LIST-WARN] Direct list for ${collection}:`, listErr.message);
+  }
+
+  // 2. runQuery fallback
   try {
     const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents:runQuery?key=${FIREBASE_API_KEY}`;
     const payload = {
@@ -122,20 +141,20 @@ export async function listRestDocs(collection: string, pageSize = 100): Promise<
     };
     const res = await axios.post(url, payload, { timeout: 8000 });
     if (res.data && Array.isArray(res.data)) {
-      return res.data
+      res.data
         .filter((item: any) => item.document)
-        .map((item: any) => {
+        .forEach((item: any) => {
           const doc = item.document;
           const id = doc.name.split("/").pop();
           const data = unwrapFirestoreFields(doc.fields || {});
-          return { id, ...data };
+          fetchedDocs.push({ id, ...data });
         });
+      if (fetchedDocs.length > 0) return fetchedDocs;
     }
-    return [];
   } catch (err: any) {
     console.error(`[REST-QUERY-ERR] Failed for ${collection}:`, err.response?.data || err.message);
-    return [];
   }
+  return fetchedDocs;
 }
 
 export const getRestCollection = listRestDocs;

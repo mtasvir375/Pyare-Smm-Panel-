@@ -88,16 +88,27 @@ export const dbClient = {
       axios.post(formatApiUrl('/api/clear-cache')).catch(() => {});
     }
 
-    // 1. Send to API Gateway (awaited)
+    const merged = { ...data, id };
+
+    // 1. Send to API Gateway (awaited with retry)
     try {
-      await axios.post(formatApiUrl('/api/db/set'), { collection: table, id, data }, { timeout: 4000 });
+      await axios.post(formatApiUrl('/api/db/set'), { collection: table, id, data: merged }, { timeout: 8000 });
     } catch (e) {}
 
-    // 2. Write directly to Firestore SDK to ensure instant permanent sync across ALL domains!
+    // 2. Also send to dedicated /api/settings if settings
+    if (table === 'settings' && id === 'payment') {
+      try {
+        await axios.post(formatApiUrl('/api/settings'), merged, { timeout: 8000 });
+      } catch (e) {}
+    }
+
+    // 3. Write directly to Firestore SDK to ensure instant permanent sync across ALL domains!
     try {
       const docRef = doc(db, table, id);
-      await setFirestoreDoc(docRef, data, { merge: true });
-    } catch (fsErr: any) {}
+      await setFirestoreDoc(docRef, merged, { merge: true });
+    } catch (fsErr: any) {
+      console.warn(`[DB-CLIENT-FS-WRITE-WARN] ${table}/${id}:`, fsErr.message);
+    }
   },
 
   async updateDoc(table: string, id: string, data: any): Promise<void> {
@@ -257,8 +268,12 @@ export const dbClient = {
     // 3. Direct Firestore SDK fallback (only if API is completely offline)
     try {
       const snap = await getFirestoreDocs(collection(db, 'providers'));
-      if (snap) {
+      if (snap && !snap.empty) {
         const docsList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        try {
+          localStorage.setItem("cached_providers", JSON.stringify(docsList));
+          localStorage.setItem("cached_providers_time", Date.now().toString());
+        } catch (e) {}
         return docsList;
       }
     } catch (e) {}
@@ -339,8 +354,12 @@ export const dbClient = {
     // 3. Direct Firestore SDK fallback (only if API is completely offline)
     try {
       const snap = await getFirestoreDocs(collection(db, 'courses'));
-      if (snap) {
+      if (snap && !snap.empty) {
         const docsList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        try {
+          localStorage.setItem("cached_courses", JSON.stringify(docsList));
+          localStorage.setItem("cached_courses_time", Date.now().toString());
+        } catch (e) {}
         return docsList;
       }
     } catch (e) {}

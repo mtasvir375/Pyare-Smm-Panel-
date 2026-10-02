@@ -107,40 +107,80 @@ for (const [uid, info] of Object.entries(KNOWN_USER_EMAILS)) {
 }
 
 async function getRestDoc(collection: string, docId: string, fresh = false): Promise<any> {
-  if (!fresh && collection !== "settings") {
+  if (!fresh && collection !== "settings" && collection !== "courses" && collection !== "providers") {
     const local = getLocalDoc(collection, docId);
     if (local) return local;
   }
   try {
     const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}?key=${FIREBASE_API_KEY}`;
-    const res = await axios.get(url, { timeout: 4000 });
+    const res = await axios.get(url, { timeout: 8000 });
     const fetched = res.data ? unwrapFirestoreFields(res.data.fields) : null;
-    if (fetched) setLocalDoc(collection, docId, fetched);
-    return fetched;
+    if (fetched) {
+      setLocalDoc(collection, docId, fetched);
+      return fetched;
+    }
+    return null;
   } catch (err: any) {
     if (err.response && err.response.status === 404) return null;
+    console.warn(`[REST-GET-WARN] ${collection}/${docId}:`, err.message);
     return getLocalDoc(collection, docId) || null;
   }
 }
 
 async function setRestDoc(collection: string, docId: string, data: any): Promise<any> {
-  setLocalDoc(collection, docId, data);
+  const merged = { ...(data || {}), id: docId };
+  setLocalDoc(collection, docId, merged);
   try {
-    const fields = wrapFirestoreFields(data);
-    const keys = Object.keys(data).filter(k => data[k] !== undefined);
-    const maskQuery = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
-    const sep = maskQuery ? `?${maskQuery}&` : "?";
-    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}${sep}key=${FIREBASE_API_KEY}`;
-    await axios.patch(url, { fields }, { timeout: 4000 }).catch(() => {});
-  } catch (e) {}
-  return getLocalDoc(collection, docId);
+    const fields = wrapFirestoreFields(merged);
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}?key=${FIREBASE_API_KEY}`;
+    const res = await axios.patch(url, { fields }, { timeout: 10000 });
+    const saved = res.data ? unwrapFirestoreFields(res.data.fields) : merged;
+    setLocalDoc(collection, docId, { ...merged, ...saved });
+    return { ...merged, ...saved };
+  } catch (patchErr: any) {
+    console.warn(`[REST-SET-WARN] ${collection}/${docId}:`, patchErr.response?.data || patchErr.message);
+    // If update failed due to mask or payload, retry with standard query
+    try {
+      const keys = Object.keys(merged).filter(k => merged[k] !== undefined);
+      const maskQuery = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
+      const sep = maskQuery ? `?${maskQuery}&` : "?";
+      const fallbackUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}${sep}key=${FIREBASE_API_KEY}`;
+      const fields = wrapFirestoreFields(merged);
+      const res = await axios.patch(fallbackUrl, { fields }, { timeout: 10000 });
+      const saved = res.data ? unwrapFirestoreFields(res.data.fields) : merged;
+      setLocalDoc(collection, docId, { ...merged, ...saved });
+      return { ...merged, ...saved };
+    } catch (fallbackErr: any) {
+      console.error(`[REST-SET-FALLBACK-ERR] ${collection}/${docId}:`, fallbackErr.response?.data || fallbackErr.message);
+    }
+  }
+  return getLocalDoc(collection, docId) || merged;
 }
 
 async function listRestDocs(collection: string, pageSize = 100, fresh = false): Promise<any[]> {
-  if (!fresh) {
-    const localList = listLocalDocs(collection, pageSize);
-    if (localList.length > 0) return localList;
+  const fetchedDocs: any[] = [];
+  
+  // 1. Standard Collection List API (Most Authoritative & Reliable across Google Cloud)
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}?pageSize=${pageSize}&key=${FIREBASE_API_KEY}`;
+    const res = await axios.get(url, { timeout: 8000 });
+    if (res.data && Array.isArray(res.data.documents)) {
+      res.data.documents.forEach((doc: any) => {
+        const id = doc.name.split("/").pop();
+        const data = unwrapFirestoreFields(doc.fields || {});
+        const merged = { id, ...data };
+        setLocalDoc(collection, id, merged);
+        fetchedDocs.push(merged);
+      });
+      if (fetchedDocs.length > 0) {
+        return fetchedDocs;
+      }
+    }
+  } catch (listErr: any) {
+    console.warn(`[REST-LIST-WARN] Direct list for ${collection}:`, listErr.message);
   }
+
+  // 2. Structured runQuery fallback
   try {
     const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents:runQuery?key=${FIREBASE_API_KEY}`;
     const payload = {
@@ -149,21 +189,27 @@ async function listRestDocs(collection: string, pageSize = 100, fresh = false): 
         limit: pageSize
       }
     };
-    const res = await axios.post(url, payload, { timeout: 4000 });
+    const res = await axios.post(url, payload, { timeout: 8000 });
     if (res.data && Array.isArray(res.data)) {
-      const fetched = res.data
+      res.data
         .filter((item: any) => item.document)
-        .map((item: any) => {
+        .forEach((item: any) => {
           const doc = item.document;
           const id = doc.name.split("/").pop();
           const data = unwrapFirestoreFields(doc.fields || {});
           const merged = { id, ...data };
           setLocalDoc(collection, id, merged);
-          return merged;
+          fetchedDocs.push(merged);
         });
-      return fetched.length > 0 ? fetched : listLocalDocs(collection, pageSize);
+      if (fetchedDocs.length > 0) {
+        return fetchedDocs;
+      }
     }
-  } catch (err: any) {}
+  } catch (err: any) {
+    console.warn(`[REST-QUERY-WARN] runQuery for ${collection}:`, err.message);
+  }
+
+  // 3. Fallback to local in-memory store
   return listLocalDocs(collection, pageSize);
 }
 

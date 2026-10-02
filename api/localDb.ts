@@ -94,7 +94,7 @@ function seedDefaults() {
 
   // 1. Seed courses ONLY on first brand new run if file never existed
   const courseCol = getColMap("courses");
-  if (isFirstRun && courseCol.size === 0) {
+  if (isFirstRun && courseCol.size === 0 && DEFAULT_SERVICES.length > 0) {
     for (const service of DEFAULT_SERVICES) {
       setLocalDoc("courses", service.id, {
         ...service,
@@ -104,23 +104,7 @@ function seedDefaults() {
     }
   }
 
-  // 2. Seed settings/payment if empty
-  const paymentSettings = getLocalDoc("settings", "payment");
-  if (!paymentSettings || Object.keys(paymentSettings).length === 0) {
-    setLocalDoc("settings", "payment", {
-      ...DEFAULT_SETTINGS,
-      upiId: "9122557342@ybl",
-      merchantName: "Pyare SMM Panel",
-      minDeposit: 10,
-      qrCodeImage: "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=upi://pay?pa=9122557342@ybl&pn=Pyaresmm",
-      enableUpi: true,
-      enableTelegramBot: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    });
-  }
-
-  // 3. Seed initial users if missing
+  // 2. Seed initial users if missing
   for (const [key, userProfile] of Object.entries(INITIAL_USERS)) {
     const existing = getLocalDoc("users", key);
     if (!existing) {
