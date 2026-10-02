@@ -1926,6 +1926,16 @@ export async function startServer() {
     setDocInSupabase(col, id, data); // Async write to Supabase
     setDocRESTAsync(col, id, data);
     invalidateCachesForCollection(col, id);
+    if (col === "providers") {
+      const merged = { id, ...data };
+      serverCache.providers.set(id, { data: merged, time: Date.now() });
+      savePersistentCache();
+    }
+    if (col === "courses" || col === "services") {
+      const merged = { id, ...data };
+      serverCache.courses.set(id, { data: merged, time: Date.now() });
+      savePersistentCache();
+    }
     if (col === "settings" && id === "payment") {
       const existing = serverCache.settings?.data || {};
       const merged = { ...existing, ...data };
@@ -2201,20 +2211,25 @@ export async function startServer() {
     res.json({ success: true, message: "Server-side cache cleared successfully" });
   });
 
-  // Express API for Providers list with server-side in-memory caching (0 Firestore reads on repeated calls)
+  // Express API for Providers list with server-side in-memory caching
   app.get("/api/providers", async (req, res) => {
     try {
-      if (serverCache.providers.size > 0) {
+      const forceFresh = req.query.force === "true";
+      if (!forceFresh && serverCache.providers.size > 0) {
         const providersList = Array.from(serverCache.providers.entries()).map(([id, p]) => ({ id, ...(p?.data ? p.data : p) }));
         return res.json(providersList);
       }
-      const snap = await listDocsSafe("providers", req.headers.authorization as string, false);
-      let providersList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      if (providersList && providersList.length > 0) {
+      const snap = await listDocsSafe("providers", req.headers.authorization as string, forceFresh);
+      let providersList = snap.docs.map(doc => {
+        const d = typeof doc.data === "function" ? doc.data() : doc.data;
+        return { id: doc.id, ...d };
+      });
+      if (providersList) {
+        serverCache.providers.clear();
         providersList.forEach(p => serverCache.providers.set(p.id, { data: p, time: Date.now() }));
         savePersistentCache();
       }
-      res.json(providersList);
+      res.json(providersList || []);
     } catch (err: any) {
       console.error("[SERVER-DB] Error fetching providers:", err.message);
       const fallbackList = Array.from(serverCache.providers.entries()).map(([id, p]) => ({ id, ...(p?.data ? p.data : p) }));
@@ -2225,28 +2240,42 @@ export async function startServer() {
   // Express API for Courses list with server-side in-memory caching
   app.get("/api/courses", async (req, res) => {
     try {
-      let localCourses = listLocalDocs("courses", 500);
-      
-      // If empty locally, fetch from Supabase first!
-      if (!localCourses || localCourses.length === 0) {
-        const snap = await listDocsFromSupabase("courses", 500);
-        if (snap && snap.length > 0) {
-          localCourses = snap;
-          // Save to SQLite
-          snap.forEach((item: any) => {
-            if (item.id) setLocalDoc("courses", item.id, item);
-          });
-        }
+      const forceFresh = req.query.force === "true";
+      if (!forceFresh && serverCache.courses.size > 0) {
+        const coursesList = Array.from(serverCache.courses.entries()).map(([id, c]) => ({ id, ...(c?.data ? c.data : c) }));
+        const activeServices = coursesList.filter((s: any) => s.status !== "archived" && s.status !== "hidden");
+        return res.json(activeServices);
       }
-      
-      if (localCourses && localCourses.length > 0) {
+
+      let localCourses = listLocalDocs("courses", 500);
+      if (localCourses && localCourses.length > 0 && !forceFresh) {
         const activeServices = localCourses.filter((s: any) => s.status !== "archived" && s.status !== "hidden");
         return res.json(activeServices);
       }
-      return res.json([]);
+
+      const snap = await listDocsSafe("courses", req.headers.authorization as string, forceFresh);
+      let coursesList = snap.docs.map(doc => {
+        const d = typeof doc.data === "function" ? doc.data() : doc.data;
+        return { id: doc.id, ...d };
+      });
+
+      if (coursesList && coursesList.length > 0) {
+        serverCache.courses.clear();
+        coursesList.forEach(c => {
+          serverCache.courses.set(c.id, { data: c, time: Date.now() });
+          setLocalDoc("courses", c.id, c);
+        });
+        savePersistentCache();
+      } else if (localCourses && localCourses.length > 0) {
+        coursesList = localCourses;
+      }
+
+      const activeServices = coursesList.filter((s: any) => s.status !== "archived" && s.status !== "hidden");
+      return res.json(activeServices);
     } catch (err: any) {
       console.error("[SERVER-DB] Error fetching services from database:", err.message);
-      return res.json([]);
+      const fallbackList = Array.from(serverCache.courses.entries()).map(([id, c]) => ({ id, ...(c?.data ? c.data : c) }));
+      return res.json(fallbackList);
     }
   });
 

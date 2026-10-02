@@ -90,9 +90,11 @@ function saveDbToDisk() {
 }
 
 function seedDefaults() {
-  // 1. Seed courses if empty
+  const isFirstRun = !fs.existsSync(dbFile);
+
+  // 1. Seed courses ONLY on first brand new run if file never existed
   const courseCol = getColMap("courses");
-  if (courseCol.size === 0) {
+  if (isFirstRun && courseCol.size === 0) {
     for (const service of DEFAULT_SERVICES) {
       setLocalDoc("courses", service.id, {
         ...service,

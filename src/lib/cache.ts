@@ -95,7 +95,7 @@ export const getCachedCourses = async (forceRefresh = false) => {
     const { collection, getDocs } = await import("firebase/firestore");
     const { db } = await import("@/lib/firebase");
     const snap = await getDocs(collection(db, "courses"));
-    if (!snap.empty) {
+    if (snap) {
       const fsServices = snap.docs.map((d: any) => {
         const data = d.data();
         return {
@@ -118,15 +118,13 @@ export const getCachedCourses = async (forceRefresh = false) => {
         };
       });
 
-      if (Array.isArray(fsServices) && fsServices.length > 0) {
-        cachedCourses = sortServicesList(fsServices);
-        lastCoursesFetch = now;
-        try {
-          localStorage.setItem("cached_courses_time", now.toString());
-          localStorage.setItem("cached_courses", JSON.stringify(cachedCourses));
-        } catch(e) {}
-        return cachedCourses;
-      }
+      cachedCourses = sortServicesList(fsServices);
+      lastCoursesFetch = now;
+      try {
+        localStorage.setItem("cached_courses_time", now.toString());
+        localStorage.setItem("cached_courses", JSON.stringify(cachedCourses));
+      } catch(e) {}
+      return cachedCourses;
     }
   } catch (fsErr) {}
 
@@ -338,17 +336,15 @@ export const getCachedProviders = async (forceRefresh = false) => {
     const { collection, getDocs } = await import("firebase/firestore");
     const { db } = await import("@/lib/firebase");
     const snap = await getDocs(collection(db, "providers"));
-    if (!snap.empty) {
+    if (snap) {
       const fsProviders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      if (Array.isArray(fsProviders) && fsProviders.length > 0) {
-        cachedProviders = fsProviders;
-        lastProvidersFetch = now;
-        try {
-          localStorage.setItem("cached_providers_time", now.toString());
-          localStorage.setItem("cached_providers", JSON.stringify(cachedProviders));
-        } catch(e) {}
-        return cachedProviders;
-      }
+      cachedProviders = fsProviders;
+      lastProvidersFetch = now;
+      try {
+        localStorage.setItem("cached_providers_time", now.toString());
+        localStorage.setItem("cached_providers", JSON.stringify(cachedProviders));
+      } catch(e) {}
+      return cachedProviders;
     }
   } catch (fsErr) {}
 

@@ -901,9 +901,9 @@ export default function Admin() {
     setIsSearchingUser(true);
     try {
       const q = userSearch.trim();
-      const res = await axios.post("/api/admin/search-user", { query: q });
+      const res = await axios.post(formatApiUrl("/api/admin/search-user"), { query: q }, { timeout: 5000 });
       if (res.data && res.data.success) {
-        let users = res.data.users || (res.data.user ? [res.data.user] : []);
+        let users = Array.isArray(res.data.users) ? res.data.users : (res.data.user ? [res.data.user] : []);
         setAllUsers(users);
         if (q) {
           if (users.length === 0) {
@@ -913,11 +913,17 @@ export default function Admin() {
           }
         }
       } else {
-        toast.error("Failed to search users");
+        const fsUsers = await dbClient.getUsersAdmin();
+        setAllUsers(fsUsers);
       }
     } catch (err: any) {
       console.error("Search error:", err);
-      toast.error(err.response?.data?.error || "Failed to search users");
+      try {
+        const fsUsers = await dbClient.getUsersAdmin();
+        setAllUsers(fsUsers);
+      } catch (e) {
+        toast.error("Failed to search users");
+      }
     } finally {
       setIsSearchingUser(false);
     }
@@ -2576,8 +2582,10 @@ export default function Admin() {
                         type="button"
                         onClick={() => {
                           setUserSearch("");
-                          axios.post("/api/admin/search-user", { query: "" }).then(res => {
+                          axios.post(formatApiUrl("/api/admin/search-user"), { query: "" }).then(res => {
                             if (res.data && res.data.users) setAllUsers(res.data.users);
+                          }).catch(() => {
+                            dbClient.getUsersAdmin().then(users => setAllUsers(users)).catch(() => {});
                           });
                         }}
                         className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs font-bold"
@@ -2618,20 +2626,29 @@ export default function Admin() {
                     const displayIdentifier = email || name || (u.id ? `User (${String(u.id).slice(0, 8)}...)` : `User #${idx + 1}`);
                     const initial = (email || name || "U").charAt(0).toUpperCase();
 
-                    let activeDateStr = "Recent";
-                    try {
-                      if (u.lastActive?.toDate && typeof u.lastActive.toDate === "function") {
-                        activeDateStr = u.lastActive.toDate().toLocaleDateString();
-                      } else if (u.lastActive) {
-                        activeDateStr = new Date(u.lastActive).toLocaleDateString();
-                      } else if (u.createdAt?.toDate && typeof u.createdAt.toDate === "function") {
-                        activeDateStr = u.createdAt.toDate().toLocaleDateString();
-                      } else if (u.createdAt) {
-                        activeDateStr = new Date(u.createdAt).toLocaleDateString();
-                      }
-                    } catch (e) {
-                      activeDateStr = "Active";
-                    }
+                    const formatUserDate = (dateVal: any): string => {
+                      if (!dateVal) return "Active";
+                      try {
+                        if (typeof dateVal?.toDate === "function") {
+                          const d = dateVal.toDate();
+                          return (d && !isNaN(d.getTime())) ? d.toLocaleDateString() : "Active";
+                        }
+                        if (typeof dateVal === "number" || typeof dateVal === "string") {
+                          const d = new Date(dateVal);
+                          return (d && !isNaN(d.getTime())) ? d.toLocaleDateString() : "Active";
+                        }
+                        if (typeof dateVal === "object" && dateVal !== null) {
+                          const sec = dateVal.seconds ?? dateVal._seconds;
+                          if (sec !== undefined && !isNaN(Number(sec))) {
+                            const d = new Date(Number(sec) * 1000);
+                            return (d && !isNaN(d.getTime())) ? d.toLocaleDateString() : "Active";
+                          }
+                        }
+                      } catch (e) {}
+                      return "Active";
+                    };
+
+                    const activeDateStr = formatUserDate(u.lastActive || u.createdAt || u.updatedAt);
 
                     return (
                       <Card key={u.id || `user_${idx}`} className="border-none shadow-sm">

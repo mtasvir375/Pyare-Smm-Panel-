@@ -244,9 +244,9 @@ export const dbClient = {
     // 1. Direct Firestore SDK fetch (most authoritative on client/custom domain)
     try {
       const snap = await getFirestoreDocs(collection(db, 'providers'));
-      if (!snap.empty) {
+      if (snap) {
         const docsList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        if (docsList.length > 0) return docsList;
+        return docsList;
       }
     } catch (e) {}
 
@@ -254,13 +254,13 @@ export const dbClient = {
     try {
       const { getCachedProviders } = await import('@/lib/cache');
       const cached = await getCachedProviders(forceRefresh);
-      if (Array.isArray(cached) && cached.length > 0) return cached;
+      if (Array.isArray(cached)) return cached;
     } catch (e) {}
 
     // 3. Fallback to API Gateway
     try {
       const res = await axios.get(formatApiUrl(`/api/providers?force=${forceRefresh}&t=${Date.now()}`), { timeout: 4000 });
-      if (Array.isArray(res.data) && res.data.length > 0) return res.data;
+      if (Array.isArray(res.data)) return res.data;
     } catch (e) {}
 
     return [];
@@ -326,9 +326,9 @@ export const dbClient = {
     // 1. Direct Firestore SDK fetch (most authoritative on custom domain)
     try {
       const snap = await getFirestoreDocs(collection(db, 'courses'));
-      if (!snap.empty) {
+      if (snap) {
         const docsList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        if (docsList.length > 0) return docsList;
+        return docsList;
       }
     } catch (e) {}
 
@@ -336,13 +336,13 @@ export const dbClient = {
     try {
       const { getCachedCourses } = await import('@/lib/cache');
       const cached = await getCachedCourses(forceRefresh);
-      if (Array.isArray(cached) && cached.length > 0) return cached;
+      if (Array.isArray(cached)) return cached;
     } catch (e) {}
 
     // 3. Fallback to API Gateway
     try {
       const res = await axios.get(formatApiUrl(`/api/courses?force=${forceRefresh}&t=${Date.now()}`), { timeout: 4000 });
-      if (Array.isArray(res.data) && res.data.length > 0) return res.data;
+      if (Array.isArray(res.data)) return res.data;
     } catch (e) {}
 
     return [];
@@ -357,6 +357,25 @@ export const dbClient = {
     // Firestore fallback
     try {
       const snap = await getFirestoreDocs(fsQuery(collection(db, 'orders'), fsLimit(l)));
+      if (!snap.empty) {
+        return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      }
+    } catch (e) {}
+
+    return [];
+  },
+
+  async getUsersAdmin(l = 100): Promise<any[]> {
+    try {
+      const response = await axios.post(formatApiUrl('/api/admin/search-user'), { query: '' }, { timeout: 4000 });
+      if (response.data && Array.isArray(response.data.users) && response.data.users.length > 0) {
+        return response.data.users;
+      }
+    } catch (e) {}
+
+    // Firestore direct fallback
+    try {
+      const snap = await getFirestoreDocs(fsQuery(collection(db, 'users'), fsLimit(l)));
       if (!snap.empty) {
         return snap.docs.map(d => ({ id: d.id, ...d.data() }));
       }
