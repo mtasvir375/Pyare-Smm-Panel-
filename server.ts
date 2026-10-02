@@ -4875,7 +4875,25 @@ export async function startServer() {
         timestamp: Date.now()
       });
 
-      // Also register in Firestore so that any webhook source (Vercel or Cloud Run) can auto-credit!
+      // Save as pending deposit record so Admin sees it in Deposits tab & can approve manually
+      const pendingDepId = `dep_pending_${cleanUtr}`;
+      const pendingDepData = {
+        id: pendingDepId,
+        userId,
+        userEmail: userEmail || "not-provided",
+        amount: Number(amount),
+        utr: cleanUtr,
+        status: "pending",
+        type: "manual_upi",
+        provider: "upi_manual",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      await setDocSafe("deposits", pendingDepId, pendingDepData);
+      serverCache.deposits.set(pendingDepId, { data: pendingDepData, time: Date.now() });
+      savePersistentCache();
+
+      // Also register in pending_user_utrs
       try {
         await setDocSafe("pending_user_utrs", cleanUtr, {
           utr: cleanUtr,

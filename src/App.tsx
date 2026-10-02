@@ -32,6 +32,13 @@ if (typeof window !== "undefined") {
 axios.interceptors.request.use(
   async (config) => {
     if (typeof window !== "undefined") {
+      const baseUrl = getApiBaseUrl();
+      // If on a custom domain and requesting a relative /api route, dynamically route to live Cloud Run backend
+      if (baseUrl && config.url && !config.url.startsWith("http://") && !config.url.startsWith("https://")) {
+        const cleanEndpoint = config.url.startsWith("/") ? config.url : `/${config.url}`;
+        config.url = `${baseUrl}${cleanEndpoint}`;
+      }
+
       if (auth.currentUser && !config.headers?.Authorization) {
         try {
           const token = await auth.currentUser.getIdToken();

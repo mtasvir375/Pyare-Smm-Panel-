@@ -10,12 +10,29 @@ export default function Layout() {
   const { user, userProfile, loading } = useAuth() as any;
 
   useEffect(() => {
+    // 1. Immediately apply cached theme from localStorage to avoid delay or flashing
+    try {
+      const cached = localStorage.getItem("cached_settings");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed.selectedTheme) {
+          document.documentElement.setAttribute("data-theme", parsed.selectedTheme);
+        }
+      }
+      const directTheme = localStorage.getItem("cached_theme");
+      if (directTheme) {
+        document.documentElement.setAttribute("data-theme", directTheme);
+      }
+    } catch (e) {}
+
+    // 2. Fetch latest authoritative settings from backend
     const applyTheme = async () => {
       try {
         const { getCachedSettings } = await import("@/lib/cache");
         const settings = await getCachedSettings();
         if (settings && settings.selectedTheme) {
           document.documentElement.setAttribute("data-theme", settings.selectedTheme);
+          localStorage.setItem("cached_theme", settings.selectedTheme);
         } else {
           document.documentElement.setAttribute("data-theme", "charcoal");
         }
@@ -24,6 +41,20 @@ export default function Layout() {
       }
     };
     applyTheme();
+
+    // 3. Listen for dynamic theme changes from Admin panel
+    const handleThemeChange = (e: any) => {
+      const newTheme = e.detail || "charcoal";
+      document.documentElement.setAttribute("data-theme", newTheme);
+      try {
+        localStorage.setItem("cached_theme", newTheme);
+      } catch (err) {}
+    };
+
+    window.addEventListener("themeChange", handleThemeChange);
+    return () => {
+      window.removeEventListener("themeChange", handleThemeChange);
+    };
   }, [location.pathname]);
 
   // While checking auth status, render a modern loading animation

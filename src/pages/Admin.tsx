@@ -53,6 +53,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import imageCompression from "browser-image-compression";
 import axios from "axios";
+import { formatApiUrl } from "@/lib/apiConfig";
 import { STABLE_CLOUD_RUN_BACKEND } from "@/App";
 import {
   Dialog,
@@ -618,7 +619,7 @@ export default function Admin() {
 
       await dbClient.saveDoc("settings", "payment", settingsPayload);
       try {
-        await axios.post("/api/settings", settingsPayload);
+        await axios.post(formatApiUrl("/api/settings"), settingsPayload);
       } catch (e) {}
       setQrUrl(base64);
       setProviderApiUrl(cleanUrl);
@@ -626,10 +627,19 @@ export default function Admin() {
       setBackendApiUrl(cleanBackend);
       setQrFile(null);
 
+      // Instantly apply saved theme
+      if (selectedTheme) {
+        document.documentElement.setAttribute("data-theme", selectedTheme);
+        try {
+          localStorage.setItem("cached_theme", selectedTheme);
+        } catch (e) {}
+        window.dispatchEvent(new CustomEvent("themeChange", { detail: selectedTheme }));
+      }
+
       // Sync UPI ID with backend UPI Gateway / Telegram Bot service
       if (upiId.trim()) {
         try {
-          await axios.post("/api/admin/upi-gateway-config", {
+          await axios.post(formatApiUrl("/api/admin/upi-gateway-config"), {
             action: "save",
             upiId: upiId.trim(),
             payeeName: merchantName.trim(),
@@ -2859,7 +2869,14 @@ export default function Admin() {
                             <button
                               key={t.id}
                               type="button"
-                              onClick={() => setSelectedTheme(t.id)}
+                              onClick={() => {
+                                setSelectedTheme(t.id);
+                                document.documentElement.setAttribute("data-theme", t.id);
+                                try {
+                                  localStorage.setItem("cached_theme", t.id);
+                                } catch (e) {}
+                                window.dispatchEvent(new CustomEvent("themeChange", { detail: t.id }));
+                              }}
                               className={cn(
                                 "relative flex flex-col items-start p-3 rounded-2xl border-2 text-left transition-all duration-300 hover:scale-[1.02] cursor-pointer",
                                 selectedTheme === t.id 
