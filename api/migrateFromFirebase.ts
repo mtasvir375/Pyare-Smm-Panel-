@@ -2,6 +2,11 @@ import axios from "axios";
 import fs from "fs";
 import path from "path";
 import { getLocalSqliteDb, setLocalDoc, getLocalDoc } from "./localDb";
+import { createClient } from "@supabase/supabase-js";
+
+const supabaseUrl = process.env.SUPABASE_URL || "";
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
+const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
 
 const collectionsToMigrate = [
   "users",
@@ -49,6 +54,36 @@ export async function migrateAllFromFirebase(): Promise<{ success: boolean; migr
   await getLocalSqliteDb();
   const summary: Record<string, number> = {};
   const errors: string[] = [];
+
+  // 1. Try restoring everything from Supabase first
+  if (supabase) {
+    try {
+      console.log("[MIGRATION] Attempting to restore database from Supabase 'documents' table...");
+      const { data: supabaseDocs, error: sbError } = await supabase
+        .from("documents")
+        .select("*");
+      
+      if (!sbError && Array.isArray(supabaseDocs)) {
+        console.log(`[MIGRATION] Successfully fetched ${supabaseDocs.length} documents from Supabase.`);
+        let count = 0;
+        for (const item of supabaseDocs) {
+          const col = item.collection;
+          const id = item.id;
+          const docData = item.data;
+          if (!col || !id || !docData) continue;
+          
+          setLocalDoc(col, id, docData);
+          count++;
+        }
+        console.log(`[MIGRATION] Local SQLite database fully restored from Supabase (${count} records). Skipping Firebase fetch to save quota!`);
+        return { success: true, migrated: { supabase_restored: count }, errors: [] };
+      } else {
+        console.warn(`[MIGRATION-WARN] Supabase restoration not possible (table might not exist yet):`, sbError?.message || "unknown error");
+      }
+    } catch (err: any) {
+      console.warn(`[MIGRATION-ERR] Supabase connection failed (project might be paused):`, err.message);
+    }
+  }
 
   let cfg: any = {};
   try {

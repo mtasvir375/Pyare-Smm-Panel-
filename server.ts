@@ -122,6 +122,17 @@ try {
   }
 }
 
+// Initialize Supabase Client dynamically from environment variables
+const supabaseUrl = process.env.SUPABASE_URL || "";
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
+const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
+
+if (supabase) {
+  console.log(`[SUPABASE] Successfully initialized client for URL: ${supabaseUrl}`);
+} else {
+  console.log(`[SUPABASE-WARN] Client not configured. Using Firestore as backup database.`);
+}
+
 const PORT = 3000;
 
 const app = express();
@@ -1363,6 +1374,95 @@ export async function startServer() {
 
   // Skip startup write to save Firestore writes
 
+  // Supabase Database Sync Helper Operations (Generic JSONB Schema)
+  const getDocFromSupabase = async (collect: string, id: string): Promise<any> => {
+    if (!supabase) return null;
+    try {
+      const { data, error } = await supabase
+        .from("documents")
+        .select("data")
+        .eq("collection", collect)
+        .eq("id", id)
+        .maybeSingle();
+      
+      if (error) {
+        if (error.message?.includes("relation") && error.message?.includes("does not exist")) {
+          console.warn(`[SUPABASE-GET-WARN] 'documents' table does not exist yet. Please run the SQL migration.`);
+        } else {
+          console.warn(`[SUPABASE-GET-WARN] Failed for ${collect}/${id}:`, error.message);
+        }
+        return null;
+      }
+      return data?.data || null;
+    } catch (err: any) {
+      console.warn(`[SUPABASE-GET-ERR] Network error for ${collect}/${id} (project may be paused):`, err.message);
+      return null;
+    }
+  };
+
+  const setDocInSupabase = async (collect: string, id: string, data: any): Promise<boolean> => {
+    if (!supabase) return false;
+    try {
+      const { error } = await supabase
+        .from("documents")
+        .upsert({
+          collection: collect,
+          id: id,
+          data: data,
+          updated_at: new Date().toISOString()
+        }, { onConflict: "collection,id" });
+      
+      if (error) {
+        console.warn(`[SUPABASE-SET-WARN] Failed for ${collect}/${id}:`, error.message);
+        return false;
+      }
+      return true;
+    } catch (err: any) {
+      console.warn(`[SUPABASE-SET-ERR] Network error for ${collect}/${id} (project may be paused):`, err.message);
+      return false;
+    }
+  };
+
+  const deleteDocInSupabase = async (collect: string, id: string): Promise<boolean> => {
+    if (!supabase) return false;
+    try {
+      const { error } = await supabase
+        .from("documents")
+        .delete()
+        .eq("collection", collect)
+        .eq("id", id);
+      
+      if (error) {
+        console.warn(`[SUPABASE-DEL-WARN] Failed for ${collect}/${id}:`, error.message);
+        return false;
+      }
+      return true;
+    } catch (err: any) {
+      console.warn(`[SUPABASE-DEL-ERR] Network error for ${collect}/${id} (project may be paused):`, err.message);
+      return false;
+    }
+  };
+
+  const listDocsFromSupabase = async (collect: string, limitCount = 100): Promise<any[] | null> => {
+    if (!supabase) return null;
+    try {
+      const { data, error } = await supabase
+        .from("documents")
+        .select("data")
+        .eq("collection", collect)
+        .limit(limitCount);
+      
+      if (error) {
+        console.warn(`[SUPABASE-LIST-WARN] Failed for ${collect}:`, error.message);
+        return null;
+      }
+      return data ? data.map(d => d.data) : [];
+    } catch (err: any) {
+      console.warn(`[SUPABASE-LIST-ERR] Network error for ${collect} (project may be paused):`, err.message);
+      return null;
+    }
+  };
+
   // Firebase-Firestore Helpers that replace Supabase ones
   const getDocSafe = async (collect: string, id: string, token?: string, forceFresh?: boolean) => {
     const local = getLocalDoc(collect, id);
@@ -1462,9 +1562,17 @@ export async function startServer() {
 
     let result = { exists: false, data: () => null as any };
 
+    // Try reading from Supabase first (0 Firestore reads!)
+    if (supabase) {
+      const sbData = await getDocFromSupabase(collect, id);
+      if (sbData) {
+        result = { exists: true, data: () => sbData };
+      }
+    }
+
     const isCoreColl = collect === "providers" || collect === "settings" || collect === "courses" || collect === "services";
 
-    if (!useRestFallback || (adminSdkSucceeded && isCoreColl)) {
+    if (!result.exists && (!useRestFallback || (adminSdkSucceeded && isCoreColl))) {
       try {
         const snap = await fdb.collection(collect).doc(id).get();
         if (snap.exists) {
@@ -1549,6 +1657,10 @@ export async function startServer() {
     // Cache the successful read result
     if (result.exists) {
       const data = result.data();
+      try {
+        setLocalDoc(collect, id, data);
+      } catch (e) {}
+
       if (collect === "settings" && id === "payment") {
         serverCache.settings = { data, time: now };
         savePersistentCache();
@@ -1809,6 +1921,7 @@ export async function startServer() {
 
   const setDocSafe = async (col: string, id: string, data: any, token?: string) => {
     setLocalDoc(col, id, data);
+    setDocInSupabase(col, id, data); // Async write to Supabase
     setDocRESTAsync(col, id, data);
     invalidateCachesForCollection(col, id);
     if (col === "settings" && id === "payment") {
@@ -1833,12 +1946,23 @@ export async function startServer() {
       addOrderToMemory(id, data);
     }
     if (col === "users") {
-      const existing = serverCache.users.get(id);
-      const existingData = existing ? (existing.data || existing) : {};
+      let existingData: any = {};
+      try {
+        const local = getLocalDoc("users", id);
+        if (local) existingData = local;
+      } catch (e) {}
+      if (!existingData.balance) {
+        const existing = serverCache.users.get(id);
+        if (existing) existingData = existing.data || existing;
+      }
+
       const existingBal = Number(existingData.balance ?? existingData.walletBalance ?? 0);
       const incomingBal = Number(data.balance);
-      if ((data.balance === undefined || isNaN(incomingBal)) && existingBal > 0) {
+      
+      // Balance Guard: If incoming balance is 0 or undefined, but user already has a positive balance, preserve it!
+      if ((data.balance === undefined || isNaN(incomingBal) || (incomingBal === 0 && existingBal > 0)) && existingBal > 0) {
         data.balance = existingBal;
+        console.log(`[BALANCE-GUARD] Preserved existing balance of ₹${existingBal} for user ${id} (prevented overwrite).`);
       }
       serverCache.users.set(id, { data: { ...existingData, ...data }, time: Date.now() });
       savePersistentCache();
@@ -1855,6 +1979,7 @@ export async function startServer() {
     const now = new Date().toISOString();
     const docData = { id: generatedId, ...data, createdAt: data.createdAt || now, updatedAt: now };
 
+    setDocInSupabase(col, generatedId, docData); // Async write to Supabase
     setDocRESTAsync(col, generatedId, docData);
 
     if (col === "orders") {
@@ -1869,6 +1994,7 @@ export async function startServer() {
 
   const deleteDocSafe = async (col: string, id: string) => {
     deleteLocalDoc(col, id);
+    deleteDocInSupabase(col, id); // Async delete from Supabase
     deleteDocRESTAsync(col, id);
     invalidateCachesForCollection(col, id);
     return true;
@@ -3988,10 +4114,19 @@ export async function startServer() {
     }
 
     try {
-      const results: any[] = [];
+      let results: any[] = [];
+      
+      // Try reading from Supabase first (0 Firestore reads!)
+      if (supabase) {
+        const sbResults = await listDocsFromSupabase(collect, pageSize);
+        if (sbResults && sbResults.length > 0) {
+          results = sbResults;
+        }
+      }
+
       const effectiveLimit = Math.min(pageSize, 25);
       const isCore = collect === "providers" || collect === "settings" || collect === "courses" || collect === "services";
-      if (!useRestFallback || (adminSdkSucceeded && isCore)) {
+      if (results.length === 0 && (!useRestFallback || (adminSdkSucceeded && isCore))) {
         try {
           const snap = await fdb.collection(collect).limit(effectiveLimit).get();
           snap.forEach(doc => results.push({ id: doc.id, ...doc.data() }));
@@ -4000,7 +4135,7 @@ export async function startServer() {
         }
       }
       
-      if ((useRestFallback && !(adminSdkSucceeded && isCore)) || results.length === 0) {
+      if (results.length === 0 && ((useRestFallback && !(adminSdkSucceeded && isCore)) || results.length === 0)) {
         const targetProject = getTargetProject();
         const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/${collect}?key=${apiKey}&pageSize=${effectiveLimit}`;
         const resRest = await axios.get(url, { timeout: 10000 });
@@ -4013,6 +4148,13 @@ export async function startServer() {
       res.json({ success: true, data: results });
 
       const nowTime = Date.now();
+      // Write fetched list results to local SQLite immediately so next list call reads from SQLite in 0ms with 0 reads!
+      results.forEach(item => {
+        if (item.id) {
+          try { setLocalDoc(collect, item.id, item); } catch (e) {}
+        }
+      });
+
       if (collect === "providers" && results.length > 0) {
         results.forEach(p => {
           if (p.id) {
