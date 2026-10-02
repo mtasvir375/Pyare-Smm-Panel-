@@ -144,7 +144,7 @@ export const getCachedSettings = async (forceRefresh = false) => {
       const settingsData = {
         ...DEFAULT_SETTINGS,
         ...res.data,
-        upiId: res.data.upiId !== undefined ? res.data.upiId : DEFAULT_SETTINGS.upiId,
+        upiId: (res.data.upiId && String(res.data.upiId).trim()) ? String(res.data.upiId).trim() : DEFAULT_SETTINGS.upiId,
         paymentQrUrl: res.data.paymentQrUrl || "",
         merchantName: res.data.merchantName !== undefined ? res.data.merchantName : DEFAULT_SETTINGS.merchantName,
         razorpayEnabled: !!res.data.razorpayEnabled,

@@ -1219,7 +1219,7 @@ export default function Courses() {
                         setSuccessDetails({ amount: credited, balance: finalBal });
                         setIsSuccessPopupOpen(true); // Open success popup!
                       }}
-                      onCancelOrSwitchManual={isManualQrEnabled ? () => setPaymentMethod("manual") : undefined}
+                      onCancelOrSwitchManual={() => setPaymentMethod("manual")}
                     />
                   )}
 

@@ -734,7 +734,7 @@ export default function Profile() {
                             setIsSuccessPopupOpen(true); // Open success popup!
                             resetAddFunds();
                           }}
-                          onCancelOrSwitchManual={isManualQrEnabled ? () => setPaymentMethod("manual") : undefined}
+                          onCancelOrSwitchManual={() => setPaymentMethod("manual")}
                         />
                       )}
 

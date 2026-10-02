@@ -228,3 +228,10 @@ export function deleteLocalDoc(collection: string, id: string): boolean {
     return false;
   }
 }
+
+export default function handler(req: any, res: any) {
+  if (res && typeof res.status === "function") {
+    return res.status(200).json({ status: "ok", message: "localDb ready" });
+  }
+}
+

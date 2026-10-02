@@ -257,12 +257,12 @@ export const DEFAULT_SERVICES: ServiceItem[] = [
 ];
 
 export const DEFAULT_SETTINGS = {
-  upiId: "",
+  upiId: "mdsaudalam621@okicici",
   merchantName: "Pyare SMM Panel",
   paymentQrUrl: "",
   qrAutoEnabled: false,
   instantQrEnabled: true,
-  manualQrEnabled: false,
+  manualQrEnabled: true,
   selectedTheme: "charcoal",
   selectedFestivalTheme: "none",
   whatsappLink: "https://wa.me/919999999999",

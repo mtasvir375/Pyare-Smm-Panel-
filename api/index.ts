@@ -274,12 +274,48 @@ export default async function handler(req: any, res: any) {
     return res.status(200).end();
   }
 
-  // Parse path from req.url
-  const rawUrl = req.url || "/api";
-  const urlObj = new URL(rawUrl, "http://localhost");
-  let pathname = urlObj.pathname.replace(/\/+$/, "") || "/api";
-  if (req.query?.path && Array.isArray(req.query.path)) {
-    pathname = `/api/${req.query.path.join("/")}`;
+  // Robustly extract requested path from Vercel query rewrites, matched headers, or req.url
+  let requestedPath = "";
+  if (req.query?.endpoint) {
+    const ep = Array.isArray(req.query.endpoint) ? req.query.endpoint.join("/") : String(req.query.endpoint);
+    requestedPath = `/api/${ep.replace(/^\/+/, "")}`;
+  } else if (req.query?.all) {
+    const all = Array.isArray(req.query.all) ? req.query.all.join("/") : String(req.query.all);
+    requestedPath = `/api/${all.replace(/^\/+/, "")}`;
+  } else if (req.query?.path) {
+    const p = Array.isArray(req.query.path) ? req.query.path.join("/") : String(req.query.path);
+    requestedPath = `/api/${p.replace(/^\/+/, "")}`;
+  } else if (req.headers["x-matched-path"]) {
+    requestedPath = String(req.headers["x-matched-path"]);
+  } else if (req.headers["x-vercel-matched-path"]) {
+    requestedPath = String(req.headers["x-vercel-matched-path"]);
+  } else if (req.headers["x-invoke-path"]) {
+    requestedPath = String(req.headers["x-invoke-path"]);
+  } else if (req.headers["x-forwarded-uri"]) {
+    requestedPath = String(req.headers["x-forwarded-uri"]);
+  } else if (req.url) {
+    requestedPath = req.url;
+  } else {
+    requestedPath = "/api";
+  }
+
+  let cleanPath = requestedPath;
+  try {
+    const urlObj = new URL(requestedPath, "http://localhost");
+    cleanPath = urlObj.pathname;
+  } catch (e) {
+    cleanPath = requestedPath.split("?")[0];
+  }
+
+  let pathname = cleanPath.replace(/\/+$/, "") || "/api";
+
+  // If cleanPath resolved to just "/api", but req.url had a specific subpath, prioritize req.url
+  if (pathname === "/api" && req.url && req.url !== "/api" && req.url.startsWith("/api/")) {
+    try {
+      pathname = new URL(req.url, "http://localhost").pathname.replace(/\/+$/, "");
+    } catch (e) {
+      pathname = req.url.split("?")[0].replace(/\/+$/, "");
+    }
   }
 
   // Ensure body is parsed if sent as JSON string
@@ -294,8 +330,8 @@ export default async function handler(req: any, res: any) {
   if (!body) body = {};
 
   try {
-    // 1. Health check: /api
-    if (pathname === "/api" || pathname === "") {
+    // 1. Health check: /api or /api/health
+    if (pathname === "/api" || pathname === "" || pathname === "/api/health") {
       return res.status(200).json({ status: "ok", message: "API Gateway Online", timestamp: new Date().toISOString() });
     }
 
@@ -1460,6 +1496,227 @@ export default async function handler(req: any, res: any) {
       } catch (e: any) {
         return res.status(200).json([]);
       }
+    }
+
+    // 15. Admin Process Deposit: /api/admin/process-deposit
+    if (pathname === "/api/admin/process-deposit") {
+      const { depositId, action, adminEmail, deposit: clientDeposit } = body || {};
+      if (!depositId || !action) {
+        return res.status(400).json({ success: false, error: "Missing depositId or action" });
+      }
+
+      let depData = clientDeposit;
+      if (!depData || !depData.userId || !depData.amount) {
+        depData = await getRestDoc("deposits", depositId);
+      }
+      if (!depData) {
+        return res.status(404).json({ success: false, error: "Deposit not found" });
+      }
+
+      const currentStatus = (depData.status || "").toLowerCase();
+      if (currentStatus === "approved" && action === "approved") {
+        return res.json({ success: true, message: "Deposit is already approved", deposit: depData });
+      }
+      if (currentStatus === "cancelled" && action === "cancelled") {
+        return res.json({ success: true, message: "Deposit is already cancelled", deposit: depData });
+      }
+
+      const userId = depData.userId || depData.user_id;
+      const amount = Number(depData.amount || 0);
+
+      if (action === "approved") {
+        if (!userId) return res.status(400).json({ success: false, error: "Deposit is missing userId" });
+        if (isNaN(amount) || amount <= 0) return res.status(400).json({ success: false, error: "Invalid deposit amount" });
+
+        // Credit user wallet balance in Firestore and memory
+        let userDoc = await getRestDoc("users", userId);
+        const currentBal = Number(userDoc?.balance ?? userDoc?.walletBalance ?? 0);
+        const newBal = Number((currentBal + amount).toFixed(2));
+
+        const updatedUser = {
+          ...(userDoc || {}),
+          balance: newBal,
+          updatedAt: new Date().toISOString()
+        };
+        await setRestDoc("users", userId, updatedUser);
+
+        // Update deposit status
+        const updateData = {
+          ...(depData || {}),
+          status: "approved",
+          verifiedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          processedBy: adminEmail || "admin"
+        };
+        await setRestDoc("deposits", depositId, updateData);
+        memAdminDepositsCache = null;
+
+        return res.status(200).json({
+          success: true,
+          status: "approved",
+          depositId,
+          amount,
+          userId,
+          newBalance: newBal,
+          message: `Deposit ₹${amount} approved successfully!`
+        });
+      } else {
+        // Cancel deposit
+        const updateData = {
+          ...(depData || {}),
+          status: "cancelled",
+          updatedAt: new Date().toISOString(),
+          processedBy: adminEmail || "admin"
+        };
+        await setRestDoc("deposits", depositId, updateData);
+        memAdminDepositsCache = null;
+
+        return res.status(200).json({
+          success: true,
+          status: "cancelled",
+          depositId,
+          message: `Deposit rejected/cancelled.`
+        });
+      }
+    }
+
+    // 16. Admin Restore All Balances: /api/admin/restore-all-balances
+    if (pathname === "/api/admin/restore-all-balances") {
+      const allUsers = await listRestDocs("users", 500);
+      const allDeposits = await listRestDocs("deposits", 500);
+      const allOrders = await listRestDocs("orders", 500);
+
+      const approvedMap = new Map<string, number>();
+      for (const dep of allDeposits) {
+        if (dep && (dep.status || "").toLowerCase() === "approved") {
+          const uId = dep.userId || dep.user_id;
+          if (uId) {
+            approvedMap.set(uId, (approvedMap.get(uId) || 0) + Number(dep.amount || 0));
+          }
+        }
+      }
+
+      const spentMap = new Map<string, number>();
+      for (const ord of allOrders) {
+        const oStatus = (ord?.status || "").toLowerCase();
+        if (ord && !["canceled", "refunded", "failed"].includes(oStatus)) {
+          const uId = ord.userId || ord.user_id;
+          if (uId) {
+            spentMap.set(uId, (spentMap.get(uId) || 0) + Number(ord.charge || ord.price || 0));
+          }
+        }
+      }
+
+      let restoredCount = 0;
+      for (const u of allUsers) {
+        const uId = u.id || u.uid;
+        if (!uId) continue;
+        const totalDep = approvedMap.get(uId) || 0;
+        const totalSpent = spentMap.get(uId) || 0;
+        const correctBal = Math.max(0, Number((totalDep - totalSpent).toFixed(2)));
+        if (totalDep > 0 || totalSpent > 0) {
+          await setRestDoc("users", uId, { ...u, balance: correctBal, updatedAt: new Date().toISOString() });
+          restoredCount++;
+        }
+      }
+      memAllUsersCache = null;
+      return res.status(200).json({ success: true, count: restoredCount, message: `Reconciled ${restoredCount} user balances.` });
+    }
+
+    // 17. SMS Forwarder Logs: /api/sms-forwarder/logs, /api/admin/sms-forwarder-logs
+    if (pathname === "/api/sms-forwarder/logs" || pathname === "/api/admin/sms-forwarder-logs") {
+      const logs = (await listRestDocs("bank_alerts", 100)) || [];
+      const pendingUsers = (await listRestDocs("pending_user_utrs", 50)) || [];
+      const available = logs.filter((l: any) => !l.isUsed && l.status !== "claimed");
+      return res.status(200).json({
+        success: true,
+        logs,
+        available,
+        pendingUsers
+      });
+    }
+
+    if (pathname === "/api/sms-forwarder/clear-logs") {
+      return res.status(200).json({ success: true, message: "Logs cleared" });
+    }
+
+    if (pathname === "/api/sms-forwarder/test-parse") {
+      const { text } = body || {};
+      const str = String(text || "");
+      const isCredit = /(?:credited|received|deposited)/i.test(str);
+      const amtMatch = str.match(/(?:rs\.?|inr)\s*([\d,]+(?:\.\d{1,2})?)/i) || str.match(/([\d,]+(?:\.\d{1,2})?)\s*(?:rs|inr)/i);
+      const utrMatch = str.match(/\b(\d{12})\b/) || str.match(/(?:ref|rrn|utr|upi)[:\s#]*([a-zA-Z0-9]{12})/i);
+      const parsed = {
+        isValid: isCredit && !!amtMatch && !!utrMatch,
+        isCredit,
+        amount: amtMatch ? parseFloat(amtMatch[1].replace(/,/g, "")) : 0,
+        utr: utrMatch ? utrMatch[1] : "",
+        rawText: str
+      };
+      return res.status(200).json({ success: true, parsed });
+    }
+
+    if (pathname === "/api/sms-forwarder/manual-resolve") {
+      const { utr, userId, amount } = body || {};
+      if (!utr || !userId) return res.status(400).json({ success: false, error: "Missing utr or userId" });
+      const uDoc = await getRestDoc("users", userId);
+      const curBal = Number(uDoc?.balance || 0);
+      const addAmt = Number(amount || 0);
+      const newBal = Number((curBal + addAmt).toFixed(2));
+      await setRestDoc("users", userId, { ...(uDoc || {}), balance: newBal, updatedAt: new Date().toISOString() });
+      await setRestDoc("bank_alerts", utr, { utr, amount: addAmt, isUsed: true, status: "claimed", usedBy: userId, resolvedAt: new Date().toISOString() });
+      return res.status(200).json({ success: true, message: `Resolved UTR ${utr} with ₹${addAmt}`, newBalance: newBal });
+    }
+
+    // 18. Sync Order Status: /api/sync-order-status, /api/order-status
+    if (pathname === "/api/sync-order-status" || pathname === "/api/order-status") {
+      const { orderId } = body || {};
+      if (!orderId) return res.status(400).json({ success: false, error: "Missing orderId" });
+      const order = await getRestDoc("orders", orderId);
+      if (!order) return res.status(404).json({ success: false, error: "Order not found" });
+      return res.status(200).json({ success: true, status: order.status || "Pending", order });
+    }
+
+    // 19. Delete Order: /api/orders/delete
+    if (pathname === "/api/orders/delete") {
+      const { orderId } = body || {};
+      if (!orderId) return res.status(400).json({ success: false, error: "Missing orderId" });
+      await deleteRestDoc("orders", orderId);
+      return res.status(200).json({ success: true, message: "Order deleted" });
+    }
+
+    // 20. Admin Payment Intents: /api/admin/payment-intents
+    if (pathname === "/api/admin/payment-intents") {
+      const list = await listRestDocs("payment_intents", 50);
+      return res.status(200).json({ success: true, intents: list });
+    }
+
+    if (pathname === "/api/admin/payment-intents/approve") {
+      const { intentId, orderRef, adminEmail } = body || {};
+      const targetId = intentId || orderRef;
+      if (!targetId) return res.status(400).json({ success: false, error: "Missing intentId" });
+      const intent = await getRestDoc("payment_intents", targetId);
+      if (!intent) return res.status(404).json({ success: false, error: "Intent not found" });
+
+      const userId = intent.userId;
+      const creditAmt = Number(intent.amount || intent.baseAmount || 0);
+      if (!userId || creditAmt <= 0) return res.status(400).json({ success: false, error: "Invalid intent details" });
+
+      const uDoc = await getRestDoc("users", userId);
+      const curBal = Number(uDoc?.balance || 0);
+      const newBal = Number((curBal + creditAmt).toFixed(2));
+
+      await setRestDoc("users", userId, { ...(uDoc || {}), balance: newBal, updatedAt: new Date().toISOString() });
+      await setRestDoc("payment_intents", targetId, { ...(intent || {}), status: "completed", approvedBy: adminEmail || "admin", completedAt: Date.now() });
+      memAdminDepositsCache = null;
+
+      return res.status(200).json({ success: true, message: `Approved intent and credited ₹${creditAmt}`, newBalance: newBal });
+    }
+
+    // 21. Admin All Users: /api/admin/all-users, /api/admin/users
+    if (pathname === "/api/admin/all-users" || pathname === "/api/admin/users") {
+      const usersList = (await listRestDocs("users", 300)) || [];
+      return res.status(200).json({ success: true, users: usersList });
     }
 
     // Default 404
