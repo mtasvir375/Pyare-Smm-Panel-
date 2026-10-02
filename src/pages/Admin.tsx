@@ -501,7 +501,7 @@ export default function Admin() {
     }
   };
 
-  const handleTestProviderApi = async (providerId?: string) => {
+  const handleTestProviderApi = async (providerId?: string, provObj?: any) => {
     if (providerId) {
       setTestingProviders(prev => new Set(prev).add(providerId));
     } else {
@@ -509,33 +509,35 @@ export default function Admin() {
     }
     
     try {
-      const endpoints = [
-        '/api/test-provider'
-      ];
-      let resData: any = null;
-      let lastErr = "";
+      let pUrl = (provObj?.apiUrl || "").trim();
+      let pKey = (provObj?.apiKey || "").trim();
 
-      for (const ep of endpoints) {
-        try {
-          const payload: any = { providerId };
-          if (!providerId) {
-            payload.providerApiUrl = providerApiUrl;
-            payload.providerApiKey = providerApiKey;
+      if (!pUrl || !pKey) {
+        if (providerId) {
+          const found = providers.find(p => p.id === providerId);
+          if (found) {
+            pUrl = (found.apiUrl || "").trim();
+            pKey = (found.apiKey || "").trim();
           }
-          const response = await axios.post(ep, payload, { timeout: 15000 });
-          if (response?.data) {
-            resData = response.data;
-            break;
-          }
-        } catch (e: any) {
-          lastErr = e.response?.data?.error || e.message || "Connection failed";
+        } else {
+          pUrl = (providerApiUrl || "").trim();
+          pKey = (providerApiKey || "").trim();
         }
       }
+
+      const payload: any = { 
+        providerId,
+        providerApiUrl: pUrl,
+        providerApiKey: pKey
+      };
+
+      const response = await axios.post(formatApiUrl('/api/test-provider'), payload, { timeout: 15000 });
+      const resData = response?.data;
 
       if (resData?.success) {
         toast.success(`Connected! Balance: ${resData.balance} ${resData.currency || 'INR'}`);
       } else {
-        toast.error(resData?.error || lastErr || "Connection failed");
+        toast.error(resData?.error || "Connection failed");
       }
     } catch (error: any) {
       const errorMessage = error.response?.data?.error || error.message || "Connection failed";
@@ -1233,17 +1235,26 @@ export default function Admin() {
     try {
       const cleanUrl = newProviderApiUrl.trim();
       const cleanKey = newProviderApiKey.trim();
+      const cleanName = newProviderName.trim();
       
       const newProv = await dbClient.addDoc("providers", {
-        name: newProviderName.trim(),
+        name: cleanName,
         apiUrl: cleanUrl,
         apiKey: cleanKey,
         createdAt: new Date().toISOString()
       });
       
-      // Instantly update state in React memory
+      // Instantly update state in React memory & local storage
       if (newProv) {
-        setProviders(prev => [...prev.filter(p => p.id !== newProv.id), newProv]);
+        setProviders(prev => {
+          const filtered = prev.filter(p => p.id !== newProv.id && !(p.name === cleanName && p.apiUrl === cleanUrl));
+          const updated = [...filtered, newProv];
+          try {
+            localStorage.setItem("cached_providers", JSON.stringify(updated));
+            localStorage.setItem("cached_providers_time", Date.now().toString());
+          } catch (e) {}
+          return updated;
+        });
       }
 
       toast.success("Provider added successfully!");
@@ -1251,14 +1262,12 @@ export default function Admin() {
       setNewProviderApiUrl("");
       setNewProviderApiKey("");
 
-      // Force clear cache and refresh from Firestore
-      const { clearCache } = await import("@/lib/cache");
-      clearCache();
-      const freshList = await dbClient.getProviders(true);
-      if (Array.isArray(freshList) && freshList.length > 0) {
-        setProviders(freshList);
-      }
-      fetchTabData(activeTab, true);
+      // Background re-sync
+      dbClient.getProviders(true).then(freshList => {
+        if (Array.isArray(freshList) && freshList.length > 0) {
+          setProviders(freshList);
+        }
+      }).catch(() => {});
     } catch (error: any) {
       toast.error(`Error adding provider: ${error.message}`);
     }
@@ -1266,15 +1275,18 @@ export default function Admin() {
 
   const confirmDeleteProvider = async () => {
     if (!providerToDelete) return;
+    const toDeleteId = providerToDelete.id;
     try {
-      await dbClient.deleteDoc("providers", providerToDelete.id);
-      setProviders(prev => prev.filter(p => p.id !== providerToDelete.id));
+      await dbClient.deleteDoc("providers", toDeleteId);
+      setProviders(prev => {
+        const updated = prev.filter(p => p.id !== toDeleteId);
+        try {
+          localStorage.setItem("cached_providers", JSON.stringify(updated));
+          localStorage.setItem("cached_providers_time", Date.now().toString());
+        } catch (e) {}
+        return updated;
+      });
       toast.success("Provider deleted!");
-      const { clearCache } = await import("@/lib/cache");
-      clearCache();
-      const freshList = await dbClient.getProviders(true);
-      setProviders(freshList);
-      fetchTabData(activeTab, true);
     } catch (error: any) {
       toast.error(`Error deleting provider: ${error.message}`);
     } finally {
@@ -2193,19 +2205,31 @@ export default function Admin() {
                       <h3 className="font-bold text-lg">{p.name}</h3>
                       <div className="flex items-center gap-1">
                         <Button 
+                          type="button"
                           variant="ghost" 
                           size="icon" 
                           className="text-blue-500 hover:text-blue-600 h-8 w-8"
-                          onClick={() => handleTestProviderApi(p.id)}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleTestProviderApi(p.id, p);
+                          }}
                           disabled={testingProviders.has(p.id)}
+                          title="Check Provider Balance"
                         >
                           <RefreshCw className={cn("w-4 h-4", testingProviders.has(p.id) && "animate-spin")} />
                         </Button>
                         <Button 
+                          type="button"
                           variant="ghost" 
                           size="icon" 
                           className="text-gray-400 hover:text-red-500 h-8 w-8"
-                          onClick={() => setProviderToDelete(p)}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setProviderToDelete(p);
+                          }}
+                          title="Delete Provider"
                         >
                           <Trash2 className="w-4 h-4" />
                         </Button>
@@ -2885,9 +2909,14 @@ export default function Admin() {
                           className="rounded-xl h-12 flex-1"
                         />
                         <Button 
+                          type="button"
                           variant="outline" 
                           className="h-12"
-                          onClick={() => handleTestProviderApi()}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleTestProviderApi();
+                          }}
                           disabled={testingApi}
                         >
                           {testingApi ? "Testing..." : "Test API"}

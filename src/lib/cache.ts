@@ -273,31 +273,30 @@ let lastProvidersFetch = 0;
 export const getCachedProviders = async (forceRefresh = false) => {
   const now = Date.now();
   
-  if (forceRefresh) {
-    cachedProviders = null;
-    lastProvidersFetch = 0;
-  } else {
-    if (cachedProviders && (now - lastProvidersFetch < CACHE_DURATION)) {
-      return cachedProviders;
-    }
-    
-    // Check localStorage
-    try {
-      const lsData = localStorage.getItem("cached_providers");
-      if (lsData) {
-        const parsed = JSON.parse(lsData);
-        if (Array.isArray(parsed) && parsed.length > 0) {
+  if (!forceRefresh && cachedProviders && (now - lastProvidersFetch < CACHE_DURATION)) {
+    return cachedProviders;
+  }
+
+  // Check localStorage first
+  let localBackup: any[] = [];
+  try {
+    const lsData = localStorage.getItem("cached_providers");
+    if (lsData) {
+      const parsed = JSON.parse(lsData);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        localBackup = parsed;
+        if (!forceRefresh) {
           cachedProviders = parsed;
           lastProvidersFetch = now;
           return cachedProviders;
         }
       }
-    } catch(e) {}
-  }
+    }
+  } catch(e) {}
 
-  // 1. Primary path: Fetch from API Gateway (served from Express RAM / SQLite - 0 Firestore Reads)
+  // 1. Primary path: Fetch from API Gateway
   try {
-    const res = await axios.get(formatApiUrl(`/api/providers?force=${forceRefresh}&t=${now}`), { timeout: 4000 });
+    const res = await axios.get(formatApiUrl(`/api/providers?force=${forceRefresh}&t=${now}`), { timeout: 5000 });
     if (Array.isArray(res.data) && res.data.length > 0) {
       cachedProviders = res.data;
       lastProvidersFetch = now;
@@ -311,7 +310,7 @@ export const getCachedProviders = async (forceRefresh = false) => {
     console.warn("[CACHE] Failed to load providers from /api/providers:", apiErr);
   }
 
-  // 2. Direct Firestore SDK fallback (only if API server is completely offline)
+  // 2. Direct Firestore SDK fallback
   try {
     const { collection, getDocs } = await import("firebase/firestore");
     const { db } = await import("@/lib/firebase");
@@ -330,17 +329,11 @@ export const getCachedProviders = async (forceRefresh = false) => {
     }
   } catch (fsErr) {}
 
-  // 3. Fallback to localStorage safety net (NEVER RETURN EMPTY IF LOCALSTORAGE HAS DATA)
-  try {
-    const lsData = localStorage.getItem("cached_providers");
-    if (lsData) {
-      const parsed = JSON.parse(lsData);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        cachedProviders = parsed;
-        return cachedProviders;
-      }
-    }
-  } catch(e) {}
+  // 3. Fallback to local backup (NEVER RETURN EMPTY IF LOCAL STORAGE HAD DATA)
+  if (localBackup.length > 0) {
+    cachedProviders = localBackup;
+    return cachedProviders;
+  }
   
   return cachedProviders || [];
 };

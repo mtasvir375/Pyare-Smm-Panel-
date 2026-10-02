@@ -245,14 +245,7 @@ export const dbClient = {
   },
 
   async getProviders(forceRefresh = false): Promise<any[]> {
-    if (forceRefresh) {
-      try {
-        const { clearCache } = await import('@/lib/cache');
-        clearCache();
-      } catch (e) {}
-    }
-
-    // 1. Try cache & API Gateway (served from Express RAM - 0 Firestore Reads)
+    // 1. Try cache & API Gateway
     try {
       const { getCachedProviders } = await import('@/lib/cache');
       const cached = await getCachedProviders(forceRefresh);
@@ -265,7 +258,7 @@ export const dbClient = {
       if (Array.isArray(res.data) && res.data.length > 0) return res.data;
     } catch (e) {}
 
-    // 3. Direct Firestore SDK fallback (only if API is completely offline)
+    // 3. Direct Firestore SDK fallback
     try {
       const snap = await getFirestoreDocs(collection(db, 'providers'));
       if (snap && !snap.empty) {
@@ -275,6 +268,15 @@ export const dbClient = {
           localStorage.setItem("cached_providers_time", Date.now().toString());
         } catch (e) {}
         return docsList;
+      }
+    } catch (e) {}
+
+    // 4. LocalStorage safety net (Never wipe out valid providers)
+    try {
+      const ls = localStorage.getItem("cached_providers");
+      if (ls) {
+        const parsed = JSON.parse(ls);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
     } catch (e) {}
 

@@ -2109,7 +2109,6 @@ export async function startServer() {
   };
 
   const addDocSafe = async (col: string, data: any, token?: string) => {
-    invalidateCachesForCollection(col);
     const generatedId = addLocalDoc(col, data);
     const now = new Date().toISOString();
     const docData = { id: generatedId, ...data, createdAt: data.createdAt || now, updatedAt: now };
@@ -2117,11 +2116,28 @@ export async function startServer() {
     await setDocInSupabase(col, generatedId, docData); // Await write to Supabase
     setDocRESTAsync(col, generatedId, docData);
 
+    if (fdb) {
+      try {
+        await fdb.collection(col).doc(generatedId).set(docData, { merge: true });
+        console.log(`[FIREBASE-ADMIN-ADD] Successfully saved ${col}/${generatedId} via Admin SDK.`);
+      } catch (err: any) {
+        console.warn(`[FIREBASE-ADMIN-ADD-WARN] Failed for ${col}/${generatedId}:`, err.message);
+      }
+    }
+
     if (col === "orders") {
       addOrderToMemory(generatedId, docData);
     }
     if (col === "deposits") {
       serverCache.deposits.set(generatedId, { data: docData, time: Date.now() });
+    }
+    if (col === "providers") {
+      serverCache.providers.set(generatedId, { data: docData, time: Date.now() });
+      savePersistentCache();
+    }
+    if (col === "courses" || col === "services") {
+      serverCache.courses.set(generatedId, { data: docData, time: Date.now() });
+      savePersistentCache();
     }
 
     return generatedId;
@@ -2142,6 +2158,14 @@ export async function startServer() {
       }
     }
 
+    if (col === "providers") {
+      serverCache.providers.delete(id);
+      savePersistentCache();
+    }
+    if (col === "courses" || col === "services") {
+      serverCache.courses.delete(id);
+      savePersistentCache();
+    }
     invalidateCachesForCollection(col, id);
     return true;
   };
@@ -2336,13 +2360,20 @@ export async function startServer() {
     serverCachedSettings = null;
     serverCachedSettingsTime = 0;
     
-    // Also reset local lookup cache maps
-    serverCache.settings = null;
-    serverCache.courses.clear();
-    serverCache.providers.clear();
-    
-    console.log("[SERVER-CACHE] Server-side cache cleared on Admin update request!");
-    res.json({ success: true, message: "Server-side cache cleared successfully" });
+    // Reload local lookup cache maps from disk / persistent cache rather than leaving them empty
+    try {
+      const localProvs = listLocalDocs("providers", 100);
+      if (localProvs && Array.isArray(localProvs)) {
+        localProvs.forEach(p => { if (p && p.id) serverCache.providers.set(p.id, { data: p, time: Date.now() }); });
+      }
+      const localCourses = listLocalDocs("courses", 500);
+      if (localCourses && Array.isArray(localCourses)) {
+        localCourses.forEach(c => { if (c && c.id) serverCache.courses.set(c.id, { data: c, time: Date.now() }); });
+      }
+    } catch (e) {}
+
+    console.log("[SERVER-CACHE] Server-side cache refreshed on Admin update request!");
+    res.json({ success: true, message: "Server-side cache refreshed successfully" });
   });
 
   // Express API for Providers list with server-side in-memory caching
@@ -2356,7 +2387,7 @@ export async function startServer() {
 
       const combinedMap = new Map<string, any>();
       
-      // 1. Load from local disk
+      // 1. Load from local disk (data/local_db.json)
       const local = listLocalDocs("providers", 100);
       if (local && Array.isArray(local)) {
         local.forEach(p => { if (p && p.id) combinedMap.set(p.id, p); });
@@ -2368,7 +2399,21 @@ export async function startServer() {
         if (d && (d.id || id)) combinedMap.set(d.id || id, d);
       });
 
-      // 3. Merge from Firestore if available
+      // 3. Load from persistent cache
+      try {
+        if (fs.existsSync("persistent_cache.json")) {
+          const raw = fs.readFileSync("persistent_cache.json", "utf-8");
+          const parsed = JSON.parse(raw);
+          if (parsed && Array.isArray(parsed.providers)) {
+            parsed.providers.forEach(([id, val]: [string, any]) => {
+              const d = val?.data || val;
+              if (d && (d.id || id)) combinedMap.set(d.id || id, d);
+            });
+          }
+        }
+      } catch (e) {}
+
+      // 4. Merge from Firestore if available
       try {
         const snap = await listDocsSafe("providers", req.headers.authorization as string, forceFresh);
         if (snap && snap.docs && snap.docs.length > 0) {
@@ -7187,11 +7232,51 @@ export async function startServer() {
 
       if (!pUrl || !pKey) {
         if (providerId) {
-          const pS = await getDocSafe("providers", providerId, req.headers.authorization as string, true);
-          if (pS.exists) {
-            const data = pS.data() || {};
-            if (!pUrl) pUrl = (data.apiUrl || data.api_url || data.providerApiUrl || data.url || "").trim();
-            if (!pKey) pKey = (data.apiKey || data.api_key || data.providerApiKey || data.key || "").trim();
+          // 1. Check local db
+          try {
+            const lDoc = getLocalDoc("providers", providerId);
+            if (lDoc) {
+              if (!pUrl) pUrl = (lDoc.apiUrl || lDoc.api_url || lDoc.providerApiUrl || lDoc.url || "").trim();
+              if (!pKey) pKey = (lDoc.apiKey || lDoc.api_key || lDoc.providerApiKey || lDoc.key || "").trim();
+            }
+          } catch (e) {}
+
+          // 2. Check serverCache
+          if (!pKey && serverCache.providers.has(providerId)) {
+            const d = serverCache.providers.get(providerId)?.data;
+            if (d) {
+              if (!pUrl) pUrl = (d.apiUrl || d.api_url || d.providerApiUrl || d.url || "").trim();
+              if (!pKey) pKey = (d.apiKey || d.api_key || d.providerApiKey || d.key || "").trim();
+            }
+          }
+
+          // 3. Check persistent_cache.json
+          if (!pKey && fs.existsSync("persistent_cache.json")) {
+            try {
+              const raw = fs.readFileSync("persistent_cache.json", "utf-8");
+              const parsed = JSON.parse(raw);
+              if (parsed && Array.isArray(parsed.providers)) {
+                for (const [id, val] of parsed.providers) {
+                  if (id === providerId && val?.data) {
+                    if (!pUrl) pUrl = (val.data.apiUrl || val.data.api_url || "").trim();
+                    if (!pKey) pKey = (val.data.apiKey || val.data.api_key || "").trim();
+                    break;
+                  }
+                }
+              }
+            } catch (e) {}
+          }
+
+          // 4. Safe lookup from Firestore
+          if (!pKey) {
+            try {
+              const pS = await getDocSafe("providers", providerId, req.headers.authorization as string, true);
+              if (pS.exists) {
+                const data = pS.data() || {};
+                if (!pUrl) pUrl = (data.apiUrl || data.api_url || data.providerApiUrl || data.url || "").trim();
+                if (!pKey) pKey = (data.apiKey || data.api_key || data.providerApiKey || data.key || "").trim();
+              }
+            } catch (e) {}
           }
         }
         
@@ -7202,7 +7287,7 @@ export async function startServer() {
           if (!pKey) pKey = (data.providerApiKey || data.apiKey || data.api_key || data.provider_api_key || "").trim();
         }
 
-        // Fallback: Check cached providers or query
+        // Fallback: Check all cached providers
         if (!pKey) {
           for (const [id, cacheObj] of serverCache.providers.entries()) {
             if (cacheObj.data) {
