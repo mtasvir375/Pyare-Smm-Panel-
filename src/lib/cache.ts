@@ -66,11 +66,59 @@ export const getCachedCourses = async (forceRefresh = false) => {
   if (forceRefresh) {
     cachedCourses = null;
     lastCoursesFetch = 0;
+    try {
+      localStorage.removeItem("cached_courses");
+      localStorage.removeItem("cached_courses_time");
+    } catch (e) {}
+  } else {
+    if (cachedCourses && (now - lastCoursesFetch < CACHE_DURATION)) {
+      return cachedCourses;
+    }
   }
 
-  // 1. Primary path: Fetch directly from SQLite backend API
+  // 1. Direct Firestore SDK fetch (most authoritative on client/custom domain)
   try {
-    const res = await axios.get(formatApiUrl(`/api/courses?t=${now}`));
+    const { collection, getDocs } = await import("firebase/firestore");
+    const { db } = await import("@/lib/firebase");
+    const snap = await getDocs(collection(db, "courses"));
+    if (!snap.empty) {
+      const fsServices = snap.docs.map((d: any) => {
+        const data = d.data();
+        return {
+          id: d.id,
+          ...data,
+          price: data.pricePerThousand !== undefined ? Number(data.pricePerThousand) : (data.price !== undefined ? Number(data.price) : 0),
+          pricePerThousand: data.pricePerThousand !== undefined ? Number(data.pricePerThousand) : (data.price !== undefined ? Number(data.price) : 0),
+          minLimit: data.minLimit !== undefined ? Number(data.minLimit) : (data.min_limit !== undefined ? Number(data.min_limit) : 1000),
+          min_limit: data.minLimit !== undefined ? Number(data.minLimit) : (data.min_limit !== undefined ? Number(data.min_limit) : 1000),
+          providerServiceId: data.providerServiceId !== undefined ? String(data.providerServiceId) : (data.provider_service_id !== undefined ? String(data.provider_service_id) : "0"),
+          provider_service_id: data.providerServiceId !== undefined ? String(data.providerServiceId) : (data.provider_service_id !== undefined ? String(data.provider_service_id) : "0"),
+          isPackage: data.isPackage !== undefined ? !!data.isPackage : !!data.is_package,
+          is_package: data.isPackage !== undefined ? !!data.isPackage : !!data.is_package,
+          packagePrice: data.packagePrice !== undefined ? Number(data.packagePrice) : (data.package_price !== undefined ? Number(data.package_price) : 0),
+          package_price: data.packagePrice !== undefined ? Number(data.packagePrice) : (data.package_price !== undefined ? Number(data.packagePrice) : 0),
+          packageQuantity: data.packageQuantity !== undefined ? Number(data.packageQuantity) : (data.package_quantity !== undefined ? Number(data.packageQuantity) : 1000),
+          package_quantity: data.packageQuantity !== undefined ? Number(data.packageQuantity) : (data.package_quantity !== undefined ? Number(data.packageQuantity) : 1000),
+          iconUrl: data.iconUrl || data.icon_url || null,
+          icon_url: data.iconUrl || data.icon_url || null,
+        };
+      });
+
+      if (Array.isArray(fsServices) && fsServices.length > 0) {
+        cachedCourses = sortServicesList(fsServices);
+        lastCoursesFetch = now;
+        try {
+          localStorage.setItem("cached_courses_time", now.toString());
+          localStorage.setItem("cached_courses", JSON.stringify(cachedCourses));
+        } catch(e) {}
+        return cachedCourses;
+      }
+    }
+  } catch (fsErr) {}
+
+  // 2. Fetch from API Gateway
+  try {
+    const res = await axios.get(formatApiUrl(`/api/courses?force=${forceRefresh}&t=${now}`));
     if (Array.isArray(res.data) && res.data.length > 0) {
       const activeServices = res.data.map((data: any) => ({
         id: data.id,
@@ -103,7 +151,7 @@ export const getCachedCourses = async (forceRefresh = false) => {
     console.warn("[CACHE] API /api/courses call failed:", apiErr);
   }
 
-  // Fallback to localStorage if API failed
+  // Fallback to localStorage
   try {
     const lsData = localStorage.getItem("cached_courses");
     if (lsData) {

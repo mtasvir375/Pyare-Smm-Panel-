@@ -1447,8 +1447,9 @@ export default function Admin() {
         quantity: Number(i.quantity) || 1000
       })) : [];
 
-      await dbClient.updateDoc("courses", editingCourse.id, {
+      const updatedPayload = {
         title: editTitle,
+        price: computedPricePerThousand,
         pricePerThousand: computedPricePerThousand,
         minLimit: isPkg ? pkgQty : Number(editMinLimit),
         providerId: isCombo ? (formattedComboItems[0]?.providerId || editProviderId || "global") : editProviderId,
@@ -1462,8 +1463,22 @@ export default function Admin() {
         packagePrice: isPkg ? pkgPrice : null,
         packageQuantity: isPkg ? pkgQty : null,
         updatedAt: new Date().toISOString()
-      });
-      import("@/lib/cache").then(mod => mod.clearCache());
+      };
+
+      // 1. Immediately update local React state for instant UI update
+      setCourses(prev => prev.map(c => c.id === editingCourse.id ? { ...c, ...updatedPayload } : c));
+
+      // 2. Save to database
+      await dbClient.updateDoc("courses", editingCourse.id, updatedPayload);
+
+      // 3. Clear cache and force fresh load from Firestore
+      const cacheMod = await import("@/lib/cache");
+      cacheMod.clearCache();
+      const freshCourses = await dbClient.getCourses(true);
+      if (Array.isArray(freshCourses) && freshCourses.length > 0) {
+        setCourses(freshCourses);
+      }
+
       toast.success("Service updated successfully!");
       setEditingCourse(null);
       fetchTabData(activeTab, true);
@@ -1475,10 +1490,16 @@ export default function Admin() {
   const handleDeleteCourse = async (courseId: string) => {
     if (!window.confirm("Are you sure you want to delete this service?")) return;
     try {
+      setCourses(prev => prev.filter(c => c.id !== courseId));
       await dbClient.deleteDoc("courses", courseId);
+      const cacheMod = await import("@/lib/cache");
+      cacheMod.clearCache();
+      const freshCourses = await dbClient.getCourses(true);
+      if (Array.isArray(freshCourses)) {
+        setCourses(freshCourses);
+      }
       toast.success("Service deleted!");
       fetchTabData(activeTab, true);
-      import("@/lib/cache").then(mod => mod.clearCache());
     } catch (error: any) {
       toast.error(`Error deleting course: ${error.message}`);
     }

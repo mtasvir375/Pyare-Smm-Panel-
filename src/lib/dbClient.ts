@@ -88,8 +88,10 @@ export const dbClient = {
       axios.post(formatApiUrl('/api/clear-cache')).catch(() => {});
     }
 
-    // 1. Send to API Gateway
-    axios.post(formatApiUrl('/api/db/set'), { collection: table, id, data }).catch(() => {});
+    // 1. Send to API Gateway (awaited)
+    try {
+      await axios.post(formatApiUrl('/api/db/set'), { collection: table, id, data }, { timeout: 4000 });
+    } catch (e) {}
 
     // 2. Write directly to Firestore SDK to ensure instant permanent sync across ALL domains!
     try {
@@ -313,24 +315,34 @@ export const dbClient = {
     await this.setDoc('orders', id, data);
   },
 
-  async getCourses(): Promise<any[]> {
-    try {
-      const { getCachedCourses } = await import('@/lib/cache');
-      const cached = await getCachedCourses();
-      if (Array.isArray(cached) && cached.length > 0) return cached;
-    } catch (e) {}
+  async getCourses(forceRefresh = false): Promise<any[]> {
+    if (forceRefresh) {
+      try {
+        const { clearCache } = await import('@/lib/cache');
+        clearCache();
+      } catch (e) {}
+    }
 
-    try {
-      const res = await axios.get(formatApiUrl('/api/courses'), { timeout: 4000 });
-      if (Array.isArray(res.data) && res.data.length > 0) return res.data;
-    } catch (e) {}
-
-    // Firestore direct fallback
+    // 1. Direct Firestore SDK fetch (most authoritative on custom domain)
     try {
       const snap = await getFirestoreDocs(collection(db, 'courses'));
       if (!snap.empty) {
-        return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const docsList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        if (docsList.length > 0) return docsList;
       }
+    } catch (e) {}
+
+    // 2. Try cache
+    try {
+      const { getCachedCourses } = await import('@/lib/cache');
+      const cached = await getCachedCourses(forceRefresh);
+      if (Array.isArray(cached) && cached.length > 0) return cached;
+    } catch (e) {}
+
+    // 3. Fallback to API Gateway
+    try {
+      const res = await axios.get(formatApiUrl(`/api/courses?force=${forceRefresh}&t=${Date.now()}`), { timeout: 4000 });
+      if (Array.isArray(res.data) && res.data.length > 0) return res.data;
     } catch (e) {}
 
     return [];
