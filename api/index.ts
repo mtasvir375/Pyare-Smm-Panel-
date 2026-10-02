@@ -106,9 +106,11 @@ for (const [uid, info] of Object.entries(KNOWN_USER_EMAILS)) {
   userEmailRegistry.set(uid, info.email);
 }
 
-async function getRestDoc(collection: string, docId: string): Promise<any> {
-  const local = getLocalDoc(collection, docId);
-  if (local) return local;
+async function getRestDoc(collection: string, docId: string, fresh = false): Promise<any> {
+  if (!fresh) {
+    const local = getLocalDoc(collection, docId);
+    if (local) return local;
+  }
   try {
     const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}?key=${FIREBASE_API_KEY}`;
     const res = await axios.get(url, { timeout: 4000 });
@@ -117,7 +119,7 @@ async function getRestDoc(collection: string, docId: string): Promise<any> {
     return fetched;
   } catch (err: any) {
     if (err.response && err.response.status === 404) return null;
-    return local || null;
+    return getLocalDoc(collection, docId) || null;
   }
 }
 
@@ -134,9 +136,11 @@ async function setRestDoc(collection: string, docId: string, data: any): Promise
   return getLocalDoc(collection, docId);
 }
 
-async function listRestDocs(collection: string, pageSize = 100): Promise<any[]> {
-  const localList = listLocalDocs(collection, pageSize);
-  if (localList.length > 0) return localList;
+async function listRestDocs(collection: string, pageSize = 100, fresh = false): Promise<any[]> {
+  if (!fresh) {
+    const localList = listLocalDocs(collection, pageSize);
+    if (localList.length > 0) return localList;
+  }
   try {
     const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents:runQuery?key=${FIREBASE_API_KEY}`;
     const payload = {
@@ -157,10 +161,21 @@ async function listRestDocs(collection: string, pageSize = 100): Promise<any[]> 
           setLocalDoc(collection, id, merged);
           return merged;
         });
-      return fetched.length > 0 ? fetched : localList;
+      return fetched.length > 0 ? fetched : listLocalDocs(collection, pageSize);
     }
   } catch (err: any) {}
-  return localList;
+  return listLocalDocs(collection, pageSize);
+}
+
+async function deleteRestDoc(collection: string, docId: string): Promise<boolean> {
+  deleteLocalDoc(collection, docId);
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}?key=${FIREBASE_API_KEY}`;
+    await axios.delete(url, { timeout: 4000 }).catch(() => {});
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 async function queryRestDocs(collection: string, field: string, value: string, pageSize = 50): Promise<any[]> {
@@ -288,13 +303,14 @@ export default async function handler(req: any, res: any) {
     if (pathname === "/api/settings") {
       res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
       res.setHeader("Pragma", "no-cache");
+      const isFresh = req.query?.force === "true";
       if (req.method === "POST") {
         memSettingsCache = null;
         const updated = { ...body, updatedAt: new Date().toISOString() };
-        setLocalDoc("settings", "payment", updated);
+        await setRestDoc("settings", "payment", updated);
         return res.status(200).json({ success: true, message: "Settings saved", settings: updated });
       }
-      const settings = getLocalDoc("settings", "payment") || {};
+      const settings = await getRestDoc("settings", "payment", isFresh) || {};
       return res.status(200).json(settings);
     }
 
@@ -311,7 +327,8 @@ export default async function handler(req: any, res: any) {
     if (pathname === "/api/courses") {
       res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
       res.setHeader("Pragma", "no-cache");
-      const localCourses = listLocalDocs("courses", 500);
+      const isFresh = req.query?.force === "true";
+      const localCourses = await listRestDocs("courses", 500, isFresh);
       return res.status(200).json(localCourses);
     }
 
@@ -319,7 +336,8 @@ export default async function handler(req: any, res: any) {
     if (pathname === "/api/providers") {
       res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
       res.setHeader("Pragma", "no-cache");
-      const localProviders = listLocalDocs("providers", 200);
+      const isFresh = req.query?.force === "true";
+      const localProviders = await listRestDocs("providers", 200, isFresh);
       return res.status(200).json(localProviders);
     }
 
@@ -1102,7 +1120,8 @@ export default async function handler(req: any, res: any) {
     if (pathname === "/api/db/get") {
       const { collection: colName, id } = body || {};
       if (!colName || !id) return res.status(400).json({ success: false, error: "Missing collection or id" });
-      const data = getLocalDoc(colName, id);
+      const forceFresh = body.fresh === true || colName === "settings" || colName === "courses" || colName === "providers" || colName === "users";
+      const data = await getRestDoc(colName, id, forceFresh);
       return res.status(200).json({ success: true, data });
     }
 
@@ -1112,7 +1131,8 @@ export default async function handler(req: any, res: any) {
       if (colName === "courses") memCoursesCache = null;
       if (colName === "settings") memSettingsCache = null;
       if (colName === "providers") memProvidersCache = null;
-      const saved = setLocalDoc(colName, id, data || {});
+      if (colName === "users") memAllUsersCache = null;
+      const saved = await setRestDoc(colName, id, data || {});
       return res.status(200).json({ success: true, data: saved });
     }
 
@@ -1122,14 +1142,39 @@ export default async function handler(req: any, res: any) {
       if (colName === "courses") memCoursesCache = null;
       if (colName === "settings") memSettingsCache = null;
       if (colName === "providers") memProvidersCache = null;
-      const updated = updateLocalDoc(colName, id, data || {});
+      if (colName === "users") memAllUsersCache = null;
+      const existing = await getRestDoc(colName, id, true) || {};
+      const merged = { ...existing, ...(data || {}), id, updatedAt: new Date().toISOString() };
+      const updated = await setRestDoc(colName, id, merged);
       return res.status(200).json({ success: true, data: updated });
     }
 
     if (pathname === "/api/db/list" || pathname === "/api/db/query") {
       const { collection: colName, limit: queryLimit } = body || {};
       if (!colName) return res.status(400).json({ success: false, error: "Missing collection" });
-      const docs = listLocalDocs(colName, queryLimit || 100);
+      
+      const now = Date.now();
+      let docs: any[] = [];
+      if (colName === "courses") {
+        if (memCoursesCache && (now - memCoursesCache.time < 5 * 60 * 1000)) {
+          docs = memCoursesCache.data;
+        } else {
+          docs = await listRestDocs("courses", queryLimit || 500, true);
+          memCoursesCache = { data: docs, time: now };
+        }
+      } else if (colName === "providers") {
+        if (memProvidersCache && (now - memProvidersCache.time < 5 * 60 * 1000)) {
+          docs = memProvidersCache.data;
+        } else {
+          docs = await listRestDocs("providers", queryLimit || 200, true);
+          memProvidersCache = { data: docs, time: now };
+        }
+      } else if (colName === "settings") {
+        const settings = await getRestDoc("settings", "payment", true) || {};
+        docs = [settings];
+      } else {
+        docs = await listRestDocs(colName, queryLimit || 100, false);
+      }
       return res.status(200).json({ success: true, data: docs });
     }
 
@@ -1139,8 +1184,13 @@ export default async function handler(req: any, res: any) {
       if (colName === "courses") memCoursesCache = null;
       if (colName === "settings") memSettingsCache = null;
       if (colName === "providers") memProvidersCache = null;
-      const autoId = addLocalDoc(colName, data || {});
-      return res.status(200).json({ success: true, id: autoId, data: { id: autoId, ...(data || {}) } });
+      if (colName === "users") memAllUsersCache = null;
+      const prefix = colName === "orders" ? "ord_" : colName === "deposits" ? "dep_" : colName === "transactions" ? "txn_" : "doc_";
+      const autoId = data?.id || (prefix + Date.now() + "_" + Math.random().toString(36).substring(2, 7));
+      const now = new Date().toISOString();
+      const docData = { id: autoId, ...(data || {}), createdAt: data?.createdAt || now, updatedAt: now };
+      const saved = await setRestDoc(colName, autoId, docData);
+      return res.status(200).json({ success: true, id: autoId, data: saved });
     }
 
     if (pathname === "/api/db/delete") {
@@ -1149,7 +1199,8 @@ export default async function handler(req: any, res: any) {
       if (colName === "courses") memCoursesCache = null;
       if (colName === "settings") memSettingsCache = null;
       if (colName === "providers") memProvidersCache = null;
-      deleteLocalDoc(colName, id);
+      if (colName === "users") memAllUsersCache = null;
+      await deleteRestDoc(colName, id);
       return res.status(200).json({ success: true });
     }
 
