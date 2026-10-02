@@ -1465,9 +1465,11 @@ export async function startServer() {
 
   // Firebase-Firestore Helpers that replace Supabase ones
   const getDocSafe = async (collect: string, id: string, token?: string, forceFresh?: boolean) => {
-    const local = getLocalDoc(collect, id);
-    if (local) {
-      return { exists: true, data: () => local };
+    if (!forceFresh) {
+      const local = getLocalDoc(collect, id);
+      if (local) {
+        return { exists: true, data: () => local };
+      }
     }
     const now = Date.now();
     
