@@ -1465,20 +1465,8 @@ export async function startServer() {
 
   // Firebase-Firestore Helpers that replace Supabase ones
   const getDocSafe = async (collect: string, id: string, token?: string, forceFresh?: boolean) => {
-    if (!forceFresh) {
-      const local = getLocalDoc(collect, id);
-      if (local) {
-        return { exists: true, data: () => local };
-      }
-    }
     const now = Date.now();
-    
-    // 24 hours in-memory caching for semi-static config (settings, providers, courses) to strictly protect Firestore 50k quota
-    const CACHE_TTL = 24 * 60 * 60 * 1000; 
-    // 5 minutes cache for dynamic user balance to avoid redundant reads on rapid navigation
-    const DYNAMIC_CACHE_TTL = 5 * 60 * 1000;
-
-    // CORE CACHE-FIRST CHECK (If not forceFresh):
+    const CACHE_TTL = 24 * 60 * 60 * 1000;
     if (!forceFresh) {
       if (collect === "settings" && id === "payment" && serverCache.settings?.data) {
         return { exists: true, data: () => serverCache.settings.data };
@@ -2509,6 +2497,72 @@ export async function startServer() {
     } catch (apiErr: any) {
       console.error("[API] Failed to get user orders on-demand:", userId, apiErr.message);
       res.status(500).json({ error: "Failed to fetch orders" });
+    }
+  });
+
+  // Securely place a new order on custom domain server
+  app.post("/api/orders", async (req, res) => {
+    try {
+      const { userId, serviceId, quantity, ...extra } = req.body || {};
+      if (!userId || !serviceId || !quantity) {
+        return res.status(400).json({ error: "Missing required fields (userId, serviceId, quantity)" });
+      }
+
+      // 1. Get Service Details
+      const serviceSnap = await getDocSafe("courses", serviceId, req.headers.authorization as string, true);
+      if (!serviceSnap.exists) {
+        return res.status(404).json({ error: "Service not found: " + serviceId });
+      }
+      const service = serviceSnap.data();
+
+      // 2. Calculate Charge
+      const pricePerThousand = Number(service.pricePerThousand || service.price || 0);
+      const charge = Number(((pricePerThousand / 1000) * quantity).toFixed(4));
+
+      // 3. Get User Balance
+      const userSnap = await getDocSafe("users", userId, req.headers.authorization as string, true);
+      if (!userSnap.exists) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      const user = userSnap.data();
+
+      const balance = Number(user.balance || 0);
+      if (balance < charge) {
+        return res.status(400).json({ error: "Insufficient balance. Please add funds." });
+      }
+
+      // 4. Create Order
+      const orderId = "ord_" + Date.now();
+      const now = new Date().toISOString();
+      const newOrder = {
+        id: orderId,
+        userId,
+        userEmail: user.email || user.userEmail || "",
+        serviceId,
+        serviceName: service.name || service.title || "N/A",
+        quantity,
+        charge,
+        status: "Pending",
+        createdAt: now,
+        updatedAt: now,
+        ...extra
+      };
+
+      // 5. Update Balance and Save Order
+      const newBalance = Number((balance - charge).toFixed(2));
+      
+      await Promise.all([
+        setDocSafe("orders", orderId, newOrder, req.headers.authorization as string),
+        setDocSafe("users", userId, { ...user, balance: newBalance, updatedAt: now }, req.headers.authorization as string)
+      ]);
+
+      // 6. Update Memory Cache
+      addOrderToMemory(orderId, newOrder);
+
+      res.status(200).json({ success: true, orderId, charge, newBalance });
+    } catch (err: any) {
+      console.error("[API-ORDER] Failed to place order:", err.message);
+      res.status(500).json({ error: "Server error occurred while placing order: " + err.message });
     }
   });
 
