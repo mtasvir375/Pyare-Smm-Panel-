@@ -372,7 +372,7 @@ export default async function handler(req: any, res: any) {
     if (pathname === "/api/providers") {
       res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
       res.setHeader("Pragma", "no-cache");
-      const isFresh = req.query?.force === "true";
+      const isFresh = true;
       const localProviders = await listRestDocs("providers", 200, isFresh);
       return res.status(200).json(localProviders);
     }

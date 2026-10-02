@@ -322,7 +322,7 @@ export default function Admin() {
         coursesList.sort((a: any, b: any) => getTimestamp(b) - getTimestamp(a));
 
         setCourses(coursesList);
-        const providersList = await dbClient.getProviders();
+        const providersList = await dbClient.getProviders(force);
         setProviders(providersList);
       } else if (tab === "orders" && isAdmin) {
         const ordersList = await dbClient.getOrdersAdmin(50);
@@ -333,7 +333,7 @@ export default function Admin() {
       } else if (tab === "users" && isAdmin) {
         await handleSearchUser(force);
       } else if (tab === "providers" && isAdmin) {
-        const providersList = await dbClient.getProviders();
+        const providersList = await dbClient.getProviders(force);
         setProviders(providersList);
       } else if (tab === "settings" && isAdmin) {
         const settingsData = await dbClient.getDoc("settings", "payment", { fresh: true });
@@ -1226,16 +1226,30 @@ export default function Admin() {
       const cleanUrl = newProviderApiUrl.trim();
       const cleanKey = newProviderApiKey.trim();
       
-      await dbClient.addDoc("providers", {
+      const newProv = await dbClient.addDoc("providers", {
         name: newProviderName.trim(),
         apiUrl: cleanUrl,
         apiKey: cleanKey,
         createdAt: new Date().toISOString()
       });
+      
+      // Instantly update state in React memory
+      if (newProv) {
+        setProviders(prev => [...prev.filter(p => p.id !== newProv.id), newProv]);
+      }
+
       toast.success("Provider added successfully!");
       setNewProviderName("");
       setNewProviderApiUrl("");
       setNewProviderApiKey("");
+
+      // Force clear cache and refresh from Firestore
+      const { clearCache } = await import("@/lib/cache");
+      clearCache();
+      const freshList = await dbClient.getProviders(true);
+      if (Array.isArray(freshList) && freshList.length > 0) {
+        setProviders(freshList);
+      }
       fetchTabData(activeTab, true);
     } catch (error: any) {
       toast.error(`Error adding provider: ${error.message}`);
@@ -1246,7 +1260,12 @@ export default function Admin() {
     if (!providerToDelete) return;
     try {
       await dbClient.deleteDoc("providers", providerToDelete.id);
+      setProviders(prev => prev.filter(p => p.id !== providerToDelete.id));
       toast.success("Provider deleted!");
+      const { clearCache } = await import("@/lib/cache");
+      clearCache();
+      const freshList = await dbClient.getProviders(true);
+      setProviders(freshList);
       fetchTabData(activeTab, true);
     } catch (error: any) {
       toast.error(`Error deleting provider: ${error.message}`);
@@ -1910,11 +1929,19 @@ export default function Admin() {
                     <div className="space-y-2">
                       <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Select Provider</label>
                       <select 
-                        className="w-full h-10 rounded-md bg-white/10 border border-white/20 text-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                        className="w-full h-10 rounded-md bg-white/10 border border-white/20 text-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer"
                         value={newCourseProviderId}
+                        onFocus={async () => {
+                          if (providers.length === 0) {
+                            const pList = await dbClient.getProviders(true);
+                            if (Array.isArray(pList) && pList.length > 0) setProviders(pList);
+                          }
+                        }}
                         onChange={(e) => setNewCourseProviderId(e.target.value)}
                       >
-                        <option value="" className="bg-gray-900">Select a provider</option>
+                        <option value="" className="bg-gray-900">
+                          {providers.length === 0 ? "-- Click to refresh providers --" : "Select a provider"}
+                        </option>
                         {providers.map(p => (
                           <option key={p.id} value={p.id} className="bg-gray-900">{p.name}</option>
                         ))}
@@ -4109,11 +4136,19 @@ export default function Admin() {
                 <div className="space-y-2">
                   <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Select Provider</label>
                   <select 
-                    className="w-full h-10 rounded-md bg-gray-50 border border-gray-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="w-full h-10 rounded-md bg-gray-50 border border-gray-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer"
                     value={editProviderId}
+                    onFocus={async () => {
+                      if (providers.length === 0) {
+                        const pList = await dbClient.getProviders(true);
+                        if (Array.isArray(pList) && pList.length > 0) setProviders(pList);
+                      }
+                    }}
                     onChange={(e) => setEditProviderId(e.target.value)}
                   >
-                    <option value="">Select a provider</option>
+                    <option value="">
+                      {providers.length === 0 ? "-- Click to refresh providers --" : "Select a provider"}
+                    </option>
                     {providers.map(p => (
                       <option key={p.id} value={p.id}>{p.name}</option>
                     ))}

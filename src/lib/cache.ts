@@ -245,7 +245,14 @@ let lastProvidersFetch = 0;
 export const getCachedProviders = async (forceRefresh = false) => {
   const now = Date.now();
   
-  if (!forceRefresh) {
+  if (forceRefresh) {
+    cachedProviders = null;
+    lastProvidersFetch = 0;
+    try {
+      localStorage.removeItem("cached_providers");
+      localStorage.removeItem("cached_providers_time");
+    } catch (e) {}
+  } else {
     if (cachedProviders && (now - lastProvidersFetch < CACHE_DURATION)) {
       return cachedProviders;
     }
@@ -263,9 +270,29 @@ export const getCachedProviders = async (forceRefresh = false) => {
       }
     } catch(e) {}
   }
-  
+
+  // 1. Try Direct Firestore SDK fetch (most reliable on custom domain)
   try {
-    const res = await axios.get(formatApiUrl(`/api/providers?t=${now}`));
+    const { collection, getDocs } = await import("firebase/firestore");
+    const { db } = await import("@/lib/firebase");
+    const snap = await getDocs(collection(db, "providers"));
+    if (!snap.empty) {
+      const fsProviders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      if (Array.isArray(fsProviders) && fsProviders.length > 0) {
+        cachedProviders = fsProviders;
+        lastProvidersFetch = now;
+        try {
+          localStorage.setItem("cached_providers_time", now.toString());
+          localStorage.setItem("cached_providers", JSON.stringify(cachedProviders));
+        } catch(e) {}
+        return cachedProviders;
+      }
+    }
+  } catch (fsErr) {}
+
+  // 2. Try API Gateway
+  try {
+    const res = await axios.get(formatApiUrl(`/api/providers?force=${forceRefresh}&t=${now}`));
     if (Array.isArray(res.data) && res.data.length > 0) {
       cachedProviders = res.data;
       lastProvidersFetch = now;
@@ -279,7 +306,7 @@ export const getCachedProviders = async (forceRefresh = false) => {
     console.warn("[CACHE] Failed to load providers from /api/providers:", apiErr);
   }
 
-  // Use localStorage cache if API proxy failed temporarily
+  // 3. Fallback to localStorage
   try {
     const lsData = localStorage.getItem("cached_providers");
     if (lsData) {

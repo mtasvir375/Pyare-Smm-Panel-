@@ -231,24 +231,34 @@ export const dbClient = {
     }
   },
 
-  async getProviders(): Promise<any[]> {
-    try {
-      const { getCachedProviders } = await import('@/lib/cache');
-      const cached = await getCachedProviders();
-      if (Array.isArray(cached) && cached.length > 0) return cached;
-    } catch (e) {}
+  async getProviders(forceRefresh = false): Promise<any[]> {
+    if (forceRefresh) {
+      try {
+        const { clearCache } = await import('@/lib/cache');
+        clearCache();
+      } catch (e) {}
+    }
 
-    try {
-      const res = await axios.get(formatApiUrl('/api/providers'), { timeout: 4000 });
-      if (Array.isArray(res.data) && res.data.length > 0) return res.data;
-    } catch (e) {}
-
-    // Firestore direct fallback
+    // 1. Direct Firestore SDK fetch (most authoritative on client/custom domain)
     try {
       const snap = await getFirestoreDocs(collection(db, 'providers'));
       if (!snap.empty) {
-        return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const docsList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        if (docsList.length > 0) return docsList;
       }
+    } catch (e) {}
+
+    // 2. Try cache
+    try {
+      const { getCachedProviders } = await import('@/lib/cache');
+      const cached = await getCachedProviders(forceRefresh);
+      if (Array.isArray(cached) && cached.length > 0) return cached;
+    } catch (e) {}
+
+    // 3. Fallback to API Gateway
+    try {
+      const res = await axios.get(formatApiUrl(`/api/providers?force=${forceRefresh}&t=${Date.now()}`), { timeout: 4000 });
+      if (Array.isArray(res.data) && res.data.length > 0) return res.data;
     } catch (e) {}
 
     return [];
