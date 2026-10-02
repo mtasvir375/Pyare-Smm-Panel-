@@ -410,8 +410,10 @@ export default function Admin() {
     } else if (!authLoading && user && !isAdmin && !isPaymentAdmin) {
       toast.error("Unauthorized access");
       navigate("/");
+    } else if (!authLoading && user && (isAdmin || isPaymentAdmin)) {
+      fetchTabData(activeTab, false);
     }
-  }, [user, isAdmin, isPaymentAdmin, authLoading]);
+  }, [user, isAdmin, isPaymentAdmin, authLoading, activeTab]);
 
   // Automatic data fetching has been disabled to protect Firebase Read limits.
   // The admin must manually click 'Load Data' on each tab to fetch data on-demand.

@@ -74,6 +74,20 @@ export const getCachedCourses = async (forceRefresh = false) => {
     if (cachedCourses && (now - lastCoursesFetch < CACHE_DURATION)) {
       return cachedCourses;
     }
+
+    // Immediately load from localStorage on page refresh
+    try {
+      const lsData = localStorage.getItem("cached_courses");
+      if (lsData) {
+        const parsed = JSON.parse(lsData);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          cachedCourses = sortServicesList(parsed);
+          lastCoursesFetch = now;
+          getCachedCourses(true).catch(() => {});
+          return cachedCourses;
+        }
+      }
+    } catch (e) {}
   }
 
   // 1. Direct Firestore SDK fetch (most authoritative on client/custom domain)
