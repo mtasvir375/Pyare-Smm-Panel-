@@ -1754,6 +1754,26 @@ export async function startServer() {
       }
     }
 
+    // 1.5 Try reading from Supabase (0 Firestore reads!)
+    if (supabase) {
+      try {
+        const limitCount = collect === "courses" ? 500 : 100;
+        const sbList = await listDocsFromSupabase(collect, limitCount);
+        if (sbList && Array.isArray(sbList) && sbList.length > 0) {
+          sbList.forEach(item => {
+            const id = item.id;
+            if (id) {
+              docMap.set(id, { id, data: () => item });
+            }
+          });
+          console.log(`[SUPABASE-LIST-SAFE] Loaded ${sbList.length} docs for ${collect} directly from Supabase.`);
+          return { docs: Array.from(docMap.values()) };
+        }
+      } catch (err: any) {
+        console.warn(`[SUPABASE-LIST-SAFE-WARN] Failed for ${collect}:`, err.message);
+      }
+    }
+
     // 2. Firestore Admin SDK (Authoritative)
     if (!useRestFallback) {
       try {
