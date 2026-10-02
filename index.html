@@ -54,6 +54,23 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
+    <!-- Immediate Theme Application to prevent flashing -->
+    <script>
+      (function() {
+        try {
+          var t = localStorage.getItem("cached_theme");
+          if (!t) {
+            var s = localStorage.getItem("cached_settings");
+            if (s) {
+              var p = JSON.parse(s);
+              if (p && p.selectedTheme) t = p.selectedTheme;
+            }
+          }
+          if (t) document.documentElement.setAttribute("data-theme", t);
+        } catch(e) {}
+      })();
+    </script>
+
     <!-- Schema.org Structured Data (JSON-LD) for Search Engines -->
     <script type="application/ld+json">
     {

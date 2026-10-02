@@ -34,7 +34,12 @@ export default function Layout() {
           document.documentElement.setAttribute("data-theme", settings.selectedTheme);
           localStorage.setItem("cached_theme", settings.selectedTheme);
         } else {
-          document.documentElement.setAttribute("data-theme", "charcoal");
+          const directTheme = localStorage.getItem("cached_theme");
+          if (directTheme) {
+            document.documentElement.setAttribute("data-theme", directTheme);
+          } else {
+            document.documentElement.setAttribute("data-theme", "charcoal");
+          }
         }
       } catch (err) {
         console.error("Failed to load layout theme:", err);

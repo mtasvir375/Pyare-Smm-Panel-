@@ -174,12 +174,47 @@ export const getCachedSettings = async (forceRefresh = false) => {
       try {
         localStorage.setItem("cached_settings_time", now.toString());
         localStorage.setItem("cached_settings", JSON.stringify(cachedSettings));
+        if (settingsData.selectedTheme) {
+          localStorage.setItem("cached_theme", settingsData.selectedTheme);
+          document.documentElement.setAttribute("data-theme", settingsData.selectedTheme);
+        }
       } catch(e) {}
       return cachedSettings;
     }
   } catch (apiErr) {
     console.warn("[CACHE] API /api/settings call failed:", apiErr);
   }
+
+  // 2. Direct Firestore fallback (ensures theme and settings persist even during serverless cold starts)
+  try {
+    const { doc, getDoc } = await import("firebase/firestore");
+    const { db } = await import("@/lib/firebase");
+    const snap = await getDoc(doc(db, "settings", "payment"));
+    if (snap.exists()) {
+      const fsData = snap.data();
+      if (fsData && typeof fsData === "object") {
+        const settingsData = {
+          ...DEFAULT_SETTINGS,
+          ...fsData,
+          upiId: (fsData.upiId && String(fsData.upiId).trim()) ? String(fsData.upiId).trim() : DEFAULT_SETTINGS.upiId,
+          merchantName: fsData.merchantName !== undefined ? fsData.merchantName : DEFAULT_SETTINGS.merchantName,
+          selectedTheme: fsData.selectedTheme || DEFAULT_SETTINGS.selectedTheme,
+          selectedFestivalTheme: fsData.selectedFestivalTheme || "none",
+        };
+        cachedSettings = settingsData;
+        lastSettingsFetch = now;
+        try {
+          localStorage.setItem("cached_settings_time", now.toString());
+          localStorage.setItem("cached_settings", JSON.stringify(cachedSettings));
+          if (settingsData.selectedTheme) {
+            localStorage.setItem("cached_theme", settingsData.selectedTheme);
+            document.documentElement.setAttribute("data-theme", settingsData.selectedTheme);
+          }
+        } catch(e) {}
+        return cachedSettings;
+      }
+    }
+  } catch (fsErr) {}
 
   // Use localStorage cache if API proxy failed temporarily
   try {
@@ -188,12 +223,20 @@ export const getCachedSettings = async (forceRefresh = false) => {
       const parsed = JSON.parse(lsData);
       if (parsed && typeof parsed === "object") {
         cachedSettings = parsed;
+        if (parsed.selectedTheme) {
+          localStorage.setItem("cached_theme", parsed.selectedTheme);
+          document.documentElement.setAttribute("data-theme", parsed.selectedTheme);
+        }
         return cachedSettings;
       }
     }
   } catch(e) {}
 
-  return DEFAULT_SETTINGS;
+  const existingTheme = typeof window !== "undefined" ? localStorage.getItem("cached_theme") : null;
+  return {
+    ...DEFAULT_SETTINGS,
+    selectedTheme: existingTheme || DEFAULT_SETTINGS.selectedTheme
+  };
 };
 
 let cachedProviders: any = null;

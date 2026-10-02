@@ -652,8 +652,19 @@ export default function Admin() {
       try {
         localStorage.setItem("cached_settings", JSON.stringify(settingsPayload));
         localStorage.setItem("cached_settings_time", Date.now().toString());
+        if (selectedTheme) {
+          localStorage.setItem("cached_theme", selectedTheme);
+          document.documentElement.setAttribute("data-theme", selectedTheme);
+        }
       } catch (e) {}
       await cacheMod.getCachedSettings(true);
+      if (selectedTheme) {
+        document.documentElement.setAttribute("data-theme", selectedTheme);
+        try {
+          localStorage.setItem("cached_theme", selectedTheme);
+        } catch (e) {}
+        window.dispatchEvent(new CustomEvent("themeChange", { detail: selectedTheme }));
+      }
       toast.success("Payment & Global Settings updated successfully!");
     } catch (error: any) {
       toast.error(`Error saving settings: ${error.message}`);

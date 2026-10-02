@@ -794,7 +794,7 @@ export default function Courses() {
   return (
     <div className="w-full max-w-xl mx-auto space-y-4 pb-12">
       {/* Balance Card */}
-      <Card className={cn("border-none shadow-sm overflow-hidden relative group text-white", festivalConfig ? festivalConfig.cardBgClass : "bg-gray-900")}>
+      <Card className={cn("border-none shadow-sm overflow-hidden relative group text-white", festivalConfig ? festivalConfig.cardBgClass : "bg-primary text-primary-foreground shadow-md shadow-primary/10")}>
         {!festivalConfig && (
           <div className="absolute inset-0 pointer-events-none">
             {renderLights()}
