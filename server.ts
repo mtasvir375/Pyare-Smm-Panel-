@@ -569,6 +569,22 @@ export async function startServer() {
           }
         }
 
+        // Emergency Rescue Seed: If after loading from disk we still have nothing, 
+        // it means the cache was likely wiped. We populate with basic services so the site isn't blank.
+        if (serverCache.courses.size === 0) {
+          console.log("[PERSISTENT-CACHE] Courses empty. Applying emergency rescue seed.");
+          const rescueServices = [
+            { id: "srv_ig_followers", title: "Instagram Followers [High Quality]", category: "Instagram", price: 15.50, minLimit: 100, status: "active", pricePerThousand: 15.50 },
+            { id: "srv_ig_likes", title: "Instagram Likes [Instant]", category: "Instagram", price: 5.20, minLimit: 50, status: "active", pricePerThousand: 5.20 },
+            { id: "srv_yt_views", title: "YouTube Views [Non-Drop]", category: "YouTube", price: 120.00, minLimit: 1000, status: "active", pricePerThousand: 120.00 }
+          ];
+          rescueServices.forEach(s => {
+            serverCache.courses.set(s.id, { data: s, time: Date.now() });
+          });
+          serverCachedCourses = rescueServices;
+          serverCachedCoursesTime = Date.now();
+        }
+
         if (parsed.users && Array.isArray(parsed.users)) {
           serverCache.users.clear();
           parsed.users.forEach(([id, cacheObj]: [string, any]) => {
@@ -633,6 +649,13 @@ export async function startServer() {
   // Save persistent cache to disk
   const savePersistentCache = () => {
     try {
+      // CRITICAL SAFETY: If we are in quota-exceeded mode and memory cache is empty,
+      // do NOT overwrite the persistent disk cache! This prevents "vanishing data" issues.
+      if (firestoreQuotaExceeded && serverCache.courses.size === 0 && serverCache.providers.size === 0) {
+        console.warn("[PERSISTENT-CACHE] Quota exceeded and memory cache is empty. Skipping disk save to prevent data loss.");
+        return;
+      }
+
       const dataToSave = {
         settings: serverCache.settings,
         providers: Array.from(serverCache.providers.entries()),
@@ -643,6 +666,16 @@ export async function startServer() {
         received_gateway_payments: Array.from(serverCache.received_gateway_payments.entries()).slice(-100),
         sms_forwarder_logs: (serverCache.sms_forwarder_logs || []).slice(-100)
       };
+
+      // Only save if we actually have some settings or courses (basic sanity check)
+      // Refuse to overwrite a populated disk cache with an empty memory state unless explicitly intended.
+      if (!dataToSave.settings && dataToSave.courses.length === 0 && dataToSave.providers.length === 0) {
+        if (fs.existsSync(cacheFilePath) && fs.statSync(cacheFilePath).size > 5000) {
+          console.warn("[PERSISTENT-CACHE] Refusing to overwrite populated disk cache with empty memory state.");
+          return;
+        }
+      }
+
       fs.writeFileSync(cacheFilePath, JSON.stringify(dataToSave, null, 2), "utf-8");
       console.log("[PERSISTENT-CACHE] Saved settings, providers, courses, users, deposits & orders cache to disk.");
     } catch (err: any) {
@@ -834,14 +867,13 @@ export async function startServer() {
     // 1. Use metadata-detected real project ID if available and valid
     if (realProjectId && 
         !realProjectId.startsWith("ai-studio-") && 
-        !realProjectId.startsWith("ais-") &&
-        realProjectId !== "gen-lang-client-0629912823") return realProjectId;
+        !realProjectId.startsWith("ais-")) return realProjectId;
     
-    // 2. Use config's projectId if available and not a placeholder
-    if (configProjectId && configProjectId !== "gen-lang-client-0629912823") return configProjectId;
+    // 2. Use config's projectId if available
+    if (configProjectId) return configProjectId;
 
-    // 3. Last resort: use the constant but prefer config over databaseId for the PROJECT part of the URL
-    return configProjectId || "gen-lang-client-0629912823";
+    // 3. Last resort
+    return "gen-lang-client-0629912823";
   };
 
   const getGoogleAuthHeaders = async (token?: string) => {
@@ -1572,10 +1604,11 @@ export async function startServer() {
         }
       } catch (err: any) {
         console.warn(`[FIREBASE-GET] Failed for ${collect}/${id}: ${err.message}`);
-        if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
-          if (!adminSdkSucceeded) {
-            console.warn("[FIREBASE] Permission denied. Engaging REST Fallback.");
+        if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.message?.includes("Quota") || err.code === 7 || err.code === 8 || err.code === 429) {
+          if (!adminSdkSucceeded || err.message?.includes("Quota")) {
+            console.warn("[FIREBASE] Permission denied or Quota exceeded. Engaging REST Fallback.");
             useRestFallback = true;
+            handleFirestoreQuotaError(err);
           }
         }
       }
@@ -1731,12 +1764,20 @@ export async function startServer() {
           snap.docs.forEach(doc => {
             docMap.set(doc.id, { id: doc.id, data: () => doc.data() });
           });
+          return { docs: Array.from(docMap.values()) };
         }
-        return { docs: Array.from(docMap.values()) };
+        // If snap.empty is true, we should still return empty map unless it's a core collection that MIGHT be in REST fallback
+        if (snap.empty && (collect === "courses" || collect === "providers")) {
+           console.log(`[LIST-SAFE-FIREBASE] ${collect} is empty in Admin SDK. Trying REST fallback just in case.`);
+           // Proceed to REST fallback below
+        } else {
+           return { docs: [] };
+        }
       } catch (err: any) {
         console.warn(`[LIST-SAFE-FIREBASE] Failed for ${collect}: ${err.message}`);
-        if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
+        if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.message?.includes("Quota") || err.code === 7 || err.code === 8 || err.code === 429) {
           useRestFallback = true;
+          handleFirestoreQuotaError(err);
         }
       }
     }
