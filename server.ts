@@ -683,8 +683,57 @@ export async function startServer() {
     }
   };
 
+  // Background cloud database synchronization at startup to protect against ephemeral disk resets
+  const syncFromSupabaseOnStartup = async () => {
+    if (!supabase) return;
+    try {
+      console.log("[SUPABASE-STARTUP-SYNC] Synchronizing settings, courses, and SMM providers from Supabase cloud database...");
+      
+      // 1. Sync Settings
+      const paymentSnap = await getDocFromSupabase("settings", "payment");
+      if (paymentSnap && Object.keys(paymentSnap).length > 0) {
+        console.log("[SUPABASE-STARTUP-SYNC] Loaded Settings/Payment from Supabase:", paymentSnap.upiId);
+        setLocalDoc("settings", "payment", paymentSnap);
+        serverCache.settings = { data: paymentSnap, time: Date.now() };
+        serverCachedSettings = paymentSnap;
+        serverCachedSettingsTime = Date.now();
+      }
+
+      // 2. Sync Courses
+      const coursesSnap = await listDocsFromSupabase("courses", 500);
+      if (coursesSnap && Array.isArray(coursesSnap) && coursesSnap.length > 0) {
+        console.log(`[SUPABASE-STARTUP-SYNC] Loaded ${coursesSnap.length} Courses/Services from Supabase.`);
+        coursesSnap.forEach(c => {
+          if (c && c.id) {
+            setLocalDoc("courses", c.id, c);
+            serverCache.courses.set(c.id, { data: c, time: Date.now() });
+          }
+        });
+        serverCachedCourses = coursesSnap;
+        serverCachedCoursesTime = Date.now();
+      }
+
+      // 3. Sync Providers
+      const providersSnap = await listDocsFromSupabase("providers", 100);
+      if (providersSnap && Array.isArray(providersSnap) && providersSnap.length > 0) {
+        console.log(`[SUPABASE-STARTUP-SYNC] Loaded ${providersSnap.length} Providers from Supabase.`);
+        providersSnap.forEach(p => {
+          if (p && p.id) {
+            setLocalDoc("providers", p.id, p);
+            serverCache.providers.set(p.id, { data: p, time: Date.now() });
+          }
+        });
+      }
+
+      savePersistentCache();
+    } catch (err: any) {
+      console.error("[SUPABASE-STARTUP-SYNC-ERROR] Failed to sync database at boot:", err.message);
+    }
+  };
+
   // Run the disk cache loader right away
   loadPersistentCache();
+  syncFromSupabaseOnStartup().catch(console.error);
   // Initialize Telegram Bot & local bank alerts service (0 Firestore reads/writes)
   try {
     initTelegramBotService();
@@ -1986,7 +2035,7 @@ export async function startServer() {
 
   const setDocSafe = async (col: string, id: string, data: any, token?: string) => {
     setLocalDoc(col, id, data);
-    setDocInSupabase(col, id, data); // Async write to Supabase
+    await setDocInSupabase(col, id, data); // Await write to Supabase
     setDocRESTAsync(col, id, data);
     
     // Authoritative Admin SDK Write (Ensures 100% permanence on custom domain)
@@ -2065,7 +2114,7 @@ export async function startServer() {
     const now = new Date().toISOString();
     const docData = { id: generatedId, ...data, createdAt: data.createdAt || now, updatedAt: now };
 
-    setDocInSupabase(col, generatedId, docData); // Async write to Supabase
+    await setDocInSupabase(col, generatedId, docData); // Await write to Supabase
     setDocRESTAsync(col, generatedId, docData);
 
     if (col === "orders") {
@@ -2080,7 +2129,7 @@ export async function startServer() {
 
   const deleteDocSafe = async (col: string, id: string) => {
     deleteLocalDoc(col, id);
-    deleteDocInSupabase(col, id); // Async delete from Supabase
+    await deleteDocInSupabase(col, id); // Await delete from Supabase
     deleteDocRESTAsync(col, id);
     
     // Authoritative Admin SDK Delete
