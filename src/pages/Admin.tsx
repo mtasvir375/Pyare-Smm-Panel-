@@ -537,11 +537,24 @@ export default function Admin() {
       if (resData?.success) {
         toast.success(`Connected! Balance: ${resData.balance} ${resData.currency || 'INR'}`);
       } else {
-        toast.error(resData?.error || "Connection failed");
+        const rawErr = resData?.error || "Connection failed";
+        const cleanErr = typeof rawErr === "object" ? (rawErr.message || JSON.stringify(rawErr)) : String(rawErr);
+        toast.error(cleanErr);
       }
     } catch (error: any) {
-      const errorMessage = error.response?.data?.error || error.message || "Connection failed";
-      toast.error(`Error: ${errorMessage}`, { duration: 6000 });
+      const errData = error.response?.data;
+      let errorMessage = "Connection failed";
+      if (errData) {
+        if (typeof errData === "string") errorMessage = errData;
+        else if (typeof errData.error === "string") errorMessage = errData.error;
+        else if (typeof errData.message === "string") errorMessage = errData.message;
+        else if (errData.error && typeof errData.error === "object") errorMessage = errData.error.message || JSON.stringify(errData.error);
+        else if (typeof errData === "object") errorMessage = JSON.stringify(errData);
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      const finalMsg = typeof errorMessage === "object" ? JSON.stringify(errorMessage) : String(errorMessage);
+      toast.error(`Error: ${finalMsg}`, { duration: 6000 });
     } finally {
       if (providerId) {
         setTestingProviders(prev => {
