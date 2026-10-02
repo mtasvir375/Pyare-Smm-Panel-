@@ -4,8 +4,7 @@ import {
   User as FirebaseUser,
   signOut as firebaseSignOut
 } from 'firebase/auth';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { auth, db } from '@/lib/firebase';
+import { auth } from '@/lib/firebase';
 import { dbClient, UserProfile } from '@/lib/dbClient';
 import axios from 'axios';
 
@@ -154,42 +153,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             photoURL: firebaseUser.photoURL || '',
             role: 'student',
             balance: 0,
-            createdAt: new Date(),
-            isFallback: true
+            createdAt: new Date()
           });
-        }
-
-        // REAL-TIME SYNC ACROSS ALL DEVICES (BROWSER, PWA APP, PHONE, DESKTOP):
-        // Automatically syncs balance the exact millisecond an order is placed on another device or funds are added!
-        try {
-          const userDocRef = doc(db, 'users', firebaseUser.uid);
-          unsubSnapshot = onSnapshot(userDocRef, (snap) => {
-            if (snap.exists()) {
-              const liveData = snap.data();
-              const liveBal = typeof liveData.balance === 'number' ? liveData.balance : Number(liveData.balance || 0);
-              setUserProfile((prev: UserProfile | null) => {
-                const updated: UserProfile = {
-                  uid: snap.id,
-                  email: firebaseUser.email || '',
-                  displayName: firebaseUser.displayName || 'User',
-                  photoURL: firebaseUser.photoURL || '',
-                  role: 'student',
-                  createdAt: new Date(),
-                  ...(prev || {}),
-                  ...liveData,
-                  balance: liveBal
-                };
-                try {
-                  localStorage.setItem(`user_profile_${firebaseUser.uid}`, JSON.stringify(updated));
-                } catch (e) {}
-                return updated;
-              });
-            }
-          }, (err) => {
-            console.warn("[AUTH-SNAPSHOT] Real-time listener notice:", err.message);
-          });
-        } catch (snapErr: any) {
-          console.warn("[AUTH-SNAPSHOT] Setup error:", snapErr.message);
         }
       } else {
         setUserProfile(null);

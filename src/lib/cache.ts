@@ -1,12 +1,10 @@
 import axios from "axios";
-import { db } from "@/lib/firebase";
-import { collection, doc, getDocs, getDoc } from "firebase/firestore";
 import { DEFAULT_SERVICES, DEFAULT_SETTINGS } from "@/data/defaultServices";
 import { formatApiUrl } from "./apiConfig";
 
 let cachedCourses: any = null;
 let lastCoursesFetch = 0;
-const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours cache for maximum Firestore read quota protection
+const CACHE_DURATION = 24 * 60 * 60 * 1000;
 
 // Clear cache (useful for admin when they update something)
 export const clearCache = () => {
@@ -26,14 +24,7 @@ export const clearCache = () => {
     } catch(e) {}
     
     // Concurrently clear server-side cache so visitors fetch fresh data immediately
-    axios.post(formatApiUrl("/api/clear-cache")).catch((err) => {
-        console.error("Failed to clear server-side cache via API proxy:", err);
-    });
-}
-
-// Helper to detect if a courses array is just the mock default seed
-const isMockCourses = (list: any[]) => {
-  return false;
+    axios.post(formatApiUrl("/api/clear-cache")).catch(() => {});
 };
 
 export const getServiceTimestamp = (item: any): number => {
@@ -69,15 +60,15 @@ export const sortServicesList = (list: any[]): any[] => {
   });
 };
 
-// Helper to detect if settings are just the unconfigured defaults
-const isDefaultSettings = (s: any) => {
-  return s && s.whatsappChatNumber === "+919999999999" && !s.updatedAt;
-};
-
 export const getCachedCourses = async (forceRefresh = false) => {
   const now = Date.now();
   
-  // 1. Primary path: Fetch from server API proxy (serves from Node/SQLite memory in 1ms)
+  if (forceRefresh) {
+    cachedCourses = null;
+    lastCoursesFetch = 0;
+  }
+
+  // 1. Primary path: Fetch directly from SQLite backend API
   try {
     const res = await axios.get(formatApiUrl(`/api/courses?t=${now}`));
     if (Array.isArray(res.data) && res.data.length > 0) {
@@ -109,47 +100,7 @@ export const getCachedCourses = async (forceRefresh = false) => {
       return cachedCourses;
     }
   } catch (apiErr) {
-    console.warn("[CACHE] API proxy /api/courses call failed:", apiErr);
-  }
-
-  // 2. Direct Firestore Web SDK fetch (for custom domain pyaresmmpanel.online where backend proxy may be inaccessible)
-  try {
-    const snap = await getDocs(collection(db, "courses"));
-    if (!snap.empty) {
-      const activeServices = snap.docs.map((d: any) => {
-        const data = d.data();
-        return {
-          id: d.id,
-          ...data,
-          price: data.pricePerThousand !== undefined ? Number(data.pricePerThousand) : (data.price !== undefined ? Number(data.price) : 0),
-          pricePerThousand: data.pricePerThousand !== undefined ? Number(data.pricePerThousand) : (data.price !== undefined ? Number(data.price) : 0),
-          minLimit: data.minLimit !== undefined ? Number(data.minLimit) : (data.min_limit !== undefined ? Number(data.min_limit) : 1000),
-          min_limit: data.minLimit !== undefined ? Number(data.minLimit) : (data.min_limit !== undefined ? Number(data.min_limit) : 1000),
-          providerServiceId: data.providerServiceId !== undefined ? String(data.providerServiceId) : (data.provider_service_id !== undefined ? String(data.provider_service_id) : "0"),
-          provider_service_id: data.providerServiceId !== undefined ? String(data.providerServiceId) : (data.provider_service_id !== undefined ? String(data.provider_service_id) : "0"),
-          isPackage: data.isPackage !== undefined ? !!data.isPackage : !!data.is_package,
-          is_package: data.isPackage !== undefined ? !!data.isPackage : !!data.is_package,
-          packagePrice: data.packagePrice !== undefined ? Number(data.packagePrice) : (data.package_price !== undefined ? Number(data.package_price) : 0),
-          package_price: data.packagePrice !== undefined ? Number(data.packagePrice) : (data.package_price !== undefined ? Number(data.package_price) : 0),
-          packageQuantity: data.packageQuantity !== undefined ? Number(data.packageQuantity) : (data.package_quantity !== undefined ? Number(data.packageQuantity) : 1000),
-          package_quantity: data.packageQuantity !== undefined ? Number(data.packageQuantity) : (data.package_quantity !== undefined ? Number(data.packageQuantity) : 1000),
-          iconUrl: data.iconUrl || data.icon_url || null,
-          icon_url: data.iconUrl || data.icon_url || null,
-        };
-      }).filter((s: any) => s.status !== "archived" && s.status !== "hidden");
-
-      if (activeServices.length > 0) {
-        cachedCourses = sortServicesList(activeServices);
-        lastCoursesFetch = now;
-        try {
-          localStorage.setItem("cached_courses_time", now.toString());
-          localStorage.setItem("cached_courses", JSON.stringify(cachedCourses));
-        } catch(e) {}
-        return cachedCourses;
-      }
-    }
-  } catch (fsErr) {
-    console.warn("[CACHE] Direct Firestore fetch for courses failed:", fsErr);
+    console.warn("[CACHE] API /api/courses call failed:", apiErr);
   }
 
   // Fallback to localStorage if API failed
@@ -164,8 +115,7 @@ export const getCachedCourses = async (forceRefresh = false) => {
     }
   } catch(e) {}
 
-  // Final fallback to default seed services (0 Firestore reads)
-  console.log("[CACHE] Serving default seed services as quota guard.");
+  // Final fallback to default seed services
   cachedCourses = DEFAULT_SERVICES;
   lastCoursesFetch = now;
   return cachedCourses;
@@ -186,9 +136,9 @@ export const getCachedSettings = async (forceRefresh = false) => {
     } catch(e) {}
   }
 
-  // Primary path: Fetch from server Express API proxy (serves from Node/SQLite memory in 1ms)
+  // 1. Primary path: Fetch from SQLite backend API proxy
   try {
-    const url = formatApiUrl(forceRefresh ? `/api/settings?fresh=1&t=${now}` : "/api/settings");
+    const url = formatApiUrl(forceRefresh ? `/api/settings?fresh=1&t=${now}` : `/api/settings?t=${now}`);
     const res = await axios.get(url);
     if (res.data && typeof res.data === "object" && Object.keys(res.data).length > 0) {
       const settingsData = {
@@ -225,71 +175,24 @@ export const getCachedSettings = async (forceRefresh = false) => {
         localStorage.setItem("cached_settings_time", now.toString());
         localStorage.setItem("cached_settings", JSON.stringify(cachedSettings));
       } catch(e) {}
-      console.log("[CACHE] Successfully loaded settings from Express memory cache!");
       return cachedSettings;
     }
   } catch (apiErr) {
-    console.warn("[CACHE] Express API proxy /api/settings call failed:", apiErr);
+    console.warn("[CACHE] API /api/settings call failed:", apiErr);
   }
 
-  // 2. Direct Firestore Web SDK fetch (for custom domain pyaresmmpanel.online)
-  try {
-    const snap = await getDoc(doc(db, "settings", "payment"));
-    if (snap.exists()) {
-      const data = snap.data() || {};
-      const settingsData = {
-        ...DEFAULT_SETTINGS,
-        ...data,
-        upiId: data.upiId !== undefined ? data.upiId : DEFAULT_SETTINGS.upiId,
-        paymentQrUrl: data.paymentQrUrl || "",
-        merchantName: data.merchantName !== undefined ? data.merchantName : DEFAULT_SETTINGS.merchantName,
-        razorpayEnabled: !!data.razorpayEnabled,
-        razorpayKeyId: data.razorpayKeyId || "",
-        razorpayKeySecret: data.razorpayKeySecret || "",
-        phonepeEnabled: !!data.phonepeEnabled,
-        phonepeMerchantId: data.phonepeMerchantId || "",
-        phonepeSaltKey: data.phonepeSaltKey || "",
-        phonepeSaltIndex: data.phonepeSaltIndex || "1",
-        phonepeEnv: data.phonepeEnv || "sandbox",
-        paytmEnabled: !!data.paytmEnabled,
-        paytmMid: data.paytmMid || "",
-        paytmMerchantKey: data.paytmMerchantKey || "",
-        paytmEnv: data.paytmEnv || "sandbox",
-        whatsappLink: data.whatsappLink || DEFAULT_SETTINGS.whatsappLink,
-        whatsappChatNumber: data.whatsappChatNumber || DEFAULT_SETTINGS.whatsappChatNumber,
-        backendApiUrl: data.backendApiUrl || "",
-        qrAutoEnabled: !!data.qrAutoEnabled,
-        instantQrEnabled: data.instantQrEnabled !== undefined ? !!data.instantQrEnabled : true,
-        manualQrEnabled: data.manualQrEnabled !== undefined ? !!data.manualQrEnabled : true,
-        selectedTheme: data.selectedTheme || "charcoal",
-        selectedFestivalTheme: data.selectedFestivalTheme || "none",
-      };
-
-      cachedSettings = settingsData;
-      lastSettingsFetch = now;
-      try {
-        localStorage.setItem("cached_settings_time", now.toString());
-        localStorage.setItem("cached_settings", JSON.stringify(cachedSettings));
-      } catch(e) {}
-      return cachedSettings;
-    }
-  } catch (fsErr) {
-    console.warn("[CACHE] Direct Firestore fetch for settings failed:", fsErr);
-  }
-
-  // Use localStorage cache if Express API proxy and Firestore failed temporarily
+  // Use localStorage cache if API proxy failed temporarily
   try {
     const lsData = localStorage.getItem("cached_settings");
     if (lsData) {
       const parsed = JSON.parse(lsData);
-      if (parsed) {
+      if (parsed && typeof parsed === "object") {
         cachedSettings = parsed;
         return cachedSettings;
       }
     }
   } catch(e) {}
 
-  // Graceful zero-read fallback to default settings only as last resort
   return DEFAULT_SETTINGS;
 };
 
@@ -319,7 +222,7 @@ export const getCachedProviders = async (forceRefresh = false) => {
   }
   
   try {
-    const res = await axios.get(formatApiUrl("/api/providers"));
+    const res = await axios.get(formatApiUrl(`/api/providers?t=${now}`));
     if (Array.isArray(res.data) && res.data.length > 0) {
       cachedProviders = res.data;
       lastProvidersFetch = now;
@@ -333,23 +236,7 @@ export const getCachedProviders = async (forceRefresh = false) => {
     console.warn("[CACHE] Failed to load providers from /api/providers:", apiErr);
   }
 
-  // 2. Direct Firestore Web SDK fetch for providers (for custom domain)
-  try {
-    const snap = await getDocs(collection(db, "providers"));
-    if (!snap.empty) {
-      cachedProviders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      lastProvidersFetch = now;
-      try {
-        localStorage.setItem("cached_providers_time", now.toString());
-        localStorage.setItem("cached_providers", JSON.stringify(cachedProviders));
-      } catch(e) {}
-      return cachedProviders;
-    }
-  } catch (fsErr) {
-    console.warn("[CACHE] Direct Firestore fetch for providers failed:", fsErr);
-  }
-
-  // Use localStorage cache if Express API proxy failed temporarily
+  // Use localStorage cache if API proxy failed temporarily
   try {
     const lsData = localStorage.getItem("cached_providers");
     if (lsData) {

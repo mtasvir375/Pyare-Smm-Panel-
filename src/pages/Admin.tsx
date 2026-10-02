@@ -46,7 +46,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { dbClient } from "@/lib/dbClient";
-import { where, limit, orderBy } from "firebase/firestore";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -242,10 +241,9 @@ export default function Admin() {
     try {
       let updatedCount = 0;
       // Filter strictly for tasks that need check
-      const ordersToProcess = await dbClient.getDocs("orders", [
-        where("status", "in", ["processing", "pending", "in progress"]),
-        limit(5)
-      ]);
+      const ordersToProcess = (await dbClient.getOrdersAdmin(10)).filter((o: any) => 
+        ["processing", "pending", "in progress"].includes((o.status || "").toLowerCase())
+      );
 
       for (const order of ordersToProcess || []) {
         if (order.providerOrderId || order.provider_order_id) {

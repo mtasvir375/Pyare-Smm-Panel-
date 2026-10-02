@@ -7,7 +7,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { dbClient } from "@/lib/dbClient";
 import { getFestivalConfig } from "@/lib/festivalConfig";
-import { orderBy, where } from "firebase/firestore";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/context/AuthContext";
 import { useSearchParams, useNavigate } from "react-router-dom";

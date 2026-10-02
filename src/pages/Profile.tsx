@@ -1,4 +1,3 @@
-import { where } from "firebase/firestore";
 import { motion } from "motion/react";
 import { 
   User, 
@@ -88,9 +87,10 @@ export default function Profile() {
 
   useEffect(() => {
     if (user) {
-      dbClient.getDocs("api_keys", [where("userId", "==", user.uid)]).then(docs => {
-        if (docs && docs.length > 0) {
-          setApiKey(docs[0].id);
+      dbClient.getDocs("api_keys").then(docs => {
+        const myKey = docs.find((d: any) => d.userId === user.uid);
+        if (myKey) {
+          setApiKey(myKey.id);
         }
       }).catch(console.warn);
     }
