@@ -44,7 +44,339 @@
           "providerServiceId": "4545",
           "preventDuplicateLink": false
         },
-        "time": 1790970627049
+        "time": 1790974965807
+      }
+    ],
+    [
+      "srv_fb_post_likes",
+      {
+        "data": {
+          "id": "srv_fb_post_likes",
+          "title": "Facebook login ",
+          "category": "Facebook",
+          "pricePerThousand": 35,
+          "price": 35,
+          "minLimit": 5,
+          "min_limit": 50,
+          "maxLimit": 25000,
+          "max_limit": 25000,
+          "description": "Instant post likes and thumbs-up reactions for Facebook public posts.",
+          "status": "active",
+          "providerServiceId": "4545",
+          "provider_service_id": "302",
+          "isPackage": false,
+          "is_package": false,
+          "createdAt": "2026-10-02T10:33:01.410Z",
+          "updatedAt": "2026-10-02T11:32:55.901Z",
+          "providerId": "item_1790647662103_pnjh2",
+          "serviceType": "likes",
+          "preventDuplicateLink": false,
+          "isCombo": false,
+          "comboItems": [],
+          "packagePrice": null,
+          "packageQuantity": null
+        },
+        "time": 1790974965808
+      }
+    ],
+    [
+      "srv_tg_members",
+      {
+        "data": {
+          "id": "srv_tg_members",
+          "title": "Telegram Channel / Group Members [Non-Drop] [0% Drop]",
+          "category": "Telegram",
+          "pricePerThousand": 75,
+          "price": 75,
+          "minLimit": 100,
+          "min_limit": 100,
+          "maxLimit": 100000,
+          "max_limit": 100000,
+          "description": "High quality Telegram members with low/zero drop rate. Instant delivery.",
+          "status": "active",
+          "providerServiceId": "401",
+          "provider_service_id": "401",
+          "isPackage": false,
+          "is_package": false,
+          "createdAt": "2026-10-02T10:33:01.410Z",
+          "updatedAt": "2026-10-02T10:33:01.410Z"
+        },
+        "time": 1790974965808
+      }
+    ],
+    [
+      "srv_tg_post_views",
+      {
+        "data": {
+          "id": "srv_tg_post_views",
+          "title": "Telegram Post Views [Last 5 Posts Automatic]",
+          "category": "Telegram",
+          "pricePerThousand": 8,
+          "price": 8,
+          "minLimit": 100,
+          "min_limit": 100,
+          "maxLimit": 500000,
+          "max_limit": 500000,
+          "description": "Instant post view delivery to your Telegram channel posts.",
+          "status": "active",
+          "providerServiceId": "402",
+          "provider_service_id": "402",
+          "isPackage": false,
+          "is_package": false,
+          "createdAt": "2026-10-02T10:33:01.410Z",
+          "updatedAt": "2026-10-02T10:33:01.410Z"
+        },
+        "time": 1790974965809
+      }
+    ],
+    [
+      "srv_tt_followers",
+      {
+        "data": {
+          "id": "srv_tt_followers",
+          "title": "TikTok Followers [Global HQ] [Instant Delivery]",
+          "category": "TikTok",
+          "pricePerThousand": 85,
+          "price": 85,
+          "minLimit": 100,
+          "min_limit": 100,
+          "maxLimit": 20000,
+          "max_limit": 20000,
+          "description": "Premium TikTok followers to boost your profile presence.",
+          "status": "active",
+          "providerServiceId": "501",
+          "provider_service_id": "501",
+          "isPackage": false,
+          "is_package": false,
+          "createdAt": "2026-10-02T10:33:01.410Z",
+          "updatedAt": "2026-10-02T10:33:01.410Z"
+        },
+        "time": 1790974965809
+      }
+    ],
+    [
+      "srv_tt_likes",
+      {
+        "data": {
+          "id": "srv_tt_likes",
+          "title": "TikTok Video Likes [Fast] [High Retention]",
+          "category": "TikTok",
+          "pricePerThousand": 25,
+          "price": 25,
+          "minLimit": 100,
+          "min_limit": 100,
+          "maxLimit": 50000,
+          "max_limit": 50000,
+          "description": "High speed TikTok likes on any public video URL.",
+          "status": "active",
+          "providerServiceId": "502",
+          "provider_service_id": "502",
+          "isPackage": false,
+          "is_package": false,
+          "createdAt": "2026-10-02T10:33:01.410Z",
+          "updatedAt": "2026-10-02T10:33:01.410Z"
+        },
+        "time": 1790974965810
+      }
+    ],
+    [
+      "srv_ig_likes_hq",
+      {
+        "data": {
+          "id": "srv_ig_likes_hq",
+          "title": "Instagram Real Likes [HQ] [Fast Start] [Non-Drop]",
+          "category": "Instagram",
+          "pricePerThousand": 18,
+          "price": 18,
+          "minLimit": 50,
+          "min_limit": 50,
+          "maxLimit": 50000,
+          "max_limit": 50000,
+          "description": "Instant delivery Instagram Likes from active looking profiles. 100% safe.",
+          "status": "active",
+          "providerServiceId": "102",
+          "provider_service_id": "102",
+          "isPackage": false,
+          "is_package": false,
+          "createdAt": "2026-10-02T10:33:01.409Z",
+          "updatedAt": "2026-10-02T10:33:01.409Z"
+        },
+        "time": 1790974965810
+      }
+    ],
+    [
+      "srv_ig_reels_views",
+      {
+        "data": {
+          "id": "srv_ig_reels_views",
+          "title": "Instagram Reels Views [Explore Viral Boost] [Instant 1M/Day]",
+          "category": "Instagram",
+          "pricePerThousand": 5,
+          "price": 5,
+          "minLimit": 500,
+          "min_limit": 500,
+          "maxLimit": 1000000,
+          "max_limit": 1000000,
+          "description": "Instant high-speed Instagram Reels views to push your reel into Instagram Explore algorithm.",
+          "status": "active",
+          "providerServiceId": "103",
+          "provider_service_id": "103",
+          "isPackage": false,
+          "is_package": false,
+          "createdAt": "2026-10-02T10:33:01.409Z",
+          "updatedAt": "2026-10-02T10:33:01.409Z"
+        },
+        "time": 1790974965810
+      }
+    ],
+    [
+      "srv_ig_story_views",
+      {
+        "data": {
+          "id": "srv_ig_story_views",
+          "title": "Instagram Story Views + Impressions [All Stories]",
+          "category": "Instagram",
+          "pricePerThousand": 12,
+          "price": 12,
+          "minLimit": 100,
+          "min_limit": 100,
+          "maxLimit": 50000,
+          "max_limit": 50000,
+          "description": "Delivers views to all active stories within 5 minutes.",
+          "status": "active",
+          "providerServiceId": "104",
+          "provider_service_id": "104",
+          "isPackage": false,
+          "is_package": false,
+          "createdAt": "2026-10-02T10:33:01.409Z",
+          "updatedAt": "2026-10-02T10:33:01.409Z"
+        },
+        "time": 1790974965811
+      }
+    ],
+    [
+      "srv_yt_views_retention",
+      {
+        "data": {
+          "id": "srv_yt_views_retention",
+          "title": "YouTube Video Views [High Retention] [Monetizable & Safe]",
+          "category": "YouTube",
+          "pricePerThousand": 120,
+          "price": 120,
+          "minLimit": 500,
+          "min_limit": 500,
+          "maxLimit": 500000,
+          "max_limit": 500000,
+          "description": "Non-drop High Retention YouTube Views from real external search traffic. 100% Adsense safe.",
+          "status": "active",
+          "providerServiceId": "201",
+          "provider_service_id": "201",
+          "isPackage": false,
+          "is_package": false,
+          "createdAt": "2026-10-02T10:33:01.409Z",
+          "updatedAt": "2026-10-02T10:33:01.409Z"
+        },
+        "time": 1790974965811
+      }
+    ],
+    [
+      "srv_yt_subscribers",
+      {
+        "data": {
+          "id": "srv_yt_subscribers",
+          "title": "YouTube Real Subscribers [Non-Drop] [30 Days Refill]",
+          "category": "YouTube",
+          "pricePerThousand": 490,
+          "price": 490,
+          "minLimit": 50,
+          "min_limit": 50,
+          "maxLimit": 10000,
+          "max_limit": 10000,
+          "description": "Authentic YouTube subscribers to help you cross monetization thresholds safely.",
+          "status": "active",
+          "providerServiceId": "202",
+          "provider_service_id": "202",
+          "isPackage": false,
+          "is_package": false,
+          "createdAt": "2026-10-02T10:33:01.409Z",
+          "updatedAt": "2026-10-02T10:33:01.409Z"
+        },
+        "time": 1790974965811
+      }
+    ],
+    [
+      "srv_yt_likes",
+      {
+        "data": {
+          "id": "srv_yt_likes",
+          "title": "YouTube Video Likes [Instant Start] [Organic Profiles]",
+          "category": "YouTube",
+          "pricePerThousand": 45,
+          "price": 45,
+          "minLimit": 50,
+          "min_limit": 50,
+          "maxLimit": 20000,
+          "max_limit": 20000,
+          "description": "Fast start YouTube likes to build video social proof.",
+          "status": "active",
+          "providerServiceId": "203",
+          "provider_service_id": "203",
+          "isPackage": false,
+          "is_package": false,
+          "createdAt": "2026-10-02T10:33:01.409Z",
+          "updatedAt": "2026-10-02T10:33:01.409Z"
+        },
+        "time": 1790974965812
+      }
+    ],
+    [
+      "srv_fb_followers",
+      {
+        "data": {
+          "id": "srv_fb_followers",
+          "title": "Facebook Page Followers / Likes [Global Real Profiles]",
+          "category": "Facebook",
+          "pricePerThousand": 95,
+          "price": 95,
+          "minLimit": 100,
+          "min_limit": 100,
+          "maxLimit": 50000,
+          "max_limit": 50000,
+          "description": "Organic looking Facebook page followers and likes to boost page credibility.",
+          "status": "active",
+          "providerServiceId": "301",
+          "provider_service_id": "301",
+          "isPackage": false,
+          "is_package": false,
+          "createdAt": "2026-10-02T10:33:01.409Z",
+          "updatedAt": "2026-10-02T10:33:01.409Z"
+        },
+        "time": 1790974965813
+      }
+    ],
+    [
+      "srv_ig_followers_nondrop",
+      {
+        "data": {
+          "id": "srv_ig_followers_nondrop",
+          "title": "Instagram Followers [Non-Drop] [Lifetime Guarantee] [Super Fast]",
+          "category": "Instagram",
+          "pricePerThousand": 65,
+          "price": 65,
+          "minLimit": 100,
+          "min_limit": 100,
+          "maxLimit": 100000,
+          "max_limit": 100000,
+          "description": "High Quality Instagram Non-Drop Followers with lifetime refill guarantee. Instant start.",
+          "status": "active",
+          "providerServiceId": "101",
+          "provider_service_id": "101",
+          "isPackage": false,
+          "is_package": false,
+          "createdAt": "2026-10-02T10:33:01.408Z",
+          "updatedAt": "2026-10-02T10:33:01.408Z"
+        },
+        "time": 1790974965813
       }
     ]
   ],
@@ -60,34 +392,64 @@
           "createdAt": "2026-10-02T03:31:18.730Z",
           "latestOrders": [
             {
-              "id": "ord_1790970644963_2gb99",
+              "id": "ord_1790973948978_82bpl",
               "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
               "userEmail": "mtasvir375@gmail.com",
               "courseId": "srv_ig_followers",
               "serviceId": "srv_ig_followers",
               "title": "Instagram Followers [High Quality]",
               "category": "Instagram",
+              "quantity": 56000,
+              "targetLink": "https://www.instagram.com/reel/DCwWiBwzcxP/?stkn=MWRwOWdnNHZxMGg5bA==",
+              "totalPrice": 868,
+              "status": "In progress",
+              "providerOrderId": "2847460",
+              "createdAt": "2026-10-02T20:45:52.361Z"
+            },
+            {
+              "id": "ord_1790973815819_lb9jp",
+              "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+              "userEmail": "mtasvir375@gmail.com",
+              "courseId": "srv_ig_followers",
+              "serviceId": "srv_ig_followers",
+              "title": "Instagram Followers [High Quality]",
+              "category": "Instagram",
+              "quantity": 25000,
+              "targetLink": "https://www.instagram.com/reel/DIzFR7OT-Oj/?stkn=MW41NGd1MGw0Y3Vj",
+              "totalPrice": 387.5,
+              "status": "In progress",
+              "providerOrderId": "2847453",
+              "createdAt": "2026-10-02T20:43:38.081Z"
+            },
+            {
+              "id": "ord_1790970644963_2gb99",
+              "title": "Instagram Followers [High Quality]",
+              "status": "In progress",
+              "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+              "category": "Instagram",
+              "courseId": "srv_ig_followers",
               "quantity": 300,
+              "createdAt": "2026-10-02T19:50:46.772Z",
+              "serviceId": "srv_ig_followers",
+              "userEmail": "mtasvir375@gmail.com",
               "targetLink": ",-yffxgvgygg.jbbb",
               "totalPrice": 4.65,
-              "status": "In progress",
-              "providerOrderId": "2847363",
-              "createdAt": "2026-10-02T19:50:46.772Z"
+              "providerOrderId": "2847363"
             },
             {
               "id": "ord_1790970625667_ersyi",
-              "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-              "userEmail": "mtasvir375@gmail.com",
-              "courseId": "srv_ig_followers",
-              "serviceId": "srv_ig_followers",
               "title": "Instagram Followers [High Quality]",
+              "status": "In progress",
+              "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
               "category": "Instagram",
+              "courseId": "srv_ig_followers",
               "quantity": 300,
+              "createdAt": "2026-10-02T19:50:27.775Z",
+              "serviceId": "srv_ig_followers",
+              "userEmail": "mtasvir375@gmail.com",
               "targetLink": ",-yffxgvgygg.jb",
               "totalPrice": 4.65,
-              "status": "In progress",
-              "providerOrderId": "2847360",
-              "createdAt": "2026-10-02T19:50:27.775Z"
+              "providerOrderId": "2847360"
             },
             {
               "id": "ord_1790940789235_ae6my",
@@ -177,46 +539,16 @@
               "targetLink": "https://www.instagram.com/reel/Dbkxk4QykfW/?stkn=MWpubDI2NWlxdTFyaQ==",
               "totalPrice": 6,
               "providerOrderId": "2840311"
-            },
-            {
-              "id": "ord_1790801250448_86ee8",
-              "title": "Reels view ",
-              "status": "In progress",
-              "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-              "category": "Instagram",
-              "courseId": "item_1790792133883_0oavo",
-              "quantity": 1000,
-              "createdAt": "2026-09-30T20:47:35.608Z",
-              "serviceId": "item_1790792133883_0oavo",
-              "userEmail": "mtasvir375@gmail.com",
-              "targetLink": "Cccccxx.bbh",
-              "totalPrice": 1.2,
-              "providerOrderId": "2839342"
-            },
-            {
-              "id": "ord_1790798325237_ox9em",
-              "title": "Reels view ",
-              "status": "In progress",
-              "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-              "category": "Instagram",
-              "courseId": "item_1790792133883_0oavo",
-              "quantity": 1000,
-              "createdAt": "2026-09-30T19:58:49.255Z",
-              "serviceId": "item_1790792133883_0oavo",
-              "userEmail": "mtasvir375@gmail.com",
-              "targetLink": "Evvssvsgsv",
-              "totalPrice": 1.2,
-              "providerOrderId": "2839265"
             }
           ],
-          "balance": 17683.05,
+          "balance": 16427.55,
           "email": "mtasvir375@gmail.com",
           "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-          "updatedAt": "2026-10-02T19:50:47.966Z",
+          "updatedAt": "2026-10-02T20:45:53.543Z",
           "displayName": "Md Saad Alam",
-          "lastOrderedAt": "2026-10-02T19:50:46.772Z"
+          "lastOrderedAt": "2026-10-02T20:45:52.362Z"
         },
-        "time": 1790970648606
+        "time": 1790973954169
       }
     ],
     [
@@ -1361,6 +1693,7 @@
       "mtasvir375@gmail.com",
       {
         "data": {
+          "id": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "role": "admin",
           "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocIVDCPXKVjVCP0jqcCpWx5c759WFIsH20U7smDKXtVCJQmldT5A=s96-c",
           "userEmail": "mtasvir375@gmail.com",
@@ -1518,7 +1851,6 @@
           ],
           "balance": 17683.05,
           "email": "mtasvir375@gmail.com",
-          "id": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "updatedAt": "2026-10-02T20:40:31.402Z",
           "displayName": "Md Saad Alam",
@@ -5095,6 +5427,7 @@
       "ord_1790973629091_g22p4",
       {
         "data": {
+          "id": "ord_1790973629091_g22p4",
           "status": "Failed",
           "needsProviderTransmission": false,
           "providerTransmissionStatus": "failed",
@@ -5102,6 +5435,62 @@
           "updatedAt": "2026-10-02T20:40:31.308Z"
         },
         "time": 1790973631308
+      }
+    ],
+    [
+      "ord_1790973815819_lb9jp",
+      {
+        "data": {
+          "id": "ord_1790973815819_lb9jp",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "serviceId": "srv_ig_followers",
+          "courseId": "srv_ig_followers",
+          "title": "Instagram Followers [High Quality]",
+          "category": "Instagram",
+          "quantity": 25000,
+          "targetLink": "https://www.instagram.com/reel/DIzFR7OT-Oj/?stkn=MW41NGd1MGw0Y3Vj",
+          "totalPrice": 387.5,
+          "isCombo": false,
+          "comboItems": [],
+          "status": "Completed",
+          "providerOrderId": "2847453",
+          "needsProviderTransmission": false,
+          "providerTransmissionStatus": "completed",
+          "balanceAlreadyDeducted": true,
+          "updatedAt": "2026-10-02T20:43:38.931Z",
+          "createdAt": "2026-10-02T20:43:38.206Z",
+          "providerRawResponse": "{\"order\":2847453}"
+        },
+        "time": 1790973818931
+      }
+    ],
+    [
+      "ord_1790973948978_82bpl",
+      {
+        "data": {
+          "id": "ord_1790973948978_82bpl",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "serviceId": "srv_ig_followers",
+          "courseId": "srv_ig_followers",
+          "title": "Instagram Followers [High Quality]",
+          "category": "Instagram",
+          "quantity": 56000,
+          "targetLink": "https://www.instagram.com/reel/DCwWiBwzcxP/?stkn=MWRwOWdnNHZxMGg5bA==",
+          "totalPrice": 868,
+          "isCombo": false,
+          "comboItems": [],
+          "status": "Completed",
+          "providerOrderId": "2847460",
+          "needsProviderTransmission": false,
+          "providerTransmissionStatus": "completed",
+          "balanceAlreadyDeducted": true,
+          "updatedAt": "2026-10-02T20:45:53.184Z",
+          "createdAt": "2026-10-02T20:45:52.336Z",
+          "providerRawResponse": "{\"order\":2847460}"
+        },
+        "time": 1790973953184
       }
     ]
   ],

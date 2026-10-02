@@ -293,7 +293,7 @@
       "enableUpi": true,
       "enableTelegramBot": true,
       "createdAt": "2026-10-02T10:33:01.410Z",
-      "updatedAt": "2026-10-02T20:40:23.918Z",
+      "updatedAt": "2026-10-02T21:02:41.771Z",
       "id": "payment",
       "providerApiUrl": "",
       "providerApiKey": "",
@@ -334,7 +334,7 @@
       "manualQrEnabled": false,
       "instantQrEnabled": true,
       "id": "telegram_bot",
-      "updatedAt": "2026-10-02T20:40:23.919Z",
+      "updatedAt": "2026-10-02T21:02:41.773Z",
       "chatId": "-1004483507103",
       "enabled": true,
       "startedAt": "2026-10-02T11:55:47.303Z",
@@ -350,6 +350,36 @@
       "createdAt": "2026-10-02T03:31:18.730Z",
       "latestOrders": [
         {
+          "id": "ord_1790973948978_82bpl",
+          "title": "Instagram Followers [High Quality]",
+          "status": "In progress",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "category": "Instagram",
+          "courseId": "srv_ig_followers",
+          "quantity": 56000,
+          "createdAt": "2026-10-02T20:45:52.361Z",
+          "serviceId": "srv_ig_followers",
+          "userEmail": "mtasvir375@gmail.com",
+          "targetLink": "https://www.instagram.com/reel/DCwWiBwzcxP/?stkn=MWRwOWdnNHZxMGg5bA==",
+          "totalPrice": 868,
+          "providerOrderId": "2847460"
+        },
+        {
+          "id": "ord_1790973815819_lb9jp",
+          "title": "Instagram Followers [High Quality]",
+          "status": "In progress",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "category": "Instagram",
+          "courseId": "srv_ig_followers",
+          "quantity": 25000,
+          "createdAt": "2026-10-02T20:43:38.081Z",
+          "serviceId": "srv_ig_followers",
+          "userEmail": "mtasvir375@gmail.com",
+          "targetLink": "https://www.instagram.com/reel/DIzFR7OT-Oj/?stkn=MW41NGd1MGw0Y3Vj",
+          "totalPrice": 387.5,
+          "providerOrderId": "2847453"
+        },
+        {
           "id": "ord_1790970644963_2gb99",
           "title": "Instagram Followers [High Quality]",
           "status": "In progress",
@@ -467,45 +497,15 @@
           "targetLink": "https://www.instagram.com/reel/Dbkxk4QykfW/?stkn=MWpubDI2NWlxdTFyaQ==",
           "totalPrice": 6,
           "providerOrderId": "2840311"
-        },
-        {
-          "id": "ord_1790801250448_86ee8",
-          "title": "Reels view ",
-          "status": "In progress",
-          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-          "category": "Instagram",
-          "courseId": "item_1790792133883_0oavo",
-          "quantity": 1000,
-          "createdAt": "2026-09-30T20:47:35.608Z",
-          "serviceId": "item_1790792133883_0oavo",
-          "userEmail": "mtasvir375@gmail.com",
-          "targetLink": "Cccccxx.bbh",
-          "totalPrice": 1.2,
-          "providerOrderId": "2839342"
-        },
-        {
-          "id": "ord_1790798325237_ox9em",
-          "title": "Reels view ",
-          "status": "In progress",
-          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-          "category": "Instagram",
-          "courseId": "item_1790792133883_0oavo",
-          "quantity": 1000,
-          "createdAt": "2026-09-30T19:58:49.255Z",
-          "serviceId": "item_1790792133883_0oavo",
-          "userEmail": "mtasvir375@gmail.com",
-          "targetLink": "Evvssvsgsv",
-          "totalPrice": 1.2,
-          "providerOrderId": "2839265"
         }
       ],
-      "balance": 17683.05,
+      "balance": 16427.55,
       "email": "mtasvir375@gmail.com",
       "id": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
       "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-      "updatedAt": "2026-10-02T20:40:23.923Z",
+      "updatedAt": "2026-10-02T21:02:41.777Z",
       "displayName": "Md Saad Alam",
-      "lastOrderedAt": "2026-10-02T19:50:46.772Z"
+      "lastOrderedAt": "2026-10-02T20:45:52.362Z"
     },
     "5LRJPrkW5vVimfCFKGbzTKhXtji2": {
       "uid": "5LRJPrkW5vVimfCFKGbzTKhXtji2",
@@ -516,7 +516,7 @@
       "role": "admin",
       "balance": 5000,
       "createdAt": "2026-10-02T10:33:01.408Z",
-      "updatedAt": "2026-10-02T20:40:23.919Z"
+      "updatedAt": "2026-10-02T21:02:41.774Z"
     },
     "mdsarfarajalam727712@gmail.com": {
       "uid": "5LRJPrkW5vVimfCFKGbzTKhXtji2",
@@ -527,7 +527,7 @@
       "role": "admin",
       "balance": 5000,
       "createdAt": "2026-10-02T10:33:01.408Z",
-      "updatedAt": "2026-10-02T20:40:23.919Z"
+      "updatedAt": "2026-10-02T21:02:41.774Z"
     },
     "UlsK3PLAGHdiSZAhx58Cb23FXLq2": {
       "uid": "UlsK3PLAGHdiSZAhx58Cb23FXLq2",
@@ -538,7 +538,7 @@
       "role": "admin",
       "balance": 10,
       "createdAt": "2026-10-02T10:33:01.408Z",
-      "updatedAt": "2026-10-02T20:40:23.920Z"
+      "updatedAt": "2026-10-02T21:02:41.774Z"
     },
     "mdtasvir888@gmail.com": {
       "uid": "UlsK3PLAGHdiSZAhx58Cb23FXLq2",
@@ -549,7 +549,7 @@
       "role": "admin",
       "balance": 10,
       "createdAt": "2026-10-02T10:33:01.408Z",
-      "updatedAt": "2026-10-02T20:40:23.920Z"
+      "updatedAt": "2026-10-02T21:02:41.774Z"
     },
     "c4w6bjFk9leTy9SR2ijM0YyJVfx1": {
       "role": "admin",
@@ -557,6 +557,36 @@
       "userEmail": "mtasvir375@gmail.com",
       "createdAt": "2026-10-02T03:31:18.730Z",
       "latestOrders": [
+        {
+          "id": "ord_1790973948978_82bpl",
+          "title": "Instagram Followers [High Quality]",
+          "status": "In progress",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "category": "Instagram",
+          "courseId": "srv_ig_followers",
+          "quantity": 56000,
+          "createdAt": "2026-10-02T20:45:52.361Z",
+          "serviceId": "srv_ig_followers",
+          "userEmail": "mtasvir375@gmail.com",
+          "targetLink": "https://www.instagram.com/reel/DCwWiBwzcxP/?stkn=MWRwOWdnNHZxMGg5bA==",
+          "totalPrice": 868,
+          "providerOrderId": "2847460"
+        },
+        {
+          "id": "ord_1790973815819_lb9jp",
+          "title": "Instagram Followers [High Quality]",
+          "status": "In progress",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "category": "Instagram",
+          "courseId": "srv_ig_followers",
+          "quantity": 25000,
+          "createdAt": "2026-10-02T20:43:38.081Z",
+          "serviceId": "srv_ig_followers",
+          "userEmail": "mtasvir375@gmail.com",
+          "targetLink": "https://www.instagram.com/reel/DIzFR7OT-Oj/?stkn=MW41NGd1MGw0Y3Vj",
+          "totalPrice": 387.5,
+          "providerOrderId": "2847453"
+        },
         {
           "id": "ord_1790970644963_2gb99",
           "title": "Instagram Followers [High Quality]",
@@ -675,45 +705,15 @@
           "targetLink": "https://www.instagram.com/reel/Dbkxk4QykfW/?stkn=MWpubDI2NWlxdTFyaQ==",
           "totalPrice": 6,
           "providerOrderId": "2840311"
-        },
-        {
-          "id": "ord_1790801250448_86ee8",
-          "title": "Reels view ",
-          "status": "In progress",
-          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-          "category": "Instagram",
-          "courseId": "item_1790792133883_0oavo",
-          "quantity": 1000,
-          "createdAt": "2026-09-30T20:47:35.608Z",
-          "serviceId": "item_1790792133883_0oavo",
-          "userEmail": "mtasvir375@gmail.com",
-          "targetLink": "Cccccxx.bbh",
-          "totalPrice": 1.2,
-          "providerOrderId": "2839342"
-        },
-        {
-          "id": "ord_1790798325237_ox9em",
-          "title": "Reels view ",
-          "status": "In progress",
-          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-          "category": "Instagram",
-          "courseId": "item_1790792133883_0oavo",
-          "quantity": 1000,
-          "createdAt": "2026-09-30T19:58:49.255Z",
-          "serviceId": "item_1790792133883_0oavo",
-          "userEmail": "mtasvir375@gmail.com",
-          "targetLink": "Evvssvsgsv",
-          "totalPrice": 1.2,
-          "providerOrderId": "2839265"
         }
       ],
-      "balance": 17683.05,
+      "balance": 16427.55,
       "email": "mtasvir375@gmail.com",
       "id": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
       "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-      "updatedAt": "2026-10-02T20:40:23.923Z",
+      "updatedAt": "2026-10-02T21:02:41.777Z",
       "displayName": "Md Saad Alam",
-      "lastOrderedAt": "2026-10-02T19:50:46.772Z"
+      "lastOrderedAt": "2026-10-02T20:45:52.362Z"
     },
     "evVy5BL2BQXHZT2v7xcmTM1zRJe2": {
       "id": "evVy5BL2BQXHZT2v7xcmTM1zRJe2",
@@ -724,7 +724,7 @@
       "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocKRQ5gJ4NfeEUo3kpm75vdKqoas9SF5g4zdkH4PVpM-zHyMIQ=s96-c",
       "createdAt": "2026-10-02T20:36:03.974Z",
       "displayName": "Tach Unique",
-      "updatedAt": "2026-10-02T20:40:23.922Z"
+      "updatedAt": "2026-10-02T21:02:41.776Z"
     },
     "tachunique621@gmail.com": {
       "id": "evVy5BL2BQXHZT2v7xcmTM1zRJe2",
@@ -735,7 +735,7 @@
       "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocKRQ5gJ4NfeEUo3kpm75vdKqoas9SF5g4zdkH4PVpM-zHyMIQ=s96-c",
       "createdAt": "2026-10-02T20:36:03.974Z",
       "displayName": "Tach Unique",
-      "updatedAt": "2026-10-02T20:40:23.922Z"
+      "updatedAt": "2026-10-02T21:02:41.776Z"
     }
   },
   "claimed_payments": {
@@ -747,7 +747,7 @@
       "orderRef": "941243200603",
       "claimedAt": "2026-10-02T05:44:56.856Z",
       "id": "941243200603",
-      "updatedAt": "2026-10-02T20:40:23.918Z"
+      "updatedAt": "2026-10-02T21:02:41.772Z"
     },
     "626178738701": {
       "utr": "626178738701",
@@ -757,7 +757,7 @@
       "orderRef": "626178738701",
       "claimedAt": "2026-10-02T19:12:29.268Z",
       "id": "626178738701",
-      "updatedAt": "2026-10-02T20:40:23.920Z"
+      "updatedAt": "2026-10-02T21:02:41.775Z"
     }
   },
   "deposits": {
@@ -1794,6 +1794,50 @@
       "error": "Provider Rejected Order (incorrect service type)",
       "updatedAt": "2026-10-02T20:40:31.306Z",
       "id": "ord_1790973629091_g22p4"
+    },
+    "ord_1790973815819_lb9jp": {
+      "id": "ord_1790973815819_lb9jp",
+      "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "userEmail": "mtasvir375@gmail.com",
+      "serviceId": "srv_ig_followers",
+      "courseId": "srv_ig_followers",
+      "title": "Instagram Followers [High Quality]",
+      "category": "Instagram",
+      "quantity": 25000,
+      "targetLink": "https://www.instagram.com/reel/DIzFR7OT-Oj/?stkn=MW41NGd1MGw0Y3Vj",
+      "totalPrice": 387.5,
+      "isCombo": false,
+      "comboItems": [],
+      "status": "Completed",
+      "providerOrderId": "2847453",
+      "needsProviderTransmission": false,
+      "providerTransmissionStatus": "completed",
+      "balanceAlreadyDeducted": true,
+      "updatedAt": "2026-10-02T20:43:38.206Z",
+      "createdAt": "2026-10-02T20:43:38.206Z",
+      "providerRawResponse": "{\"order\":2847453}"
+    },
+    "ord_1790973948978_82bpl": {
+      "id": "ord_1790973948978_82bpl",
+      "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "userEmail": "mtasvir375@gmail.com",
+      "serviceId": "srv_ig_followers",
+      "courseId": "srv_ig_followers",
+      "title": "Instagram Followers [High Quality]",
+      "category": "Instagram",
+      "quantity": 56000,
+      "targetLink": "https://www.instagram.com/reel/DCwWiBwzcxP/?stkn=MWRwOWdnNHZxMGg5bA==",
+      "totalPrice": 868,
+      "isCombo": false,
+      "comboItems": [],
+      "status": "Completed",
+      "providerOrderId": "2847460",
+      "needsProviderTransmission": false,
+      "providerTransmissionStatus": "completed",
+      "balanceAlreadyDeducted": true,
+      "updatedAt": "2026-10-02T20:45:52.336Z",
+      "createdAt": "2026-10-02T20:45:52.336Z",
+      "providerRawResponse": "{\"order\":2847460}"
     }
   },
   "providers": {
@@ -1803,7 +1847,7 @@
       "apiKey": "f55bb2dfdc035f9c3c9e737bb72922a51d64309f",
       "createdAt": "2026-10-02T19:49:45.808Z",
       "id": "doc_1790970585810_2enek",
-      "updatedAt": "2026-10-02T20:40:23.921Z"
+      "updatedAt": "2026-10-02T21:02:41.775Z"
     }
   }
 }

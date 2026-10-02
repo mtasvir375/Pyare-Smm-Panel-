@@ -2447,12 +2447,6 @@ export async function startServer() {
   app.get("/api/courses", async (req, res) => {
     try {
       const forceFresh = req.query.force === "true";
-      if (!forceFresh && serverCache.courses.size > 0) {
-        const coursesList = Array.from(serverCache.courses.entries()).map(([id, c]) => ({ id, ...(c?.data ? c.data : c) }));
-        const activeServices = coursesList.filter((s: any) => s.status !== "archived" && s.status !== "hidden");
-        return res.json(activeServices.length > 0 ? activeServices : coursesList);
-      }
-
       const combinedMap = new Map<string, any>();
 
       // 1. Load from local disk (so newly added services in local_db are never lost)
@@ -2461,24 +2455,40 @@ export async function startServer() {
         localCourses.forEach(c => { if (c && c.id) combinedMap.set(c.id, c); });
       }
 
-      // 2. Load from serverCache (memory store)
+      // 2. Load from persistent cache
+      try {
+        if (fs.existsSync("persistent_cache.json")) {
+          const raw = fs.readFileSync("persistent_cache.json", "utf-8");
+          const parsed = JSON.parse(raw);
+          if (parsed && Array.isArray(parsed.courses)) {
+            parsed.courses.forEach(([id, val]: [string, any]) => {
+              const d = val?.data || val;
+              if (d && (d.id || id)) combinedMap.set(d.id || id, d);
+            });
+          }
+        }
+      } catch (e) {}
+
+      // 3. Load from serverCache (memory store)
       serverCache.courses.forEach((val, id) => {
         const d = val?.data || val;
         if (d && (d.id || id)) combinedMap.set(d.id || id, d);
       });
 
-      // 3. Merge with Firestore items if available
-      try {
-        const snap = await listDocsSafe("courses", req.headers.authorization as string, forceFresh);
-        if (snap && snap.docs && snap.docs.length > 0) {
-          snap.docs.forEach(doc => {
-            const d = typeof doc.data === "function" ? doc.data() : doc.data;
-            if (d) combinedMap.set(doc.id, { id: doc.id, ...d });
-          });
-          console.log(`[SERVER-DB] Merged ${snap.docs.length} services from Firestore.`);
+      // 4. Merge with Firestore items if available or force requested
+      if (forceFresh || combinedMap.size === 0) {
+        try {
+          const snap = await listDocsSafe("courses", req.headers.authorization as string, forceFresh);
+          if (snap && snap.docs && snap.docs.length > 0) {
+            snap.docs.forEach(doc => {
+              const d = typeof doc.data === "function" ? doc.data() : doc.data;
+              if (d) combinedMap.set(doc.id, { id: doc.id, ...d });
+            });
+            console.log(`[SERVER-DB] Merged ${snap.docs.length} services from Firestore.`);
+          }
+        } catch (err: any) {
+          console.warn("[SERVER-DB] Firestore fetch failed for courses:", err.message);
         }
-      } catch (err: any) {
-        console.warn("[SERVER-DB] Firestore fetch failed for courses:", err.message);
       }
 
       // Save merged list to memory & disk
@@ -6584,14 +6594,10 @@ export async function startServer() {
             params.append("service", itemServiceId);
             params.append("link", finalLink);
             params.append("quantity", String(itemQty));
-            params.append("terms", "1");
-            params.append("agree", "1");
-            params.append("terms_and_conditions", "1");
-            params.append("accept_terms", "1");
 
             const subRes = await axios.post(itemUrl, params, {
               headers: { "Content-Type": "application/x-www-form-urlencoded" },
-              timeout: 12000
+              timeout: 15000
             });
 
             if (subRes.data && (subRes.data.order || subRes.data.id)) {
@@ -6599,12 +6605,12 @@ export async function startServer() {
               comboResults.push({ name: itemName, providerOrderId: subOrderId, serviceId: itemServiceId });
               console.log(`[TRANSMIT-COMBO] Sub-Order "${itemName}" Succeeded -> Provider Order ID #${subOrderId}`);
             } else {
-              const errText = subRes.data?.error || JSON.stringify(subRes.data);
+              const errText = subRes.data?.error || subRes.data?.message || JSON.stringify(subRes.data);
               comboErrors.push(`${itemName}: ${errText}`);
               console.warn(`[TRANSMIT-COMBO] Sub-Order "${itemName}" warning: ${errText}`);
             }
           } catch (subErr: any) {
-            const errText = subErr.response?.data?.error || subErr.message;
+            const errText = subErr.response?.data?.error || subErr.response?.data?.message || subErr.message;
             comboErrors.push(`${itemName}: ${errText}`);
             console.error(`[TRANSMIT-COMBO] Sub-Order "${itemName}" failed: ${errText}`);
           }
@@ -6653,11 +6659,6 @@ export async function startServer() {
       params.append("service", resolvedProviderServiceId);
       params.append("link", finalLink);
       params.append("quantity", String(quantity).trim());
-      // Terms and conditions acceptance parameters (handles panels requiring terms acceptance)
-      params.append("terms", "1");
-      params.append("agree", "1");
-      params.append("terms_and_conditions", "1");
-      params.append("accept_terms", "1");
 
       let response;
       let attempts = 0;
@@ -6720,7 +6721,7 @@ export async function startServer() {
                 if (typeof rData === "string") {
                   const trimmed = rData.trim();
                   if (trimmed.startsWith("<") || trimmed.includes("<!DOCTYPE") || trimmed.includes("<html") || trimmed.includes("<body")) {
-                    providerErr = `HTTP ${axiosError.response.status} (Provider backend blocking / server configuration issue. Often caused by Cloudflare anti-bot checks)`;
+                    providerErr = `HTTP ${axiosError.response.status} (Provider backend blocking or Cloudflare protection issue)`;
                   } else {
                     providerErr = trimmed.substring(0, 200);
                   }
@@ -6738,7 +6739,10 @@ export async function startServer() {
               providerErr = axiosError.message;
             }
 
-            const stringErr = (typeof providerErr === "string") ? providerErr : JSON.stringify(providerErr);
+            let stringErr = (typeof providerErr === "string") ? providerErr : JSON.stringify(providerErr);
+            if (stringErr.toLowerCase().includes("server error has occurred") || stringErr.toLowerCase().includes("server error")) {
+              stringErr = `Provider Panel Error: SMM Provider panel ne error diya (500). Kripya Admin -> Providers mein Provider API URL, Key aur Service ID (${resolvedProviderServiceId}) check karein.`;
+            }
             console.error(`[TRANSMIT] Ultimate connection failure to provider: ${stringErr}`);
 
             if (skipStoreCompleted) {
@@ -6921,6 +6925,8 @@ export async function startServer() {
         
         if (lowerErr.includes("current link already in work") || lowerErr.includes("link already in work") || lowerErr.includes("link is already in work") || lowerErr.includes("link is already in progress")) {
           finalErrorStr = "Current link already in work";
+        } else if (lowerErr.includes("server error has occurred") || lowerErr.includes("server error") || lowerErr.includes("a server error")) {
+          finalErrorStr = `Provider Panel Error: SMM Provider panel ne server error diya (500). Kripya Admin -> Providers mein Provider API URL, Key aur Service ID (${resolvedProviderServiceId}) check karein.`;
         } else if (lowerErr.includes("not enough balance") || lowerErr.includes("insufficient balance") || lowerErr.includes("out of funds") || lowerErr.includes("low balance")) {
           finalErrorStr = "Provider Panel Out of Balance: Your SMM Provider panel account (e.g. SMMBin/SMMSpot) has ₹0 or insufficient funds. Please log into your provider panel account to add funds.";
         } else if (lowerErr.includes("incorrect api key") || lowerErr.includes("user disabled") || lowerErr.includes("invalid api key") || lowerErr.includes("key is missing")) {
