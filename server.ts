@@ -61,8 +61,8 @@ try {
 } catch (e) {
   console.warn("[FIREBASE] Could not read firebase-applet-config.json from cwd, using defaults");
 }
-const configProjectId = firebaseConfig.projectId || "ai-studio-f36429fa-50a3-4e58-b960-86b1e1d0141c";
-const apiKey = firebaseConfig.apiKey || "";
+const configProjectId = firebaseConfig.projectId || "gen-lang-client-0629912823";
+const apiKey = firebaseConfig.apiKey || "AIzaSyBW_IUbuocn83oBCfQfbZsGbswo-OcgxRY";
 const databaseId = firebaseConfig.firestoreDatabaseId || "ai-studio-f36429fa-50a3-4e58-b960-86b1e1d0141c";
 const dbId = databaseId; 
 const projectId = configProjectId; 
@@ -1307,11 +1307,12 @@ export async function startServer() {
     // do NOT perform a test read or sync against Firestore on startup! (0 Firestore reads)
     
     if (serverCache.settings && serverCache.settings.data) {
-      console.log("[STARTUP] Cache-first: settings/payment already loaded from persistent disk. Skipping Firestore test read.");
-      adminSdkSucceeded = false;
-      useRestFallback = true;
+      console.log("[STARTUP] Cache-first: settings/payment already loaded from persistent disk.");
+      // We don't need to force REST fallback here, we can still use the Admin SDK if available
+      adminSdkSucceeded = true; 
+      useRestFallback = false;
       if (serverCache.providers.size > 0) {
-        console.log(`[STARTUP] Cache-first: ${serverCache.providers.size} providers already loaded from disk. Skipping Firestore read.`);
+        console.log(`[STARTUP] Cache-first: ${serverCache.providers.size} providers already loaded from disk.`);
       } else {
         syncProvidersToSettingsInternal().catch(console.error);
       }
@@ -1701,18 +1702,31 @@ export async function startServer() {
 
   const listDocsSafe = async (collect: string, token?: string, forceFresh?: boolean) => {
     const docMap = new Map<string, any>();
+    const now = Date.now();
+    const CACHE_TTL = 24 * 60 * 60 * 1000;
 
-    // Check in-memory collection cache first
+    // 1. Check in-memory collection cache first
     if (!forceFresh) {
       if (collect === "deposits" && serverCache.deposits.size > 0) {
         serverCache.deposits.forEach((val, id) => docMap.set(id, { id, data: () => (val.data || val) }));
         return { docs: Array.from(docMap.values()) };
       }
+      if (collect === "courses" && serverCache.courses.size > 0) {
+        serverCache.courses.forEach((val, id) => docMap.set(id, { id, data: () => (val.data || val) }));
+        return { docs: Array.from(docMap.values()) };
+      }
+      if (collect === "providers" && serverCache.providers.size > 0) {
+        serverCache.providers.forEach((val, id) => docMap.set(id, { id, data: () => (val.data || val) }));
+        return { docs: Array.from(docMap.values()) };
+      }
     }
 
+    // 2. Firestore Admin SDK (Authoritative)
     if (!useRestFallback) {
       try {
-        const snap = await fdb.collection(collect).limit(50).get();
+        const limitCount = collect === "courses" ? 500 : 100;
+        const snap = await fdb.collection(collect).limit(limitCount).get();
+        console.log(`[LIST-SAFE-FIREBASE] Found ${snap.size} docs for ${collect}.`);
         if (!snap.empty) {
           snap.docs.forEach(doc => {
             docMap.set(doc.id, { id: doc.id, data: () => doc.data() });
@@ -1913,6 +1927,17 @@ export async function startServer() {
     setLocalDoc(col, id, data);
     setDocInSupabase(col, id, data); // Async write to Supabase
     setDocRESTAsync(col, id, data);
+    
+    // Authoritative Admin SDK Write (Ensures 100% permanence on custom domain)
+    if (fdb) {
+      try {
+        await fdb.collection(col).doc(id).set(data, { merge: true });
+        console.log(`[FIREBASE-ADMIN-SET] Successfully saved ${col}/${id} via Admin SDK.`);
+      } catch (err: any) {
+        console.warn(`[FIREBASE-ADMIN-SET-WARN] Failed for ${col}/${id}:`, err.message);
+      }
+    }
+
     invalidateCachesForCollection(col, id);
     if (col === "providers") {
       const merged = { id, ...data };
@@ -1996,6 +2021,17 @@ export async function startServer() {
     deleteLocalDoc(col, id);
     deleteDocInSupabase(col, id); // Async delete from Supabase
     deleteDocRESTAsync(col, id);
+    
+    // Authoritative Admin SDK Delete
+    if (fdb) {
+      try {
+        await fdb.collection(col).doc(id).delete();
+        console.log(`[FIREBASE-ADMIN-DELETE] Successfully deleted ${col}/${id} via Admin SDK.`);
+      } catch (err: any) {
+        console.warn(`[FIREBASE-ADMIN-DELETE-WARN] Failed for ${col}/${id}:`, err.message);
+      }
+    }
+
     invalidateCachesForCollection(col, id);
     return true;
   };
@@ -2207,15 +2243,38 @@ export async function startServer() {
         const providersList = Array.from(serverCache.providers.entries()).map(([id, p]) => ({ id, ...(p?.data ? p.data : p) }));
         return res.json(providersList);
       }
-      const snap = await listDocsSafe("providers", req.headers.authorization as string, forceFresh);
-      let providersList = snap.docs.map(doc => {
-        const d = typeof doc.data === "function" ? doc.data() : doc.data;
-        return { id: doc.id, ...d };
-      });
-      if (providersList) {
-        serverCache.providers.clear();
-        providersList.forEach(p => serverCache.providers.set(p.id, { data: p, time: Date.now() }));
-        savePersistentCache();
+
+      let providersList: any[] = [];
+      let fetchSuccess = false;
+
+      // Priority: Firestore
+      try {
+        const snap = await listDocsSafe("providers", req.headers.authorization as string, forceFresh);
+        if (snap && snap.docs) {
+          providersList = snap.docs.map(doc => {
+            const d = typeof doc.data === "function" ? doc.data() : doc.data;
+            return { id: doc.id, ...d };
+          });
+          fetchSuccess = true;
+          console.log(`[SERVER-DB] Fetched ${providersList.length} providers from Firestore.`);
+        }
+      } catch (err: any) {
+        console.warn("[SERVER-DB] Firestore fetch failed for providers:", err.message);
+      }
+
+      if (fetchSuccess) {
+        if (providersList.length > 0) {
+          serverCache.providers.clear();
+          providersList.forEach(p => serverCache.providers.set(p.id, { data: p, time: Date.now() }));
+          savePersistentCache();
+        }
+      } else {
+        // Fallback to local disk (Only if Firestore failed)
+        const local = listLocalDocs("providers", 100);
+        if (local && local.length > 0) {
+          providersList = local;
+          console.log(`[SERVER-DB] Falling back to ${providersList.length} providers from local disk.`);
+        }
       }
       res.json(providersList || []);
     } catch (err: any) {
@@ -2235,27 +2294,42 @@ export async function startServer() {
         return res.json(activeServices);
       }
 
-      let localCourses = listLocalDocs("courses", 500);
-      if (localCourses && localCourses.length > 0 && !forceFresh) {
-        const activeServices = localCourses.filter((s: any) => s.status !== "archived" && s.status !== "hidden");
-        return res.json(activeServices);
+      let coursesList: any[] = [];
+      let fetchSuccess = false;
+
+      // Priority 1: Firestore
+      try {
+        const snap = await listDocsSafe("courses", req.headers.authorization as string, forceFresh);
+        if (snap && snap.docs) {
+          coursesList = snap.docs.map(doc => {
+            const d = typeof doc.data === "function" ? doc.data() : doc.data;
+            return { id: doc.id, ...d };
+          });
+          fetchSuccess = true;
+          console.log(`[SERVER-DB] Fetched ${coursesList.length} services from Firestore.`);
+        }
+      } catch (err: any) {
+        console.warn("[SERVER-DB] Firestore fetch failed:", err.message);
       }
 
-      const snap = await listDocsSafe("courses", req.headers.authorization as string, forceFresh);
-      let coursesList = snap.docs.map(doc => {
-        const d = typeof doc.data === "function" ? doc.data() : doc.data;
-        return { id: doc.id, ...d };
-      });
-
-      if (coursesList && coursesList.length > 0) {
-        serverCache.courses.clear();
-        coursesList.forEach(c => {
-          serverCache.courses.set(c.id, { data: c, time: Date.now() });
-          setLocalDoc("courses", c.id, c);
-        });
-        savePersistentCache();
-      } else if (localCourses && localCourses.length > 0) {
-        coursesList = localCourses;
+      if (fetchSuccess) {
+        if (coursesList.length > 0) {
+          serverCache.courses.clear();
+          coursesList.forEach(c => {
+            serverCache.courses.set(c.id, { data: c, time: Date.now() });
+            setLocalDoc("courses", c.id, c);
+          });
+          savePersistentCache();
+        }
+        // If Firestore returned successful empty list, we HONOR IT (user might have deleted everything)
+        // unless it's a forceFresh and we really have nothing, then maybe use local disk as safety
+      } else {
+        // Priority 2: Local disk (Only if Firestore failed)
+        let localCourses = listLocalDocs("courses", 500);
+        if (localCourses && localCourses.length > 0) {
+          coursesList = localCourses;
+          console.log(`[SERVER-DB] Falling back to ${coursesList.length} services from local disk.`);
+        }
       }
 
       const activeServices = coursesList.filter((s: any) => s.status !== "archived" && s.status !== "hidden");
@@ -4171,107 +4245,62 @@ export async function startServer() {
   });
 
   app.post("/api/db/list", async (req, res) => {
-    const { collection: collect, limit: pageSize = 100 } = req.body;
+    const { collection: collect, limit: pageSize = 100, fresh = false } = req.body;
     if (!collect) return res.status(400).json({ error: "Missing collection" });
     
+    // 1. Check serverCache first (0 Reads) - Most efficient for repeated calls
+    if (!fresh) {
+      if (collect === "courses" && serverCache.courses.size > 0) {
+        const list = Array.from(serverCache.courses.values()).map((c: any) => c.data || c);
+        return res.json({ success: true, data: list.slice(0, pageSize) });
+      }
+      if (collect === "providers" && serverCache.providers.size > 0) {
+        const list = Array.from(serverCache.providers.values()).map((p: any) => p.data || p);
+        return res.json({ success: true, data: list.slice(0, pageSize) });
+      }
+      if (collect === "deposits" && serverCache.deposits.size > 0) {
+        const list = Array.from(serverCache.deposits.values())
+          .map((d: any) => d.data || d)
+          .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+        return res.json({ success: true, data: list.slice(0, pageSize) });
+      }
+      if (collect === "orders" && serverCache.latestOrders.length > 0) {
+        return res.json({ success: true, data: serverCache.latestOrders.slice(0, pageSize) });
+      }
+    }
+
+    // 2. Prioritize Firestore for important collections
+    if (collect === "courses" || collect === "providers" || collect === "settings" || collect === "users" || fresh) {
+      try {
+        const snap = await listDocsSafe(collect, req.headers.authorization as string, fresh);
+        if (snap && snap.docs && snap.docs.length > 0) {
+          const docs = snap.docs.map(doc => {
+            const d = typeof doc.data === "function" ? doc.data() : doc.data;
+            return { id: doc.id, ...d };
+          });
+          
+          // Update Cache
+          if (collect === "courses") {
+            serverCache.courses.clear();
+            docs.forEach(d => serverCache.courses.set(d.id, { data: d, time: Date.now() }));
+          } else if (collect === "providers") {
+            serverCache.providers.clear();
+            docs.forEach(d => serverCache.providers.set(d.id, { data: d, time: Date.now() }));
+          }
+          savePersistentCache();
+          
+          return res.json({ success: true, data: docs.slice(0, pageSize) });
+        }
+      } catch (e) {}
+    }
+
+    // 3. Fallback to local DB
     const localList = listLocalDocs(collect, pageSize);
     if (localList.length > 0) {
       return res.json({ success: true, data: localList });
     }
     
-    // Check serverCache first (0 Reads)
-    if (collect === "courses" && serverCache.courses.size > 0) {
-      const list = Array.from(serverCache.courses.values()).map((c: any) => c.data || c);
-      return res.json({ success: true, data: list.slice(0, pageSize) });
-    }
-    if (collect === "providers" && serverCache.providers.size > 0) {
-      const list = Array.from(serverCache.providers.values()).map((p: any) => p.data || p);
-      return res.json({ success: true, data: list.slice(0, pageSize) });
-    }
-    if (collect === "deposits" && serverCache.deposits.size > 0) {
-      const list = Array.from(serverCache.deposits.values())
-        .map((d: any) => d.data || d)
-        .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-      return res.json({ success: true, data: list.slice(0, pageSize) });
-    }
-    if (collect === "orders" && serverCache.latestOrders.length > 0) {
-      return res.json({ success: true, data: serverCache.latestOrders.slice(0, pageSize) });
-    }
-
-    try {
-      let results: any[] = [];
-      
-      // Try reading from Supabase first (0 Firestore reads!)
-      if (supabase) {
-        const sbResults = await listDocsFromSupabase(collect, pageSize);
-        if (sbResults && sbResults.length > 0) {
-          results = sbResults;
-        }
-      }
-
-      const effectiveLimit = Math.min(pageSize, 25);
-      const isCore = collect === "providers" || collect === "settings" || collect === "courses" || collect === "services";
-      if (results.length === 0 && (!useRestFallback || (adminSdkSucceeded && isCore))) {
-        try {
-          const snap = await fdb.collection(collect).limit(effectiveLimit).get();
-          snap.forEach(doc => results.push({ id: doc.id, ...doc.data() }));
-        } catch (err) {
-          if (!adminSdkSucceeded) useRestFallback = true;
-        }
-      }
-      
-      if (results.length === 0 && ((useRestFallback && !(adminSdkSucceeded && isCore)) || results.length === 0)) {
-        const targetProject = getTargetProject();
-        const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/${collect}?key=${apiKey}&pageSize=${effectiveLimit}`;
-        const resRest = await axios.get(url, { timeout: 10000 });
-        if (resRest.data && resRest.data.documents) {
-          resRest.data.documents.forEach((doc: any) => {
-            results.push({ id: doc.name.split("/").pop(), ...unwrapRestFields(doc.fields || {}) });
-          });
-        }
-      }
-      res.json({ success: true, data: results });
-
-      const nowTime = Date.now();
-      // Write fetched list results to local SQLite immediately so next list call reads from SQLite in 0ms with 0 reads!
-      results.forEach(item => {
-        if (item.id) {
-          try { setLocalDoc(collect, item.id, item); } catch (e) {}
-        }
-      });
-
-      if (collect === "providers" && results.length > 0) {
-        results.forEach(p => {
-          if (p.id) {
-            serverCache.providers.set(p.id, { data: p, time: nowTime });
-          }
-        });
-        savePersistentCache();
-      } else if (collect === "courses" && results.length > 0) {
-        results.forEach(c => {
-          if (c.id) {
-            serverCache.courses.set(c.id, { data: c, time: nowTime });
-          }
-        });
-        savePersistentCache();
-      } else if (collect === "deposits" && results.length > 0) {
-        results.forEach(d => {
-          if (d.id) {
-            serverCache.deposits.set(d.id, { data: d, time: nowTime });
-          }
-        });
-        savePersistentCache();
-      } else if (collect === "orders" && results.length > 0) {
-        results.forEach(o => {
-          if (o.id) {
-            addOrderToMemory(o.id, o);
-          }
-        });
-      }
-    } catch (err: any) {
-      console.error(`[REST-LIST-ERR] Failed to list ${collect}:`, err.response?.data || err.message);
-      res.status(500).json({ success: false, error: err.message });
-    }
+    return res.json({ success: true, data: [] });
   });
 
   app.post("/api/db/add", async (req, res) => {
