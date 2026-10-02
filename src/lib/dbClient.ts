@@ -241,26 +241,26 @@ export const dbClient = {
       } catch (e) {}
     }
 
-    // 1. Direct Firestore SDK fetch (most authoritative on client/custom domain)
+    // 1. Try cache & API Gateway (served from Express RAM - 0 Firestore Reads)
+    try {
+      const { getCachedProviders } = await import('@/lib/cache');
+      const cached = await getCachedProviders(forceRefresh);
+      if (Array.isArray(cached) && cached.length > 0) return cached;
+    } catch (e) {}
+
+    // 2. Fallback to API Gateway directly
+    try {
+      const res = await axios.get(formatApiUrl(`/api/providers?force=${forceRefresh}&t=${Date.now()}`), { timeout: 4000 });
+      if (Array.isArray(res.data) && res.data.length > 0) return res.data;
+    } catch (e) {}
+
+    // 3. Direct Firestore SDK fallback (only if API is completely offline)
     try {
       const snap = await getFirestoreDocs(collection(db, 'providers'));
       if (snap) {
         const docsList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         return docsList;
       }
-    } catch (e) {}
-
-    // 2. Try cache
-    try {
-      const { getCachedProviders } = await import('@/lib/cache');
-      const cached = await getCachedProviders(forceRefresh);
-      if (Array.isArray(cached)) return cached;
-    } catch (e) {}
-
-    // 3. Fallback to API Gateway
-    try {
-      const res = await axios.get(formatApiUrl(`/api/providers?force=${forceRefresh}&t=${Date.now()}`), { timeout: 4000 });
-      if (Array.isArray(res.data)) return res.data;
     } catch (e) {}
 
     return [];
@@ -323,26 +323,26 @@ export const dbClient = {
       } catch (e) {}
     }
 
-    // 1. Direct Firestore SDK fetch (most authoritative on custom domain)
+    // 1. Try cache & API Gateway (served from Express RAM - 0 Firestore Reads)
+    try {
+      const { getCachedCourses } = await import('@/lib/cache');
+      const cached = await getCachedCourses(forceRefresh);
+      if (Array.isArray(cached) && cached.length > 0) return cached;
+    } catch (e) {}
+
+    // 2. Fallback to API Gateway directly
+    try {
+      const res = await axios.get(formatApiUrl(`/api/courses?force=${forceRefresh}&t=${Date.now()}`), { timeout: 4000 });
+      if (Array.isArray(res.data) && res.data.length > 0) return res.data;
+    } catch (e) {}
+
+    // 3. Direct Firestore SDK fallback (only if API is completely offline)
     try {
       const snap = await getFirestoreDocs(collection(db, 'courses'));
       if (snap) {
         const docsList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         return docsList;
       }
-    } catch (e) {}
-
-    // 2. Try cache
-    try {
-      const { getCachedCourses } = await import('@/lib/cache');
-      const cached = await getCachedCourses(forceRefresh);
-      if (Array.isArray(cached)) return cached;
-    } catch (e) {}
-
-    // 3. Fallback to API Gateway
-    try {
-      const res = await axios.get(formatApiUrl(`/api/courses?force=${forceRefresh}&t=${Date.now()}`), { timeout: 4000 });
-      if (Array.isArray(res.data)) return res.data;
     } catch (e) {}
 
     return [];

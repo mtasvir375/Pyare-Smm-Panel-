@@ -83,14 +83,48 @@ export const getCachedCourses = async (forceRefresh = false) => {
         if (Array.isArray(parsed) && parsed.length > 0) {
           cachedCourses = sortServicesList(parsed);
           lastCoursesFetch = now;
-          getCachedCourses(true).catch(() => {});
           return cachedCourses;
         }
       }
     } catch (e) {}
   }
 
-  // 1. Direct Firestore SDK fetch (most authoritative on client/custom domain)
+  // 1. Primary path: Fetch from API Gateway (served from Express RAM / SQLite - 0 Firestore Reads)
+  try {
+    const res = await axios.get(formatApiUrl(`/api/courses?force=${forceRefresh}&t=${now}`), { timeout: 4000 });
+    if (Array.isArray(res.data) && res.data.length > 0) {
+      const activeServices = res.data.map((data: any) => ({
+        id: data.id,
+        ...data,
+        price: data.pricePerThousand !== undefined ? Number(data.pricePerThousand) : (data.price !== undefined ? Number(data.price) : 0),
+        pricePerThousand: data.pricePerThousand !== undefined ? Number(data.pricePerThousand) : (data.price !== undefined ? Number(data.price) : 0),
+        minLimit: data.minLimit !== undefined ? Number(data.minLimit) : (data.min_limit !== undefined ? Number(data.min_limit) : 1000),
+        min_limit: data.minLimit !== undefined ? Number(data.minLimit) : (data.min_limit !== undefined ? Number(data.min_limit) : 1000),
+        providerServiceId: data.providerServiceId !== undefined ? String(data.providerServiceId) : (data.provider_service_id !== undefined ? String(data.provider_service_id) : "0"),
+        provider_service_id: data.providerServiceId !== undefined ? String(data.providerServiceId) : (data.provider_service_id !== undefined ? String(data.provider_service_id) : "0"),
+        isPackage: data.isPackage !== undefined ? !!data.isPackage : !!data.is_package,
+        is_package: data.isPackage !== undefined ? !!data.isPackage : !!data.is_package,
+        packagePrice: data.packagePrice !== undefined ? Number(data.packagePrice) : (data.package_price !== undefined ? Number(data.package_price) : 0),
+        package_price: data.packagePrice !== undefined ? Number(data.packagePrice) : (data.package_price !== undefined ? Number(data.packagePrice) : 0),
+        packageQuantity: data.packageQuantity !== undefined ? Number(data.packageQuantity) : (data.package_quantity !== undefined ? Number(data.packageQuantity) : 1000),
+        package_quantity: data.packageQuantity !== undefined ? Number(data.packageQuantity) : (data.package_quantity !== undefined ? Number(data.packageQuantity) : 1000),
+        iconUrl: data.iconUrl || data.icon_url || null,
+        icon_url: data.iconUrl || data.icon_url || null,
+      }));
+
+      cachedCourses = sortServicesList(activeServices);
+      lastCoursesFetch = now;
+      try {
+        localStorage.setItem("cached_courses_time", now.toString());
+        localStorage.setItem("cached_courses", JSON.stringify(cachedCourses));
+      } catch(e) {}
+      return cachedCourses;
+    }
+  } catch (apiErr) {
+    console.warn("[CACHE] API /api/courses call failed:", apiErr);
+  }
+
+  // 2. Direct Firestore SDK fallback (only if API server is completely offline)
   try {
     const { collection, getDocs } = await import("firebase/firestore");
     const { db } = await import("@/lib/firebase");
@@ -331,7 +365,23 @@ export const getCachedProviders = async (forceRefresh = false) => {
     } catch(e) {}
   }
 
-  // 1. Try Direct Firestore SDK fetch (most reliable on custom domain)
+  // 1. Primary path: Fetch from API Gateway (served from Express RAM / SQLite - 0 Firestore Reads)
+  try {
+    const res = await axios.get(formatApiUrl(`/api/providers?force=${forceRefresh}&t=${now}`), { timeout: 4000 });
+    if (Array.isArray(res.data) && res.data.length > 0) {
+      cachedProviders = res.data;
+      lastProvidersFetch = now;
+      try {
+        localStorage.setItem("cached_providers_time", now.toString());
+        localStorage.setItem("cached_providers", JSON.stringify(cachedProviders));
+      } catch(e) {}
+      return cachedProviders;
+    }
+  } catch (apiErr) {
+    console.warn("[CACHE] Failed to load providers from /api/providers:", apiErr);
+  }
+
+  // 2. Direct Firestore SDK fallback (only if API server is completely offline)
   try {
     const { collection, getDocs } = await import("firebase/firestore");
     const { db } = await import("@/lib/firebase");
