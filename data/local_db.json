@@ -293,7 +293,7 @@
       "enableUpi": true,
       "enableTelegramBot": true,
       "createdAt": "2026-10-02T10:33:01.410Z",
-      "updatedAt": "2026-10-02T21:02:41.771Z",
+      "updatedAt": "2026-10-02T21:02:56.490Z",
       "id": "payment",
       "providerApiUrl": "",
       "providerApiKey": "",
@@ -334,7 +334,7 @@
       "manualQrEnabled": false,
       "instantQrEnabled": true,
       "id": "telegram_bot",
-      "updatedAt": "2026-10-02T21:02:41.773Z",
+      "updatedAt": "2026-10-02T21:02:56.491Z",
       "chatId": "-1004483507103",
       "enabled": true,
       "startedAt": "2026-10-02T11:55:47.303Z",
@@ -503,7 +503,7 @@
       "email": "mtasvir375@gmail.com",
       "id": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
       "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-      "updatedAt": "2026-10-02T21:02:41.777Z",
+      "updatedAt": "2026-10-02T21:02:56.495Z",
       "displayName": "Md Saad Alam",
       "lastOrderedAt": "2026-10-02T20:45:52.362Z"
     },
@@ -516,7 +516,7 @@
       "role": "admin",
       "balance": 5000,
       "createdAt": "2026-10-02T10:33:01.408Z",
-      "updatedAt": "2026-10-02T21:02:41.774Z"
+      "updatedAt": "2026-10-02T21:02:56.492Z"
     },
     "mdsarfarajalam727712@gmail.com": {
       "uid": "5LRJPrkW5vVimfCFKGbzTKhXtji2",
@@ -527,7 +527,7 @@
       "role": "admin",
       "balance": 5000,
       "createdAt": "2026-10-02T10:33:01.408Z",
-      "updatedAt": "2026-10-02T21:02:41.774Z"
+      "updatedAt": "2026-10-02T21:02:56.492Z"
     },
     "UlsK3PLAGHdiSZAhx58Cb23FXLq2": {
       "uid": "UlsK3PLAGHdiSZAhx58Cb23FXLq2",
@@ -538,7 +538,7 @@
       "role": "admin",
       "balance": 10,
       "createdAt": "2026-10-02T10:33:01.408Z",
-      "updatedAt": "2026-10-02T21:02:41.774Z"
+      "updatedAt": "2026-10-02T21:02:56.493Z"
     },
     "mdtasvir888@gmail.com": {
       "uid": "UlsK3PLAGHdiSZAhx58Cb23FXLq2",
@@ -549,7 +549,7 @@
       "role": "admin",
       "balance": 10,
       "createdAt": "2026-10-02T10:33:01.408Z",
-      "updatedAt": "2026-10-02T21:02:41.774Z"
+      "updatedAt": "2026-10-02T21:02:56.493Z"
     },
     "c4w6bjFk9leTy9SR2ijM0YyJVfx1": {
       "role": "admin",
@@ -711,7 +711,7 @@
       "email": "mtasvir375@gmail.com",
       "id": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
       "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-      "updatedAt": "2026-10-02T21:02:41.777Z",
+      "updatedAt": "2026-10-02T21:02:56.495Z",
       "displayName": "Md Saad Alam",
       "lastOrderedAt": "2026-10-02T20:45:52.362Z"
     },
@@ -724,7 +724,7 @@
       "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocKRQ5gJ4NfeEUo3kpm75vdKqoas9SF5g4zdkH4PVpM-zHyMIQ=s96-c",
       "createdAt": "2026-10-02T20:36:03.974Z",
       "displayName": "Tach Unique",
-      "updatedAt": "2026-10-02T21:02:41.776Z"
+      "updatedAt": "2026-10-02T21:02:56.495Z"
     },
     "tachunique621@gmail.com": {
       "id": "evVy5BL2BQXHZT2v7xcmTM1zRJe2",
@@ -735,7 +735,7 @@
       "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocKRQ5gJ4NfeEUo3kpm75vdKqoas9SF5g4zdkH4PVpM-zHyMIQ=s96-c",
       "createdAt": "2026-10-02T20:36:03.974Z",
       "displayName": "Tach Unique",
-      "updatedAt": "2026-10-02T21:02:41.776Z"
+      "updatedAt": "2026-10-02T21:02:56.495Z"
     }
   },
   "claimed_payments": {
@@ -747,7 +747,7 @@
       "orderRef": "941243200603",
       "claimedAt": "2026-10-02T05:44:56.856Z",
       "id": "941243200603",
-      "updatedAt": "2026-10-02T21:02:41.772Z"
+      "updatedAt": "2026-10-02T21:02:56.491Z"
     },
     "626178738701": {
       "utr": "626178738701",
@@ -757,7 +757,7 @@
       "orderRef": "626178738701",
       "claimedAt": "2026-10-02T19:12:29.268Z",
       "id": "626178738701",
-      "updatedAt": "2026-10-02T21:02:41.775Z"
+      "updatedAt": "2026-10-02T21:02:56.493Z"
     }
   },
   "deposits": {
@@ -1838,6 +1838,14 @@
       "updatedAt": "2026-10-02T20:45:52.336Z",
       "createdAt": "2026-10-02T20:45:52.336Z",
       "providerRawResponse": "{\"order\":2847460}"
+    },
+    "ord_1790976551752_8vw7e": {
+      "status": "Failed",
+      "needsProviderTransmission": false,
+      "providerTransmissionStatus": "failed",
+      "error": "Provider Rejected Order (Min amount of this order is: 200 And Max Amount of order is: 150000)",
+      "updatedAt": "2026-10-02T21:29:12.967Z",
+      "id": "ord_1790976551752_8vw7e"
     }
   },
   "providers": {
@@ -1847,7 +1855,7 @@
       "apiKey": "f55bb2dfdc035f9c3c9e737bb72922a51d64309f",
       "createdAt": "2026-10-02T19:49:45.808Z",
       "id": "doc_1790970585810_2enek",
-      "updatedAt": "2026-10-02T21:02:41.775Z"
+      "updatedAt": "2026-10-02T21:02:56.494Z"
     }
   }
 }

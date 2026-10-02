@@ -1,6 +1,6 @@
 import axios from "axios";
 
-export const STABLE_CLOUD_RUN_BACKEND = "";
+export const STABLE_CLOUD_RUN_BACKEND = "https://ais-dev-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
 
 export const getApiBaseUrl = (): string => {
   if (typeof window === "undefined") {
@@ -15,9 +15,14 @@ export const getApiBaseUrl = (): string => {
     }
   } catch (e) {}
 
-  // Always use same-origin relative paths ("") so all API requests
-  // on custom domain (pyaresmmpanel.online), localhost, and preview
-  // go directly to their own live API gateway without cross-origin or redirect blocks.
+  const hostname = window.location.hostname;
+  // If running on a custom domain (like pyaresmmpanel.online), static hosting only serves
+  // frontend HTML/JS. We MUST route all API requests directly to the live Cloud Run backend!
+  if (hostname !== "localhost" && hostname !== "127.0.0.1" && !hostname.includes("run.app") && !hostname.includes("webcontainer.io") && !hostname.includes("aistudio")) {
+    return STABLE_CLOUD_RUN_BACKEND;
+  }
+
+  // Same-origin relative paths for preview/localhost
   return "";
 };
 
