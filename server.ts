@@ -2000,20 +2000,6 @@ export async function startServer() {
     return true;
   };
 
-  // Activate auto-ensure on startup only if absolutely missing
-  const ensureBackendUrlIsSet = async () => {
-    try {
-      const snap = await getDocSafe("settings", "payment");
-      if (!snap.exists) {
-        await setDocSafe("settings", "payment", { backendApiUrl: "" });
-        console.log(`[INIT] ✅ Initialized payment settings doc.`);
-      }
-    } catch (err: any) {
-      console.warn(`[INIT] ⚠️ Auto-updating backendApiUrl failed: ${err.message}`);
-    }
-  };
-  ensureBackendUrlIsSet();
-  
   // Health check
   app.get("/api/health", (req, res) => res.json({ status: "ok" }));
   app.get("/api/admin/transmission-logs", (req, res) => res.json([]));
