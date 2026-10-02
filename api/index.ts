@@ -107,7 +107,7 @@ for (const [uid, info] of Object.entries(KNOWN_USER_EMAILS)) {
 }
 
 async function getRestDoc(collection: string, docId: string, fresh = false): Promise<any> {
-  if (!fresh) {
+  if (!fresh && collection !== "settings") {
     const local = getLocalDoc(collection, docId);
     if (local) return local;
   }
@@ -346,7 +346,7 @@ export default async function handler(req: any, res: any) {
         await setRestDoc("settings", "payment", updated);
         return res.status(200).json({ success: true, message: "Settings saved", settings: updated });
       }
-      const settings = await getRestDoc("settings", "payment", isFresh) || {};
+      const settings = await getRestDoc("settings", "payment", true) || {};
       return res.status(200).json(settings);
     }
 

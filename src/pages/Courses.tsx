@@ -794,7 +794,7 @@ export default function Courses() {
   return (
     <div className="w-full max-w-xl mx-auto space-y-4 pb-12">
       {/* Balance Card */}
-      <Card className={cn("border-none shadow-sm overflow-hidden relative group text-white", festivalConfig ? festivalConfig.cardBgClass : "bg-primary text-primary-foreground shadow-md shadow-primary/10")}>
+      <Card className={cn("border border-white/10 shadow-xl overflow-hidden relative group text-white rounded-2xl", festivalConfig ? festivalConfig.cardBgClass : "bg-gradient-to-r from-[#0a0d14] via-[#111622] to-[#0a0d14] shadow-black/40")}>
         {!festivalConfig && (
           <div className="absolute inset-0 pointer-events-none">
             {renderLights()}
@@ -805,17 +805,17 @@ export default function Courses() {
 
         {!festivalConfig && (
           <div className="absolute top-0 right-0 p-6 opacity-10">
-            <Wallet className="w-16 h-16" />
+            <Wallet className="w-16 h-16 text-white" />
           </div>
         )}
 
         <CardContent className="p-4 relative z-20 h-full flex flex-col justify-center">
-          <p className="text-[10px] font-bold uppercase tracking-wider opacity-90">AVAILABLE BALANCE</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-300">AVAILABLE BALANCE</p>
           <div className="flex items-center gap-3 mt-1">
-            <h2 className="text-3xl font-bold">₹{Number(profile?.balance || 0).toFixed(2)}</h2>
+            <h2 className="text-3xl font-extrabold text-white tracking-tight">₹{Number(profile?.balance || 0).toFixed(2)}</h2>
             <Button 
               size="sm" 
-              className={cn("rounded-full h-7 text-[10px] font-bold uppercase px-4 shadow-md border-none", festivalConfig ? "bg-[#111] hover:bg-black text-white" : "bg-primary hover:bg-primary/90 text-primary-foreground")}
+              className="rounded-full h-7 text-[10px] font-extrabold uppercase px-4 shadow-md bg-primary hover:brightness-110 text-primary-foreground border-none transition-all duration-200 active:scale-95 shadow-primary/25 cursor-pointer"
               onClick={async () => {
                 setIsAddFundsOpen(true);
                 try {
