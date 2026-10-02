@@ -15,8 +15,21 @@ export const getApiBaseUrl = (): string => {
     }
   } catch (e) {}
 
-  // Always use relative paths on the client-side for absolute reliability across all default and custom domains!
-  return "";
+  const hostname = window.location.hostname;
+  
+  // If running on local machine, use relative paths
+  if (hostname === "localhost" || hostname === "127.0.0.1") {
+    return "";
+  }
+  
+  // If already running directly on Cloud Run host, use relative paths
+  if (hostname.includes("run.app") || hostname.includes("ais-dev") || hostname.includes("ais-pre")) {
+    return "";
+  }
+  
+  // If accessed from custom domain (Vercel static host),
+  // always forward all API/Database calls to the live Cloud Run backend!
+  return STABLE_CLOUD_RUN_BACKEND;
 };
 
 export const formatApiUrl = (endpoint: string): string => {
