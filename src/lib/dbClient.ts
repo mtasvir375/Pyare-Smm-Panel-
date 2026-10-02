@@ -1,5 +1,17 @@
 import axios from 'axios';
 import { formatApiUrl } from './apiConfig';
+import { db } from './firebase';
+import { 
+  doc, 
+  getDoc as getFirestoreDoc, 
+  setDoc as setFirestoreDoc, 
+  getDocs as getFirestoreDocs, 
+  collection, 
+  deleteDoc as deleteFirestoreDoc, 
+  limit as fsLimit, 
+  query as fsQuery,
+  orderBy as fsOrderBy
+} from 'firebase/firestore';
 
 export interface UserProfile {
   uid: string;
@@ -16,7 +28,7 @@ export interface UserProfile {
 }
 
 export const dbClient = {
-  // Generic helpers - 100% SQLite & Node.js memory powered (0 Firestore reads/writes)
+  // Generic helpers - Dual API Gateway & Direct Firestore SDK for 100% synchronization across Default & Custom Domains
   async getDoc(table: string, id: string, options?: { fresh?: boolean }): Promise<any> {
     const forceFresh = !!options?.fresh;
     if (table === "settings" && id === "payment" && !forceFresh) {
@@ -26,27 +38,47 @@ export const dbClient = {
         if (settings) return settings;
       } catch (e) {}
     }
+
+    // 1. Try API gateway
     try {
-      const res = await axios.post(formatApiUrl('/api/db/get'), { collection: table, id, fresh: forceFresh });
+      const res = await axios.post(formatApiUrl('/api/db/get'), { collection: table, id, fresh: forceFresh }, { timeout: 4000 });
       if (res.data && res.data.success && res.data.data && Object.keys(res.data.data).length > 0) {
         return { id, ...res.data.data };
       }
-      if (res.data && res.data.error === "Document not found") {
-        return null;
-      }
     } catch (proxyErr: any) {}
+
+    // 2. Direct Firestore fallback (Always works across custom domain and default URL!)
+    try {
+      const docRef = doc(db, table, id);
+      const snap = await getFirestoreDoc(docRef);
+      if (snap.exists()) {
+        return { id: snap.id, ...snap.data() };
+      }
+    } catch (fsErr: any) {}
 
     return null;
   },
 
   async getDocs(table: string, constraints: any[] = []): Promise<any[]> {
+    const limitCount = table === 'courses' ? 100 : (table === 'providers' ? 50 : 30);
+
+    // 1. Try API gateway
     try {
-      const limitCount = table === 'courses' ? 100 : (table === 'providers' ? 50 : 30);
-      const res = await axios.post(formatApiUrl('/api/db/list'), { collection: table, limit: limitCount });
-      if (res.data && res.data.success && Array.isArray(res.data.data)) {
+      const res = await axios.post(formatApiUrl('/api/db/list'), { collection: table, limit: limitCount }, { timeout: 4000 });
+      if (res.data && res.data.success && Array.isArray(res.data.data) && res.data.data.length > 0) {
         return res.data.data;
       }
     } catch (proxyErr: any) {}
+
+    // 2. Direct Firestore fallback
+    try {
+      const colRef = collection(db, table);
+      const q = fsQuery(colRef, fsLimit(limitCount));
+      const snap = await getFirestoreDocs(q);
+      if (!snap.empty) {
+        return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      }
+    } catch (fsErr: any) {}
 
     return [];
   },
@@ -55,33 +87,32 @@ export const dbClient = {
     if (table === 'courses' || table === 'settings' || table === 'providers') {
       axios.post(formatApiUrl('/api/clear-cache')).catch(() => {});
     }
+
+    // 1. Send to API Gateway
+    axios.post(formatApiUrl('/api/db/set'), { collection: table, id, data }).catch(() => {});
+
+    // 2. Write directly to Firestore SDK to ensure instant permanent sync across ALL domains!
     try {
-      await axios.post(formatApiUrl('/api/db/set'), { collection: table, id, data });
-    } catch (proxyErr: any) {}
+      const docRef = doc(db, table, id);
+      await setFirestoreDoc(docRef, data, { merge: true });
+    } catch (fsErr: any) {}
   },
 
   async updateDoc(table: string, id: string, data: any): Promise<void> {
-    if (table === 'courses' || table === 'settings' || table === 'providers') {
-      axios.post(formatApiUrl('/api/clear-cache')).catch(() => {});
-    }
-    try {
-      await axios.post(formatApiUrl('/api/db/update'), { collection: table, id, data });
-    } catch (e: any) {}
+    await this.setDoc(table, id, data);
   },
 
   async addDoc(table: string, data: any): Promise<any> {
     if (table === 'courses' || table === 'settings' || table === 'providers') {
       axios.post(formatApiUrl('/api/clear-cache')).catch(() => {});
     }
-    try {
-      const res = await axios.post(formatApiUrl('/api/db/add'), { collection: table, data });
-      if (res.data && res.data.success !== false && res.data.id) {
-        return { id: res.data.id, ...data };
-      }
-    } catch (e: any) {}
+    const prefix = table === "orders" ? "ord_" : table === "deposits" ? "dep_" : table === "transactions" ? "txn_" : "doc_";
+    const autoId = data?.id || (prefix + Date.now() + "_" + Math.random().toString(36).substring(2, 7));
+    const merged = { ...data, id: autoId };
 
-    const fakeId = `doc_${Date.now()}`;
-    return { id: fakeId, ...data };
+    // Write to API & Firestore
+    await this.setDoc(table, autoId, merged);
+    return merged;
   },
 
   async saveDoc(table: string, id: string, data: any): Promise<void> {
@@ -92,23 +123,17 @@ export const dbClient = {
     if (table === 'courses' || table === 'settings' || table === 'providers') {
       axios.post(formatApiUrl('/api/clear-cache')).catch(() => {});
     }
+    axios.post(formatApiUrl('/api/db/delete'), { collection: table, id }).catch(() => {});
     try {
-      await axios.post(formatApiUrl('/api/db/delete'), { collection: table, id });
-    } catch (e) {}
+      const docRef = doc(db, table, id);
+      await deleteFirestoreDoc(docRef);
+    } catch (fsErr: any) {}
   },
 
   // User specific
   async getUserProfile(uid: string): Promise<UserProfile | null> {
     if (!uid) return null;
-    
-    try {
-      const res = await axios.post(formatApiUrl('/api/db/get'), { collection: 'users', id: uid, fresh: true });
-      if (res.data && res.data.success && res.data.data) {
-        return { id: uid, uid, ...res.data.data };
-      }
-    } catch (proxyErr: any) {}
-
-    return null;
+    return this.getDoc('users', uid, { fresh: true });
   },
 
   async createUserProfile(uid: string, profileData: Partial<UserProfile>): Promise<void> {
@@ -140,7 +165,7 @@ export const dbClient = {
 
   async getMyOrders(userId: string): Promise<any[]> {
     try {
-      const response = await axios.get(formatApiUrl(`/api/user-orders/${userId}?limit=50`));
+      const response = await axios.get(formatApiUrl(`/api/user-orders/${userId}?limit=50`), { timeout: 4000 });
       return response.data || [];
     } catch (e) {
       return [];
@@ -151,7 +176,7 @@ export const dbClient = {
     const limitCount = Math.min(l, 10);
     try {
       const emailQuery = email ? `&email=${encodeURIComponent(email)}` : "";
-      const response = await axios.get(formatApiUrl(`/api/user-orders/${userId}?limit=${limitCount}${emailQuery}`), { timeout: 6000 });
+      const response = await axios.get(formatApiUrl(`/api/user-orders/${userId}?limit=${limitCount}${emailQuery}`), { timeout: 4000 });
       if (Array.isArray(response.data)) {
         return response.data.slice(0, 10);
       }
@@ -160,17 +185,12 @@ export const dbClient = {
   },
 
   async getAllOrders(): Promise<any[]> {
-    try {
-      const response = await axios.get(formatApiUrl(`/api/admin/all-orders`));
-      return response.data || [];
-    } catch (e) {
-      return [];
-    }
+    return this.getOrdersAdmin(50);
   },
 
   async getPendingDeposits(force = false): Promise<any[]> {
     try {
-      const res = await axios.get(formatApiUrl(`/api/admin/all-deposits?limit=50&force=${force}`));
+      const res = await axios.get(formatApiUrl(`/api/admin/all-deposits?limit=50&force=${force}`), { timeout: 4000 });
       if (Array.isArray(res.data)) {
         return res.data.filter((d: any) => (d.status || '').toLowerCase() === 'pending');
       }
@@ -180,8 +200,16 @@ export const dbClient = {
 
   async getDepositsAdmin(l = 50, force = false): Promise<any[]> {
     try {
-      const res = await axios.get(formatApiUrl(`/api/admin/all-deposits?limit=${l}&force=${force}`));
-      if (Array.isArray(res.data)) return res.data;
+      const res = await axios.get(formatApiUrl(`/api/admin/all-deposits?limit=${l}&force=${force}`), { timeout: 4000 });
+      if (Array.isArray(res.data) && res.data.length > 0) return res.data;
+    } catch (e) {}
+
+    // Firestore fallback
+    try {
+      const snap = await getFirestoreDocs(fsQuery(collection(db, 'deposits'), fsLimit(l)));
+      if (!snap.empty) {
+        return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      }
     } catch (e) {}
     return [];
   },
@@ -209,10 +237,20 @@ export const dbClient = {
       const cached = await getCachedProviders();
       if (Array.isArray(cached) && cached.length > 0) return cached;
     } catch (e) {}
+
     try {
-      const res = await axios.get(formatApiUrl('/api/providers'));
+      const res = await axios.get(formatApiUrl('/api/providers'), { timeout: 4000 });
       if (Array.isArray(res.data) && res.data.length > 0) return res.data;
     } catch (e) {}
+
+    // Firestore direct fallback
+    try {
+      const snap = await getFirestoreDocs(collection(db, 'providers'));
+      if (!snap.empty) {
+        return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      }
+    } catch (e) {}
+
     return [];
   },
 
@@ -256,13 +294,8 @@ export const dbClient = {
   },
 
   async getTableCount(table: string): Promise<number> {
-    try {
-      const res = await axios.post(formatApiUrl('/api/db/list'), { collection: table, limit: 1000 });
-      if (res.data && res.data.success && Array.isArray(res.data.data)) {
-        return res.data.data.length;
-      }
-    } catch (e) {}
-    return 0;
+    const docs = await this.getDocs(table);
+    return docs.length;
   },
 
   // Order specific
@@ -276,18 +309,37 @@ export const dbClient = {
       const cached = await getCachedCourses();
       if (Array.isArray(cached) && cached.length > 0) return cached;
     } catch (e) {}
+
     try {
-      const res = await axios.get(formatApiUrl('/api/courses'));
+      const res = await axios.get(formatApiUrl('/api/courses'), { timeout: 4000 });
       if (Array.isArray(res.data) && res.data.length > 0) return res.data;
     } catch (e) {}
+
+    // Firestore direct fallback
+    try {
+      const snap = await getFirestoreDocs(collection(db, 'courses'));
+      if (!snap.empty) {
+        return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      }
+    } catch (e) {}
+
     return [];
   },
 
   async getOrdersAdmin(l = 50): Promise<any[]> {
     try {
-      const response = await axios.get(formatApiUrl(`/api/admin/all-orders?limit=${l}`));
+      const response = await axios.get(formatApiUrl(`/api/admin/all-orders?limit=${l}`), { timeout: 4000 });
       if (Array.isArray(response.data) && response.data.length > 0) return response.data;
     } catch (e) {}
+
+    // Firestore fallback
+    try {
+      const snap = await getFirestoreDocs(fsQuery(collection(db, 'orders'), fsLimit(l)));
+      if (!snap.empty) {
+        return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      }
+    } catch (e) {}
+
     return [];
   },
 
