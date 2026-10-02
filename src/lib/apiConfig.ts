@@ -1,6 +1,6 @@
 import axios from "axios";
 
-export const STABLE_CLOUD_RUN_BACKEND = "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
+export const STABLE_CLOUD_RUN_BACKEND = "https://ais-dev-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
 
 export const getApiBaseUrl = (): string => {
   if (typeof window === "undefined") {
