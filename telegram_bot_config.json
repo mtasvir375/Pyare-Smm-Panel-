@@ -4,11 +4,12 @@
   "upiId": "9122557342@ybl",
   "payeeName": "Pyare SMM Panel",
   "enabled": true,
-  "lastUpdateId": 33028608,
+  "lastUpdateId": 33028621,
   "botUsername": "BbbSmart_bot",
-  "startedAt": "2026-10-02T04:09:03.450Z",
-  "lastPolledAt": "2026-10-02T04:33:14.071Z",
+  "startedAt": "2026-10-02T10:47:21.761Z",
+  "lastPolledAt": "2026-10-02T10:48:36.985Z",
   "mode": "polling",
   "instantQrEnabled": true,
-  "manualQrEnabled": false
+  "manualQrEnabled": false,
+  "lastError": "Conflict: Waiting for other connection to close..."
 }

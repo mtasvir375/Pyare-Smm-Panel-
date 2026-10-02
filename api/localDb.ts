@@ -1,16 +1,12 @@
 import fs from "fs";
 import path from "path";
-import initSqlJs, { Database } from "sql.js";
 import { DEFAULT_SERVICES, DEFAULT_SETTINGS } from "../src/data/defaultServices";
 
-let dbInstance: Database | null = null;
-let sqlEngine: any = null;
 const isVercel = !!process.env.VERCEL;
 const dbDir = isVercel ? "/tmp" : path.join(process.cwd(), "data");
-const dbPath = path.join(dbDir, "app.db");
-const seedDbPath = path.join(process.cwd(), "data", "app.db");
+const dbFile = path.join(dbDir, "local_db.json");
 
-// In-Memory map fallback for 100% immediate synchronous availability across all environments
+// In-Memory map for 100% immediate synchronous availability across all environments
 const memoryStore = new Map<string, Map<string, any>>();
 
 function getColMap(collection: string): Map<string, any> {
@@ -52,78 +48,45 @@ const INITIAL_USERS: Record<string, any> = {
   }
 };
 
-export async function getLocalSqliteDb(): Promise<Database> {
-  if (dbInstance) return dbInstance;
+let isInitialized = false;
 
+function loadDbFromDisk() {
+  if (isInitialized) return;
+  isInitialized = true;
+  try {
+    if (fs.existsSync(dbFile)) {
+      const raw = fs.readFileSync(dbFile, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        for (const [col, docs] of Object.entries(parsed)) {
+          const colMap = getColMap(col);
+          if (docs && typeof docs === "object") {
+            for (const [id, doc] of Object.entries(docs as any)) {
+              colMap.set(id, doc);
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {}
+
+  seedDefaults();
+}
+
+function saveDbToDisk() {
   try {
     if (!fs.existsSync(dbDir)) {
       fs.mkdirSync(dbDir, { recursive: true });
     }
-  } catch (e) {}
-
-  if (!sqlEngine) {
-    sqlEngine = await initSqlJs();
-  }
-
-  let sourceBuffer: Buffer | null = null;
-  if (fs.existsSync(dbPath)) {
-    try { sourceBuffer = fs.readFileSync(dbPath); } catch (e) {}
-  } else if (fs.existsSync(seedDbPath)) {
-    try { sourceBuffer = fs.readFileSync(seedDbPath); } catch (e) {}
-  }
-
-  if (sourceBuffer) {
-    try {
-      dbInstance = new sqlEngine.Database(sourceBuffer);
-      loadSqliteIntoMemory();
-    } catch (e) {
-      dbInstance = new sqlEngine.Database();
-    }
-  } else {
-    dbInstance = new sqlEngine.Database();
-  }
-
-  // Create document table if it doesn't exist
-  dbInstance.run(`
-    CREATE TABLE IF NOT EXISTS documents (
-      collection TEXT NOT NULL,
-      id TEXT NOT NULL,
-      data TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      PRIMARY KEY (collection, id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_col ON documents(collection);
-  `);
-
-  saveDbToDisk();
-  seedDefaults();
-  return dbInstance;
-}
-
-function loadSqliteIntoMemory() {
-  if (!dbInstance) return;
-  try {
-    const stmt = dbInstance.prepare("SELECT collection, id, data FROM documents");
-    while (stmt.step()) {
-      const row = stmt.getAsObject();
-      if (row.collection && row.id && row.data) {
-        try {
-          const parsed = JSON.parse(String(row.data));
-          getColMap(String(row.collection)).set(String(row.id), parsed);
-        } catch (e) {}
+    const serialized: Record<string, Record<string, any>> = {};
+    for (const [col, map] of memoryStore.entries()) {
+      serialized[col] = {};
+      for (const [id, doc] of map.entries()) {
+        serialized[col][id] = doc;
       }
     }
-    stmt.free();
+    fs.writeFileSync(dbFile, JSON.stringify(serialized, null, 2), "utf-8");
   } catch (e) {}
-}
-
-function saveDbToDisk() {
-  if (!dbInstance) return;
-  try {
-    const data = dbInstance.export();
-    const buffer = Buffer.from(data);
-    fs.writeFileSync(dbPath, buffer);
-  } catch (err: any) {}
 }
 
 function seedDefaults() {
@@ -164,7 +127,25 @@ function seedDefaults() {
   }
 }
 
+// Initialize on module load
+loadDbFromDisk();
+
+export async function getLocalSqliteDb(): Promise<any> {
+  return {
+    run: () => {},
+    export: () => Buffer.from(""),
+    prepare: () => ({
+      bind: () => {},
+      step: () => false,
+      getAsObject: () => ({}),
+      run: () => {},
+      free: () => {}
+    })
+  };
+}
+
 export function getLocalDoc(collection: string, id: string): any {
+  loadDbFromDisk();
   const colMap = getColMap(collection);
   if (colMap.has(id)) {
     return colMap.get(id);
@@ -178,27 +159,11 @@ export function getLocalDoc(collection: string, id: string): any {
       }
     }
   }
-
-  if (dbInstance) {
-    try {
-      const stmt = dbInstance.prepare("SELECT data FROM documents WHERE collection = ? AND id = ?");
-      stmt.bind([collection, String(id)]);
-      let result: any = null;
-      if (stmt.step()) {
-        const row = stmt.getAsObject();
-        if (row.data) {
-          result = JSON.parse(String(row.data));
-          colMap.set(id, result);
-        }
-      }
-      stmt.free();
-      return result;
-    } catch (err: any) {}
-  }
   return null;
 }
 
 export function setLocalDoc(collection: string, id: string, data: any): boolean {
+  loadDbFromDisk();
   try {
     const now = new Date().toISOString();
     const existing = getLocalDoc(collection, id) || {};
@@ -206,23 +171,13 @@ export function setLocalDoc(collection: string, id: string, data: any): boolean 
 
     getColMap(collection).set(id, merged);
 
-    // If user has email, also index by email
     if (collection === "users" && merged.email) {
       getColMap(collection).set(merged.email.toLowerCase(), merged);
     }
 
-    if (dbInstance) {
-      const stmt = dbInstance.prepare(`
-        INSERT OR REPLACE INTO documents (collection, id, data, updated_at)
-        VALUES (?, ?, ?, ?)
-      `);
-      stmt.run([collection, String(id), JSON.stringify(merged), now]);
-      stmt.free();
-      saveDbToDisk();
-    }
+    saveDbToDisk();
     return true;
   } catch (err: any) {
-    console.error(`[SQLITE-SET-ERR] ${collection}/${id}:`, err.message);
     return false;
   }
 }
@@ -241,10 +196,10 @@ export function addLocalDoc(collection: string, data: any): string {
 }
 
 export function listLocalDocs(collection: string, limitCount = 300): any[] {
+  loadDbFromDisk();
   const colMap = getColMap(collection);
   if (colMap.size > 0) {
     const list = Array.from(colMap.values());
-    // Filter duplicates if any
     const unique = new Map<string, any>();
     for (const item of list) {
       const key = item.id || item.uid || JSON.stringify(item);
@@ -253,28 +208,6 @@ export function listLocalDocs(collection: string, limitCount = 300): any[] {
     const result = Array.from(unique.values());
     result.sort((a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime());
     return result.slice(0, limitCount);
-  }
-
-  if (dbInstance) {
-    try {
-      const stmt = dbInstance.prepare(`
-        SELECT id, data FROM documents WHERE collection = ? ORDER BY rowid DESC LIMIT ?
-      `);
-      stmt.bind([collection, limitCount]);
-      const list: any[] = [];
-      while (stmt.step()) {
-        const row = stmt.getAsObject();
-        if (row.data) {
-          try {
-            const parsed = JSON.parse(String(row.data));
-            colMap.set(String(row.id), parsed);
-            list.push({ id: row.id, ...parsed });
-          } catch (e) {}
-        }
-      }
-      stmt.free();
-      return list;
-    } catch (err: any) {}
   }
   return [];
 }
@@ -286,14 +219,10 @@ export function queryLocalDocs(collection: string, field: string, value: any, li
 }
 
 export function deleteLocalDoc(collection: string, id: string): boolean {
+  loadDbFromDisk();
   try {
     getColMap(collection).delete(id);
-    if (dbInstance) {
-      const stmt = dbInstance.prepare("DELETE FROM documents WHERE collection = ? AND id = ?");
-      stmt.run([collection, String(id)]);
-      stmt.free();
-      saveDbToDisk();
-    }
+    saveDbToDisk();
     return true;
   } catch (err: any) {
     return false;

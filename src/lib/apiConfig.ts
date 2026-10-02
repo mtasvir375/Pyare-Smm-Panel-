@@ -1,10 +1,10 @@
 import axios from "axios";
 
-export const STABLE_CLOUD_RUN_BACKEND = "https://ais-dev-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
+export const STABLE_CLOUD_RUN_BACKEND = "";
 
 export const getApiBaseUrl = (): string => {
   if (typeof window === "undefined") {
-    return STABLE_CLOUD_RUN_BACKEND;
+    return "";
   }
   
   // Check if custom backend URL is saved in localStorage
@@ -15,21 +15,10 @@ export const getApiBaseUrl = (): string => {
     }
   } catch (e) {}
 
-  const hostname = window.location.hostname;
-  
-  // If running on local machine, use relative paths
-  if (hostname === "localhost" || hostname === "127.0.0.1") {
-    return "";
-  }
-  
-  // If already running directly on Cloud Run host, use relative paths
-  if (hostname.includes("run.app") || hostname.includes("ais-dev") || hostname.includes("ais-pre")) {
-    return "";
-  }
-  
-  // If accessed from custom domain (Vercel static host),
-  // always forward all API/Database calls to the live Cloud Run backend!
-  return STABLE_CLOUD_RUN_BACKEND;
+  // Always use same-origin relative paths ("") so all API requests
+  // on custom domain (pyaresmmpanel.online), localhost, and preview
+  // go directly to their own live API gateway without cross-origin or redirect blocks.
+  return "";
 };
 
 export const formatApiUrl = (endpoint: string): string => {
@@ -47,5 +36,5 @@ export const formatApiUrl = (endpoint: string): string => {
 // Configure global Axios base URL
 if (typeof window !== "undefined") {
   const initialBase = getApiBaseUrl();
-  axios.defaults.baseURL = initialBase;
+  axios.defaults.baseURL = initialBase || undefined;
 }

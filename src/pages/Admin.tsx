@@ -2680,7 +2680,7 @@ export default function Admin() {
                             Custom Domain Active ({hostname})
                           </p>
                           <p className="text-xs text-gray-300 leading-relaxed">
-                            आपकी वेबसाइट कस्टम डोमेन पर एक्टिव है। सभी API कॉल्स और SMM ऑर्डर्स सीधे Cloud Run Backend Server से सुरक्षित रूप से कनेक्टेड हैं।
+                            आपकी वेबसाइट कस्टम डोमेन पर एक्टिव है। सभी API कॉल्स और सेटिंग्स सीधे आपके लाइव डोमेन API Gateway और Firestore से सुरक्षित रूप से कनेक्टेड हैं।
                           </p>
                         </div>
                       );
