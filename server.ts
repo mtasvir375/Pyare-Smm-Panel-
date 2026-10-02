@@ -2285,39 +2285,43 @@ export async function startServer() {
         return res.json(providersList);
       }
 
-      let providersList: any[] = [];
-      let fetchSuccess = false;
+      const combinedMap = new Map<string, any>();
+      
+      // 1. Load from local disk
+      const local = listLocalDocs("providers", 100);
+      if (local && Array.isArray(local)) {
+        local.forEach(p => { if (p && p.id) combinedMap.set(p.id, p); });
+      }
 
-      // Priority: Firestore
+      // 2. Load from memory cache
+      serverCache.providers.forEach((val, id) => {
+        const d = val?.data || val;
+        if (d && (d.id || id)) combinedMap.set(d.id || id, d);
+      });
+
+      // 3. Merge from Firestore if available
       try {
         const snap = await listDocsSafe("providers", req.headers.authorization as string, forceFresh);
-        if (snap && snap.docs) {
-          providersList = snap.docs.map(doc => {
+        if (snap && snap.docs && snap.docs.length > 0) {
+          snap.docs.forEach(doc => {
             const d = typeof doc.data === "function" ? doc.data() : doc.data;
-            return { id: doc.id, ...d };
+            if (d) combinedMap.set(doc.id, { id: doc.id, ...d });
           });
-          fetchSuccess = true;
-          console.log(`[SERVER-DB] Fetched ${providersList.length} providers from Firestore.`);
+          console.log(`[SERVER-DB] Merged ${snap.docs.length} Firestore providers.`);
         }
       } catch (err: any) {
         console.warn("[SERVER-DB] Firestore fetch failed for providers:", err.message);
       }
 
-      if (fetchSuccess) {
-        if (providersList.length > 0) {
-          serverCache.providers.clear();
-          providersList.forEach(p => serverCache.providers.set(p.id, { data: p, time: Date.now() }));
-          savePersistentCache();
-        }
-      } else {
-        // Fallback to local disk (Only if Firestore failed)
-        const local = listLocalDocs("providers", 100);
-        if (local && local.length > 0) {
-          providersList = local;
-          console.log(`[SERVER-DB] Falling back to ${providersList.length} providers from local disk.`);
-        }
-      }
-      res.json(providersList || []);
+      // Sync back to memory & disk so everything stays consistent
+      combinedMap.forEach((data, id) => {
+        serverCache.providers.set(id, { data, time: Date.now() });
+        try { setLocalDoc("providers", id, data); } catch (e) {}
+      });
+      savePersistentCache();
+
+      const providersList = Array.from(combinedMap.values());
+      res.json(providersList);
     } catch (err: any) {
       console.error("[SERVER-DB] Error fetching providers:", err.message);
       const fallbackList = Array.from(serverCache.providers.entries()).map(([id, p]) => ({ id, ...(p?.data ? p.data : p) }));
@@ -2325,62 +2329,61 @@ export async function startServer() {
     }
   });
 
-  // Express API for Courses list with server-side in-memory caching
+  // Express API for Courses list with server-side in-memory caching & robust local/Firestore merge
   app.get("/api/courses", async (req, res) => {
     try {
       const forceFresh = req.query.force === "true";
       if (!forceFresh && serverCache.courses.size > 0) {
         const coursesList = Array.from(serverCache.courses.entries()).map(([id, c]) => ({ id, ...(c?.data ? c.data : c) }));
         const activeServices = coursesList.filter((s: any) => s.status !== "archived" && s.status !== "hidden");
-        return res.json(activeServices);
+        return res.json(activeServices.length > 0 ? activeServices : coursesList);
       }
 
-      let coursesList: any[] = [];
-      let fetchSuccess = false;
+      const combinedMap = new Map<string, any>();
 
-      // Priority 1: Firestore
+      // 1. Load from local disk (so newly added services in local_db are never lost)
+      const localCourses = listLocalDocs("courses", 500);
+      if (localCourses && Array.isArray(localCourses)) {
+        localCourses.forEach(c => { if (c && c.id) combinedMap.set(c.id, c); });
+      }
+
+      // 2. Load from serverCache (memory store)
+      serverCache.courses.forEach((val, id) => {
+        const d = val?.data || val;
+        if (d && (d.id || id)) combinedMap.set(d.id || id, d);
+      });
+
+      // 3. Merge with Firestore items if available
       try {
         const snap = await listDocsSafe("courses", req.headers.authorization as string, forceFresh);
-        if (snap && snap.docs) {
-          coursesList = snap.docs.map(doc => {
+        if (snap && snap.docs && snap.docs.length > 0) {
+          snap.docs.forEach(doc => {
             const d = typeof doc.data === "function" ? doc.data() : doc.data;
-            return { id: doc.id, ...d };
+            if (d) combinedMap.set(doc.id, { id: doc.id, ...d });
           });
-          fetchSuccess = true;
-          console.log(`[SERVER-DB] Fetched ${coursesList.length} services from Firestore.`);
+          console.log(`[SERVER-DB] Merged ${snap.docs.length} services from Firestore.`);
         }
       } catch (err: any) {
-        console.warn("[SERVER-DB] Firestore fetch failed:", err.message);
+        console.warn("[SERVER-DB] Firestore fetch failed for courses:", err.message);
       }
 
-      if (fetchSuccess) {
-        if (coursesList.length > 0) {
-          serverCache.courses.clear();
-          coursesList.forEach(c => {
-            serverCache.courses.set(c.id, { data: c, time: Date.now() });
-            setLocalDoc("courses", c.id, c);
-          });
-          savePersistentCache();
-        }
-        // If Firestore returned successful empty list, we HONOR IT (user might have deleted everything)
-        // unless it's a forceFresh and we really have nothing, then maybe use local disk as safety
-      } else {
-        // Priority 2: Local disk (Only if Firestore failed)
-        let localCourses = listLocalDocs("courses", 500);
-        if (localCourses && localCourses.length > 0) {
-          coursesList = localCourses;
-          console.log(`[SERVER-DB] Falling back to ${coursesList.length} services from local disk.`);
-        }
-      }
+      // Save merged list to memory & disk
+      combinedMap.forEach((data, id) => {
+        serverCache.courses.set(id, { data, time: Date.now() });
+        try { setLocalDoc("courses", id, data); } catch (e) {}
+      });
+      savePersistentCache();
 
+      const coursesList = Array.from(combinedMap.values());
       const activeServices = coursesList.filter((s: any) => s.status !== "archived" && s.status !== "hidden");
-      return res.json(activeServices);
+      return res.json(activeServices.length > 0 ? activeServices : coursesList);
     } catch (err: any) {
       console.error("[SERVER-DB] Error fetching services from database:", err.message);
       const fallbackList = Array.from(serverCache.courses.entries()).map(([id, c]) => ({ id, ...(c?.data ? c.data : c) }));
       return res.json(fallbackList);
     }
   });
+
 
   // Express API for Settings with server-side in-memory caching
   app.get("/api/settings", async (req, res) => {
@@ -4310,8 +4313,41 @@ export async function startServer() {
       }
     }
 
-    // 2. Prioritize Firestore for important collections
-    if (collect === "courses" || collect === "providers" || collect === "settings" || collect === "users" || fresh) {
+    // 2. Prioritize Firestore & Merge for courses and providers
+    if (collect === "courses" || collect === "providers") {
+      const combinedMap = new Map<string, any>();
+      const localDocs = listLocalDocs(collect, 500);
+      if (localDocs && Array.isArray(localDocs)) {
+        localDocs.forEach(item => { if (item && item.id) combinedMap.set(item.id, item); });
+      }
+
+      const cacheStore = collect === "courses" ? serverCache.courses : serverCache.providers;
+      cacheStore.forEach((val, id) => {
+        const d = val?.data || val;
+        if (d && (d.id || id)) combinedMap.set(d.id || id, d);
+      });
+
+      try {
+        const snap = await listDocsSafe(collect, req.headers.authorization as string, fresh);
+        if (snap && snap.docs && snap.docs.length > 0) {
+          snap.docs.forEach(doc => {
+            const d = typeof doc.data === "function" ? doc.data() : doc.data;
+            if (d) combinedMap.set(doc.id, { id: doc.id, ...d });
+          });
+        }
+      } catch (e) {}
+
+      combinedMap.forEach((data, id) => {
+        cacheStore.set(id, { data, time: Date.now() });
+        try { setLocalDoc(collect, id, data); } catch (err) {}
+      });
+      savePersistentCache();
+
+      const mergedList = Array.from(combinedMap.values());
+      return res.json({ success: true, data: mergedList.slice(0, pageSize) });
+    }
+
+    if (collect === "settings" || collect === "users" || fresh) {
       try {
         const snap = await listDocsSafe(collect, req.headers.authorization as string, fresh);
         if (snap && snap.docs && snap.docs.length > 0) {
@@ -4319,21 +4355,11 @@ export async function startServer() {
             const d = typeof doc.data === "function" ? doc.data() : doc.data;
             return { id: doc.id, ...d };
           });
-          
-          // Update Cache
-          if (collect === "courses") {
-            serverCache.courses.clear();
-            docs.forEach(d => serverCache.courses.set(d.id, { data: d, time: Date.now() }));
-          } else if (collect === "providers") {
-            serverCache.providers.clear();
-            docs.forEach(d => serverCache.providers.set(d.id, { data: d, time: Date.now() }));
-          }
-          savePersistentCache();
-          
           return res.json({ success: true, data: docs.slice(0, pageSize) });
         }
       } catch (e) {}
     }
+
 
     // 3. Fallback to local DB
     const localList = listLocalDocs(collect, pageSize);

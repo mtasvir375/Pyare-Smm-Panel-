@@ -1346,7 +1346,7 @@ export default function Admin() {
         quantity: Number(i.quantity) || 1000
       })) : [];
 
-      await dbClient.addDoc("courses", {
+      const addedCourse = await dbClient.addDoc("courses", {
         title: newCourseTitle,
         category: newCourseCategory,
         pricePerThousand: computedPricePerThousand,
@@ -1370,7 +1370,20 @@ export default function Admin() {
         packagePrice: isPkg ? pkgPrice : null,
         packageQuantity: isPkg ? pkgQty : null,
       });
-      import("@/lib/cache").then(mod => mod.clearCache());
+
+      // Instantly update React state so the service NEVER hides from screen
+      if (addedCourse) {
+        setCourses(prev => [addedCourse, ...prev.filter(c => c.id !== addedCourse.id)]);
+        try {
+          const existingLs = localStorage.getItem("cached_courses");
+          const parsed = existingLs ? JSON.parse(existingLs) : [];
+          if (Array.isArray(parsed)) {
+            const updated = [addedCourse, ...parsed.filter((c: any) => c.id !== addedCourse.id)];
+            localStorage.setItem("cached_courses", JSON.stringify(updated));
+          }
+        } catch(e) {}
+      }
+
       toast.success(isCombo ? "Multi-Service Combo Package created!" : "Service added successfully!");
       fetchTabData(activeTab, true);
       setNewCourseTitle("");
