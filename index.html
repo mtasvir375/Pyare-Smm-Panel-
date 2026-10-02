@@ -66,7 +66,9 @@
               if (p && p.selectedTheme) t = p.selectedTheme;
             }
           }
+          if (t === "charcoal") t = "amber";
           if (t) document.documentElement.setAttribute("data-theme", t);
+          else document.documentElement.setAttribute("data-theme", "amber");
         } catch(e) {}
       })();
     </script>

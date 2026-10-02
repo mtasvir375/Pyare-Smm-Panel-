@@ -193,7 +193,7 @@ export const getCachedSettings = async (forceRefresh = false) => {
         qrAutoEnabled: !!res.data.qrAutoEnabled,
         instantQrEnabled: res.data.instantQrEnabled !== undefined ? !!res.data.instantQrEnabled : true,
         manualQrEnabled: res.data.manualQrEnabled !== undefined ? !!res.data.manualQrEnabled : true,
-        selectedTheme: res.data.selectedTheme || "charcoal",
+        selectedTheme: (res.data.selectedTheme === "charcoal" || !res.data.selectedTheme) ? "amber" : res.data.selectedTheme,
         selectedFestivalTheme: res.data.selectedFestivalTheme || "none",
       };
 
@@ -226,7 +226,7 @@ export const getCachedSettings = async (forceRefresh = false) => {
           ...fsData,
           upiId: (fsData.upiId && String(fsData.upiId).trim()) ? String(fsData.upiId).trim() : DEFAULT_SETTINGS.upiId,
           merchantName: fsData.merchantName !== undefined ? fsData.merchantName : DEFAULT_SETTINGS.merchantName,
-          selectedTheme: fsData.selectedTheme || DEFAULT_SETTINGS.selectedTheme,
+          selectedTheme: (fsData.selectedTheme === "charcoal" || !fsData.selectedTheme) ? "amber" : fsData.selectedTheme,
           selectedFestivalTheme: fsData.selectedFestivalTheme || "none",
         };
         cachedSettings = settingsData;
@@ -263,7 +263,7 @@ export const getCachedSettings = async (forceRefresh = false) => {
   const existingTheme = typeof window !== "undefined" ? localStorage.getItem("cached_theme") : null;
   return {
     ...DEFAULT_SETTINGS,
-    selectedTheme: existingTheme || DEFAULT_SETTINGS.selectedTheme
+    selectedTheme: (existingTheme === "charcoal" || !existingTheme) ? "amber" : existingTheme
   };
 };
 

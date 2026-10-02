@@ -159,7 +159,7 @@ export default function Admin() {
   const [whatsappLink, setWhatsappLink] = useState("");
   const [whatsappChatNumber, setWhatsappChatNumber] = useState("");
   const [guideVideoUrl, setGuideVideoUrl] = useState("");
-  const [selectedTheme, setSelectedTheme] = useState("indigo");
+  const [selectedTheme, setSelectedTheme] = useState("amber");
   const [selectedFestivalTheme, setSelectedFestivalTheme] = useState("none");
   const [instantQrEnabled, setInstantQrEnabled] = useState(true);
   const [manualQrEnabled, setManualQrEnabled] = useState(true);
@@ -346,7 +346,7 @@ export default function Admin() {
           setWhatsappLink(settingsData.whatsappLink || "");
           setWhatsappChatNumber(settingsData.whatsappChatNumber || "");
           setGuideVideoUrl(settingsData.guideVideoUrl || "");
-          setSelectedTheme(settingsData.selectedTheme || "indigo");
+          setSelectedTheme(settingsData.selectedTheme === "charcoal" ? "amber" : (settingsData.selectedTheme || "amber"));
           setSelectedFestivalTheme(settingsData.selectedFestivalTheme || "none");
           setInstantQrEnabled(settingsData.instantQrEnabled !== false);
           setManualQrEnabled(settingsData.manualQrEnabled !== false);

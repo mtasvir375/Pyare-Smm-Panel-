@@ -38,7 +38,7 @@ export default function Layout() {
           if (directTheme) {
             document.documentElement.setAttribute("data-theme", directTheme);
           } else {
-            document.documentElement.setAttribute("data-theme", "charcoal");
+            document.documentElement.setAttribute("data-theme", "amber");
           }
         }
       } catch (err) {
@@ -49,7 +49,7 @@ export default function Layout() {
 
     // 3. Listen for dynamic theme changes from Admin panel
     const handleThemeChange = (e: any) => {
-      const newTheme = e.detail || "charcoal";
+      const newTheme = e.detail || "amber";
       document.documentElement.setAttribute("data-theme", newTheme);
       try {
         localStorage.setItem("cached_theme", newTheme);

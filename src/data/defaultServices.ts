@@ -32,7 +32,7 @@ export const DEFAULT_SETTINGS = {
   qrAutoEnabled: false,
   instantQrEnabled: true,
   manualQrEnabled: true,
-  selectedTheme: "charcoal",
+  selectedTheme: "amber",
   selectedFestivalTheme: "none",
   whatsappLink: "https://wa.me/919999999999",
   whatsappChatNumber: "+919999999999",
