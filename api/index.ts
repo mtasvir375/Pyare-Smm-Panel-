@@ -1143,6 +1143,16 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json({ success: true, id: autoId, data: { id: autoId, ...(data || {}) } });
     }
 
+    if (pathname === "/api/db/delete") {
+      const { collection: colName, id } = body || {};
+      if (!colName || !id) return res.status(400).json({ success: false, error: "Missing collection or id" });
+      if (colName === "courses") memCoursesCache = null;
+      if (colName === "settings") memSettingsCache = null;
+      if (colName === "providers") memProvidersCache = null;
+      deleteLocalDoc(colName, id);
+      return res.status(200).json({ success: true });
+    }
+
     // 12. Admin User Management: /api/admin/search-user & /api/admin/update-balance
     if (pathname === "/api/admin/search-user") {
       const queryStr = String(body.query || body.email || "").toLowerCase().trim();

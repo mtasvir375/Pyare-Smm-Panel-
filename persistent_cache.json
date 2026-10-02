@@ -213,7 +213,7 @@
             }
           ],
           "balance": 17707.85,
-          "updatedAt": "2026-10-01T19:21:38.066Z",
+          "updatedAt": "2026-10-02T02:49:18.540Z",
           "lastOrderedAt": "2026-10-01T19:21:37.802Z",
           "lastDepositedAt": "2026-10-01T08:14:32.873Z",
           "latestDeposits": [
@@ -251,7 +251,7 @@
           "email": "mtasvir375@gmail.com",
           "displayName": "mtasvir375"
         },
-        "time": 1790882498939
+        "time": 1790909358540
       }
     ],
     [
@@ -4772,6 +4772,20 @@
           "providerRawResponse": "{\"order\":2843093}"
         },
         "time": 1790882498609
+      }
+    ],
+    [
+      "ord_1790909357148_whwvc",
+      {
+        "data": {
+          "id": "ord_1790909357148_whwvc",
+          "status": "Failed",
+          "needsProviderTransmission": false,
+          "providerTransmissionStatus": "failed",
+          "error": "Service ID for service \"Custom Domain Instagram Followers\" is missing or not configured with a valid provider service ID.",
+          "updatedAt": "2026-10-02T02:49:18.529Z"
+        },
+        "time": 1790909358529
       }
     ]
   ],

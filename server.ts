@@ -4092,6 +4092,19 @@ export async function startServer() {
     }
   });
 
+  app.post("/api/db/delete", async (req, res) => {
+    const { collection, id } = req.body;
+    if (!collection || !id) return res.status(400).json({ error: "Missing collection or id" });
+    
+    try {
+      const success = await deleteDocSafe(collection, id);
+      res.json({ success });
+    } catch (err: any) {
+      console.error(`[DB-DELETE-ERR] Failed to delete ${collection}/${id}:`, err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Temporary developer debug endpoint to inspect orders
   app.get("/api/debug-orders", async (req, res) => {
     try {

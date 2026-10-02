@@ -144,10 +144,16 @@ export const dbClient = {
 
   async deleteDoc(table: string, id: string): Promise<void> {
     if (table === 'courses' || table === 'settings' || table === 'providers') {
-      axios.post('/api/clear-cache').catch(() => {});
+      axios.post(formatApiUrl('/api/clear-cache')).catch(() => {});
     }
-    const docRef = doc(db, table, id);
-    await deleteDoc(docRef);
+    try {
+      await axios.post(formatApiUrl('/api/db/delete'), { collection: table, id });
+    } catch (e) {}
+
+    try {
+      const docRef = doc(db, table, id);
+      await deleteDoc(docRef).catch(() => {});
+    } catch (e) {}
   },
 
   // User specific
