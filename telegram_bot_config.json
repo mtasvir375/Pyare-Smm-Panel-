@@ -2,14 +2,13 @@
   "botToken": "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0",
   "chatId": "-1004483507103",
   "upiId": "9122557342@ybl",
-  "payeeName": "Pyare SMM Panel - Custom Domain Live",
+  "payeeName": "Pyare SMM Panel",
   "enabled": true,
   "lastUpdateId": 33028608,
   "botUsername": "BbbSmart_bot",
-  "startedAt": "2026-10-01T20:32:30.449Z",
-  "lastPolledAt": "2026-10-01T20:33:38.262Z",
+  "startedAt": "2026-10-02T02:21:22.600Z",
+  "lastPolledAt": "2026-10-02T02:25:07.629Z",
   "mode": "polling",
   "instantQrEnabled": true,
-  "manualQrEnabled": false,
-  "lastError": "Conflict: Waiting for other connection to close..."
+  "manualQrEnabled": false
 }
