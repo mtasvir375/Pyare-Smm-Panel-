@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/context/AuthContext";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import axios from "axios";
+import { formatApiUrl } from "@/lib/apiConfig";
 import {
   Dialog,
   DialogContent,
@@ -394,19 +395,23 @@ export default function Courses() {
 
       let resData: any = null;
       try {
-        const res = await axios.post("/api/proxy-provider", orderPayload, { headers, timeout: 35000 });
+        const res = await axios.post(formatApiUrl("/api/proxy-provider"), orderPayload, { headers, timeout: 35000 });
         resData = res.data;
       } catch (apiErr: any) {
         const respData = apiErr.response?.data;
         if (respData && typeof respData.currentBalance === "number" && updateUserProfileLocal) {
           updateUserProfileLocal({ balance: respData.currentBalance });
         }
-        const respErr = respData?.error || respData?.message || respData;
-        if (respErr) {
-          const cleanErrStr = typeof respErr === "string" ? respErr : JSON.stringify(respErr);
-          throw new Error(cleanErrStr);
+        let cleanErrStr = "Failed to place order. Please check your link or try again.";
+        if (respData) {
+          if (typeof respData.error === "string") cleanErrStr = respData.error;
+          else if (typeof respData.message === "string") cleanErrStr = respData.message;
+          else if (typeof respData === "string") cleanErrStr = respData;
+          else if (respData.error && typeof respData.error === "object") cleanErrStr = respData.error.message || JSON.stringify(respData.error);
+        } else if (apiErr.message) {
+          cleanErrStr = apiErr.message;
         }
-        throw new Error(apiErr.message || "Failed to reach provider service");
+        throw new Error(cleanErrStr);
       }
 
       if (!resData || resData.success !== true || !resData.providerOrderId || String(resData.providerOrderId).trim() === "PENDING" || String(resData.providerOrderId).trim() === "") {

@@ -293,7 +293,7 @@
       "enableUpi": true,
       "enableTelegramBot": true,
       "createdAt": "2026-10-02T10:33:01.410Z",
-      "updatedAt": "2026-10-02T20:06:34.701Z",
+      "updatedAt": "2026-10-02T20:40:23.918Z",
       "id": "payment",
       "providerApiUrl": "",
       "providerApiKey": "",
@@ -334,7 +334,7 @@
       "manualQrEnabled": false,
       "instantQrEnabled": true,
       "id": "telegram_bot",
-      "updatedAt": "2026-10-02T20:06:34.703Z",
+      "updatedAt": "2026-10-02T20:40:23.919Z",
       "chatId": "-1004483507103",
       "enabled": true,
       "startedAt": "2026-10-02T11:55:47.303Z",
@@ -503,7 +503,7 @@
       "email": "mtasvir375@gmail.com",
       "id": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
       "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-      "updatedAt": "2026-10-02T20:06:34.707Z",
+      "updatedAt": "2026-10-02T20:40:23.923Z",
       "displayName": "Md Saad Alam",
       "lastOrderedAt": "2026-10-02T19:50:46.772Z"
     },
@@ -516,7 +516,7 @@
       "role": "admin",
       "balance": 5000,
       "createdAt": "2026-10-02T10:33:01.408Z",
-      "updatedAt": "2026-10-02T20:06:34.703Z"
+      "updatedAt": "2026-10-02T20:40:23.919Z"
     },
     "mdsarfarajalam727712@gmail.com": {
       "uid": "5LRJPrkW5vVimfCFKGbzTKhXtji2",
@@ -527,7 +527,7 @@
       "role": "admin",
       "balance": 5000,
       "createdAt": "2026-10-02T10:33:01.408Z",
-      "updatedAt": "2026-10-02T20:06:34.703Z"
+      "updatedAt": "2026-10-02T20:40:23.919Z"
     },
     "UlsK3PLAGHdiSZAhx58Cb23FXLq2": {
       "uid": "UlsK3PLAGHdiSZAhx58Cb23FXLq2",
@@ -538,7 +538,7 @@
       "role": "admin",
       "balance": 10,
       "createdAt": "2026-10-02T10:33:01.408Z",
-      "updatedAt": "2026-10-02T20:06:34.704Z"
+      "updatedAt": "2026-10-02T20:40:23.920Z"
     },
     "mdtasvir888@gmail.com": {
       "uid": "UlsK3PLAGHdiSZAhx58Cb23FXLq2",
@@ -549,7 +549,7 @@
       "role": "admin",
       "balance": 10,
       "createdAt": "2026-10-02T10:33:01.408Z",
-      "updatedAt": "2026-10-02T20:06:34.704Z"
+      "updatedAt": "2026-10-02T20:40:23.920Z"
     },
     "c4w6bjFk9leTy9SR2ijM0YyJVfx1": {
       "role": "admin",
@@ -711,9 +711,31 @@
       "email": "mtasvir375@gmail.com",
       "id": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
       "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
-      "updatedAt": "2026-10-02T20:06:34.707Z",
+      "updatedAt": "2026-10-02T20:40:23.923Z",
       "displayName": "Md Saad Alam",
       "lastOrderedAt": "2026-10-02T19:50:46.772Z"
+    },
+    "evVy5BL2BQXHZT2v7xcmTM1zRJe2": {
+      "id": "evVy5BL2BQXHZT2v7xcmTM1zRJe2",
+      "uid": "evVy5BL2BQXHZT2v7xcmTM1zRJe2",
+      "role": "student",
+      "email": "tachunique621@gmail.com",
+      "balance": 0,
+      "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocKRQ5gJ4NfeEUo3kpm75vdKqoas9SF5g4zdkH4PVpM-zHyMIQ=s96-c",
+      "createdAt": "2026-10-02T20:36:03.974Z",
+      "displayName": "Tach Unique",
+      "updatedAt": "2026-10-02T20:40:23.922Z"
+    },
+    "tachunique621@gmail.com": {
+      "id": "evVy5BL2BQXHZT2v7xcmTM1zRJe2",
+      "uid": "evVy5BL2BQXHZT2v7xcmTM1zRJe2",
+      "role": "student",
+      "email": "tachunique621@gmail.com",
+      "balance": 0,
+      "photoURL": "https://lh3.googleusercontent.com/a/ACg8ocKRQ5gJ4NfeEUo3kpm75vdKqoas9SF5g4zdkH4PVpM-zHyMIQ=s96-c",
+      "createdAt": "2026-10-02T20:36:03.974Z",
+      "displayName": "Tach Unique",
+      "updatedAt": "2026-10-02T20:40:23.922Z"
     }
   },
   "claimed_payments": {
@@ -725,7 +747,7 @@
       "orderRef": "941243200603",
       "claimedAt": "2026-10-02T05:44:56.856Z",
       "id": "941243200603",
-      "updatedAt": "2026-10-02T20:06:34.702Z"
+      "updatedAt": "2026-10-02T20:40:23.918Z"
     },
     "626178738701": {
       "utr": "626178738701",
@@ -735,7 +757,7 @@
       "orderRef": "626178738701",
       "claimedAt": "2026-10-02T19:12:29.268Z",
       "id": "626178738701",
-      "updatedAt": "2026-10-02T20:06:34.705Z"
+      "updatedAt": "2026-10-02T20:40:23.920Z"
     }
   },
   "deposits": {
@@ -1756,6 +1778,22 @@
       "updatedAt": "2026-10-02T19:50:46.660Z",
       "createdAt": "2026-10-02T19:50:46.660Z",
       "providerRawResponse": "{\"order\":2847363}"
+    },
+    "ord_1790973598521_ga0g4": {
+      "status": "Failed",
+      "needsProviderTransmission": false,
+      "providerTransmissionStatus": "failed",
+      "error": "User account not found. Please log in again.",
+      "updatedAt": "2026-10-02T20:39:58.951Z",
+      "id": "ord_1790973598521_ga0g4"
+    },
+    "ord_1790973629091_g22p4": {
+      "status": "Failed",
+      "needsProviderTransmission": false,
+      "providerTransmissionStatus": "failed",
+      "error": "Provider Rejected Order (incorrect service type)",
+      "updatedAt": "2026-10-02T20:40:31.306Z",
+      "id": "ord_1790973629091_g22p4"
     }
   },
   "providers": {
@@ -1765,7 +1803,7 @@
       "apiKey": "f55bb2dfdc035f9c3c9e737bb72922a51d64309f",
       "createdAt": "2026-10-02T19:49:45.808Z",
       "id": "doc_1790970585810_2enek",
-      "updatedAt": "2026-10-02T20:24:20.592Z"
+      "updatedAt": "2026-10-02T20:40:23.921Z"
     }
   }
 }
