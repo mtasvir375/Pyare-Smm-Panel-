@@ -159,7 +159,7 @@ export default function Admin() {
   const [whatsappLink, setWhatsappLink] = useState("");
   const [whatsappChatNumber, setWhatsappChatNumber] = useState("");
   const [guideVideoUrl, setGuideVideoUrl] = useState("");
-  const [selectedTheme, setSelectedTheme] = useState("charcoal");
+  const [selectedTheme, setSelectedTheme] = useState("indigo");
   const [selectedFestivalTheme, setSelectedFestivalTheme] = useState("none");
   const [instantQrEnabled, setInstantQrEnabled] = useState(true);
   const [manualQrEnabled, setManualQrEnabled] = useState(true);
@@ -346,7 +346,7 @@ export default function Admin() {
           setWhatsappLink(settingsData.whatsappLink || "");
           setWhatsappChatNumber(settingsData.whatsappChatNumber || "");
           setGuideVideoUrl(settingsData.guideVideoUrl || "");
-          setSelectedTheme(settingsData.selectedTheme || "charcoal");
+          setSelectedTheme(settingsData.selectedTheme || "indigo");
           setSelectedFestivalTheme(settingsData.selectedFestivalTheme || "none");
           setInstantQrEnabled(settingsData.instantQrEnabled !== false);
           setManualQrEnabled(settingsData.manualQrEnabled !== false);
@@ -2947,7 +2947,6 @@ export default function Admin() {
 
                         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                           {[
-                            { id: "charcoal", name: "Default Charcoal", hindi: "क्लासिक चारकोल", color: "#1e293b", desc: "Original deep graphite/charcoal look" },
                             { id: "indigo", name: "Royal Indigo", hindi: "शाही इंडिगो", color: "#4f46e5", desc: "Vibrant and trendy brand blue" },
                             { id: "emerald", name: "Emerald Garden", hindi: "पन्ना हरा", color: "#059669", desc: "Fresh, secure, and trust-inspiring green" },
                             { id: "teal", name: "Ocean Teal", hindi: "महासागर चैती", color: "#0d9488", desc: "Cool, clean, and modern ocean style" },
