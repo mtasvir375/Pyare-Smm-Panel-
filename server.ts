@@ -587,11 +587,39 @@ export async function startServer() {
 
         if (parsed.users && Array.isArray(parsed.users)) {
           serverCache.users.clear();
+          const emailToUid = new Map<string, string>();
+          // First pass: identify real UIDs
           parsed.users.forEach(([id, cacheObj]: [string, any]) => {
             const uData = cacheObj?.data ? { id, ...cacheObj.data } : { id, ...(cacheObj || {}) };
-            serverCache.users.set(id, { data: uData, time: cacheObj?.time || Date.now() });
+            const uid = String(uData.uid || uData.id || id).trim();
+            const email = String(uData.email || uData.userEmail || "").trim().toLowerCase();
+            if (uid && !uid.includes("@") && email) {
+              emailToUid.set(email, uid);
+            }
           });
-          console.log(`[PERSISTENT-CACHE] Loaded ${serverCache.users.size} users from disk.`);
+          // Second pass: load deduplicated
+          parsed.users.forEach(([id, cacheObj]: [string, any]) => {
+            const uData = cacheObj?.data ? { id, ...cacheObj.data } : { id, ...(cacheObj || {}) };
+            const email = String(uData.email || uData.userEmail || "").trim().toLowerCase();
+            let canonicalId = String(uData.uid || uData.id || id).trim();
+            if (canonicalId.includes("@") && email && emailToUid.has(email)) {
+              canonicalId = emailToUid.get(email)!;
+            }
+            if (serverCache.users.has(canonicalId)) {
+              const existing = serverCache.users.get(canonicalId);
+              const exData = existing?.data || existing || {};
+              const exBal = Number(exData.balance ?? exData.walletBalance ?? 0);
+              const inBal = Number(uData.balance ?? uData.walletBalance ?? 0);
+              const bestBal = (!isNaN(inBal) && inBal > 0) ? inBal : exBal;
+              serverCache.users.set(canonicalId, {
+                data: { ...exData, ...uData, id: canonicalId, uid: canonicalId, balance: bestBal },
+                time: Math.max(cacheObj?.time || 0, existing?.time || 0) || Date.now()
+              });
+            } else {
+              serverCache.users.set(canonicalId, { data: { ...uData, id: canonicalId, uid: canonicalId }, time: cacheObj?.time || Date.now() });
+            }
+          });
+          console.log(`[PERSISTENT-CACHE] Loaded ${serverCache.users.size} unique users from disk.`);
         }
 
         if (parsed.deposits && Array.isArray(parsed.deposits)) {
@@ -2861,12 +2889,65 @@ export async function startServer() {
     
     try {
       const userMap = new Map<string, any>();
+      const emailToCanonicalUid = new Map<string, string>();
+
+      const addOrMergeUser = (rawUser: any, fallbackId?: string) => {
+        if (!rawUser) return;
+        const d = typeof rawUser.data === "function" ? rawUser.data() : (rawUser.data || rawUser);
+        let uid = String(d.uid || d.id || rawUser.id || fallbackId || "").trim();
+        let email = String(d.email || d.userEmail || "").trim().toLowerCase();
+
+        // Extract email from nested arrays if top-level was blank
+        if (!email && Array.isArray(d.latestOrders)) {
+          for (const o of d.latestOrders) {
+            if (o?.userEmail) { email = String(o.userEmail).trim().toLowerCase(); break; }
+          }
+        }
+        if (!email && Array.isArray(d.latestDeposits)) {
+          for (const dep of d.latestDeposits) {
+            if (dep?.userEmail) { email = String(dep.userEmail).trim().toLowerCase(); break; }
+          }
+        }
+
+        // Determine canonical UID (prefer real non-email UID over email string)
+        let canonicalId = uid;
+        if (canonicalId && !canonicalId.includes("@") && email) {
+          emailToCanonicalUid.set(email, canonicalId);
+        } else if (canonicalId.includes("@") && email && emailToCanonicalUid.has(email)) {
+          canonicalId = emailToCanonicalUid.get(email)!;
+        } else if (email && emailToCanonicalUid.has(email)) {
+          canonicalId = emailToCanonicalUid.get(email)!;
+        }
+
+        if (!canonicalId) canonicalId = email || fallbackId || `user_${Date.now()}`;
+
+        const existing = userMap.get(canonicalId);
+        if (existing) {
+          const exBal = Number(existing.balance ?? existing.walletBalance ?? 0);
+          const inBal = Number(d.balance ?? d.walletBalance ?? 0);
+          const bestBal = (!isNaN(inBal) && inBal > 0) ? inBal : exBal;
+          userMap.set(canonicalId, {
+            ...existing,
+            ...d,
+            id: canonicalId,
+            uid: canonicalId,
+            email: email || existing.email,
+            balance: bestBal
+          });
+        } else {
+          userMap.set(canonicalId, {
+            ...d,
+            id: canonicalId,
+            uid: canonicalId,
+            email: email || (uid.includes("@") ? uid : "")
+          });
+        }
+      };
 
       // 1. Gather users from in-memory cache
       if (serverCache.users && serverCache.users.size > 0) {
         serverCache.users.forEach((u: any, id: string) => {
-          const uData = u.data || u;
-          userMap.set(id, { id, uid: id, ...uData });
+          addOrMergeUser(u, id);
         });
       }
 
@@ -2878,28 +2959,7 @@ export async function startServer() {
             const d = typeof docItem.data === "function" ? docItem.data() : docItem.data;
             const uid = docItem.id;
             if (d && uid) {
-              // Automatically extract and enrich email if top-level email was missing
-              let email = String(d.email || d.userEmail || "").trim();
-              if (!email && Array.isArray(d.latestOrders)) {
-                for (const o of d.latestOrders) {
-                  if (o?.userEmail) { email = String(o.userEmail).trim(); break; }
-                }
-              }
-              if (!email && Array.isArray(d.latestDeposits)) {
-                for (const dep of d.latestDeposits) {
-                  if (dep?.userEmail) { email = String(dep.userEmail).trim(); break; }
-                }
-              }
-              if (email) {
-                d.email = email;
-                if (!d.displayName || d.displayName === "User") {
-                  d.displayName = email.split("@")[0];
-                }
-              }
-
-              const merged = { ...d, id: uid, uid };
-              userMap.set(uid, merged);
-              serverCache.users.set(uid, { data: merged, time: Date.now() });
+              addOrMergeUser(d, uid);
             }
           });
         }
@@ -2926,7 +2986,7 @@ export async function startServer() {
                 balance: 0,
                 role: "student"
               };
-              userMap.set(userRec.uid, userData);
+              addOrMergeUser(userData, userRec.uid);
               serverCache.users.set(userRec.uid, { data: userData, time: Date.now() });
               if (fdb) {
                 fdb.collection("users").doc(userRec.uid).set(userData, { merge: true }).catch(() => {});
@@ -3012,11 +3072,25 @@ export async function startServer() {
         return timeB - timeA;
       });
 
-      console.log(`[SEARCH-USERS] Query "${query}" returned ${results.length} users`);
+      // Strict uniqueness filter to guarantee NO duplicate user entries ever
+      const seenUids = new Set<string>();
+      const seenEmails = new Set<string>();
+      const uniqueResults: any[] = [];
+      for (const u of results) {
+        const uid = String(u.id || u.uid || "").trim();
+        const email = String(u.email || u.userEmail || "").trim().toLowerCase();
+        if (uid && seenUids.has(uid)) continue;
+        if (email && seenEmails.has(email)) continue;
+        if (uid) seenUids.add(uid);
+        if (email) seenEmails.add(email);
+        uniqueResults.push(u);
+      }
+
+      console.log(`[SEARCH-USERS] Query "${query}" returned ${uniqueResults.length} unique users`);
       return res.json({
         success: true,
-        users: results.slice(0, 50),
-        user: results.length > 0 ? results[0] : null
+        users: uniqueResults.slice(0, 50),
+        user: uniqueResults.length > 0 ? uniqueResults[0] : null
       });
     } catch (e: any) {
       console.error("[SEARCH-USERS] Global error:", e);

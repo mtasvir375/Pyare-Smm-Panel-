@@ -341,6 +341,10 @@ export const dbClient = {
   },
 
   async getTableCount(table: string): Promise<number> {
+    if (table === 'users') {
+      const users = await this.getUsersAdmin();
+      return users.length;
+    }
     const docs = await this.getDocs(table);
     return docs.length;
   },
@@ -405,22 +409,40 @@ export const dbClient = {
   },
 
   async getUsersAdmin(l = 100): Promise<any[]> {
+    let usersList: any[] = [];
     try {
       const response = await axios.post(formatApiUrl('/api/admin/search-user'), { query: '' }, { timeout: 4000 });
       if (response.data && Array.isArray(response.data.users) && response.data.users.length > 0) {
-        return response.data.users;
+        usersList = response.data.users;
       }
     } catch (e) {}
 
-    // Firestore direct fallback
-    try {
-      const snap = await getFirestoreDocs(fsQuery(collection(db, 'users'), fsLimit(l)));
-      if (!snap.empty) {
-        return snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      }
-    } catch (e) {}
+    // Firestore direct fallback if API had no users
+    if (usersList.length === 0) {
+      try {
+        const snap = await getFirestoreDocs(fsQuery(collection(db, 'users'), fsLimit(l)));
+        if (!snap.empty) {
+          usersList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        }
+      } catch (e) {}
+    }
 
-    return [];
+    // Strict deduplication by canonical UID and lowercase email
+    const seenUids = new Set<string>();
+    const seenEmails = new Set<string>();
+    const deduped: any[] = [];
+    for (const u of usersList) {
+      if (!u) continue;
+      const uid = String(u.id || u.uid || "").trim();
+      const email = String(u.email || u.userEmail || "").trim().toLowerCase();
+      if (uid && seenUids.has(uid)) continue;
+      if (email && seenEmails.has(email)) continue;
+      if (uid) seenUids.add(uid);
+      if (email) seenEmails.add(email);
+      deduped.push(u);
+    }
+
+    return deduped;
   },
 
   async submitManualDeposit(depositId: string, data: any): Promise<void> {

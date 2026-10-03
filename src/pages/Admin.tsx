@@ -919,12 +919,25 @@ export default function Admin() {
       const res = await axios.post(formatApiUrl("/api/admin/search-user"), { query: q }, { timeout: 5000 });
       if (res.data && res.data.success) {
         let users = Array.isArray(res.data.users) ? res.data.users : (res.data.user ? [res.data.user] : []);
-        setAllUsers(users);
+        const seenUids = new Set<string>();
+        const seenEmails = new Set<string>();
+        const deduped: any[] = [];
+        for (const u of users) {
+          if (!u) continue;
+          const uid = String(u.id || u.uid || "").trim();
+          const email = String(u.email || u.userEmail || "").trim().toLowerCase();
+          if (uid && seenUids.has(uid)) continue;
+          if (email && seenEmails.has(email)) continue;
+          if (uid) seenUids.add(uid);
+          if (email) seenEmails.add(email);
+          deduped.push(u);
+        }
+        setAllUsers(deduped);
         if (q) {
-          if (users.length === 0) {
+          if (deduped.length === 0) {
             toast.error("No user found with this email or keyword");
           } else {
-            toast.success(`Found ${users.length} user${users.length > 1 ? 's' : ''}`);
+            toast.success(`Found ${deduped.length} user${deduped.length > 1 ? 's' : ''}`);
           }
         }
       } else {
@@ -1231,7 +1244,7 @@ export default function Admin() {
       await dbClient.updateDoc("users", editingUser.id, {
         balance: updatedBal
       });
-      setAllUsers(prev => prev.map(u => u.id === editingUser.id ? { ...u, balance: updatedBal } : u));
+      setAllUsers(prev => prev.map(u => (u.id === editingUser.id || (editingUser.email && u.email && u.email.toLowerCase() === editingUser.email.toLowerCase())) ? { ...u, balance: updatedBal } : u));
       toast.success("User wallet balance updated!");
       setEditingUser(null);
       setNewBalance("");
@@ -2633,7 +2646,20 @@ export default function Admin() {
                         onClick={() => {
                           setUserSearch("");
                           axios.post(formatApiUrl("/api/admin/search-user"), { query: "" }).then(res => {
-                            if (res.data && res.data.users) setAllUsers(res.data.users);
+                            if (res.data && res.data.users) {
+                              const seenU = new Set<string>();
+                              const seenE = new Set<string>();
+                              const clean = res.data.users.filter((u: any) => {
+                                const uid = String(u.id || u.uid || "").trim();
+                                const email = String(u.email || u.userEmail || "").trim().toLowerCase();
+                                if (uid && seenU.has(uid)) return false;
+                                if (email && seenE.has(email)) return false;
+                                if (uid) seenU.add(uid);
+                                if (email) seenE.add(email);
+                                return true;
+                              });
+                              setAllUsers(clean);
+                            }
                           }).catch(() => {
                             dbClient.getUsersAdmin().then(users => setAllUsers(users)).catch(() => {});
                           });
@@ -2654,13 +2680,30 @@ export default function Admin() {
                 </div>
               </div>
               <div className="space-y-3">
-                {(!allUsers || allUsers.length === 0) ? (
-                  <div className="text-center py-10 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
-                    <p className="text-sm font-medium text-gray-500">No users found</p>
-                    <p className="text-xs text-gray-400 mt-1">Enter an email, name or ID in the search box above to find users</p>
-                  </div>
-                ) : (
-                  allUsers.map((u: any, idx: number) => {
+                {(() => {
+                  const seenUids = new Set<string>();
+                  const seenEmails = new Set<string>();
+                  const displayUsers = (allUsers || []).filter((u: any) => {
+                    if (!u) return false;
+                    const uid = String(u.id || u.uid || "").trim();
+                    const email = String(u.email || u.userEmail || "").trim().toLowerCase();
+                    if (uid && seenUids.has(uid)) return false;
+                    if (email && seenEmails.has(email)) return false;
+                    if (uid) seenUids.add(uid);
+                    if (email) seenEmails.add(email);
+                    return true;
+                  });
+
+                  if (displayUsers.length === 0) {
+                    return (
+                      <div className="text-center py-10 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                        <p className="text-sm font-medium text-gray-500">No users found</p>
+                        <p className="text-xs text-gray-400 mt-1">Enter an email, name or ID in the search box above to find users</p>
+                      </div>
+                    );
+                  }
+
+                  return displayUsers.map((u: any, idx: number) => {
                     if (!u) return null;
                     const uid = String(u.id || u.uid || "").trim();
                     const known = KNOWN_ADMIN_USER_EMAILS[uid];
@@ -2735,8 +2778,8 @@ export default function Admin() {
                         </CardContent>
                       </Card>
                     );
-                  })
-                )}
+                  });
+                })()}
               </div>
               </>
             )}

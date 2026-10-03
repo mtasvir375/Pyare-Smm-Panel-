@@ -56,12 +56,14 @@ function getColMap(collection: string): Map<string, any> {
 
 // Known admin and user profiles to guarantee instant access with full balance
 const INITIAL_USERS: Record<string, any> = {
-  "mtasvir375@gmail.com": {
+  "c4w6bjFk9leTy9SR2ijM0YyJVfx1": {
+    uid: "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+    id: "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
     email: "mtasvir375@gmail.com",
     userEmail: "mtasvir375@gmail.com",
     displayName: "Tasvir",
     role: "admin",
-    balance: 17702.85,
+    balance: 16751.25,
     createdAt: new Date().toISOString()
   },
   "5LRJPrkW5vVimfCFKGbzTKhXtji2": {
@@ -81,7 +83,7 @@ const INITIAL_USERS: Record<string, any> = {
     userEmail: "mdtasvir888@gmail.com",
     displayName: "Tasvir",
     role: "admin",
-    balance: 10000,
+    balance: 10,
     createdAt: new Date().toISOString()
   }
 };
@@ -106,6 +108,23 @@ function loadDbFromDisk() {
         }
       }
     }
+  } catch (e) {}
+
+  // Deduplicate and cleanup email-keyed users in local db
+  try {
+    const userCol = getColMap("users");
+    const emailKeysToRemove: string[] = [];
+    for (const [key, doc] of userCol.entries()) {
+      if (key.includes("@")) {
+        const canonicalId = (doc && (doc.uid || doc.id)) ? String(doc.uid || doc.id).trim() : "";
+        if (canonicalId && canonicalId !== key) {
+          const existing = userCol.get(canonicalId) || {};
+          userCol.set(canonicalId, { ...existing, ...doc, id: canonicalId, uid: canonicalId });
+          emailKeysToRemove.push(key);
+        }
+      }
+    }
+    emailKeysToRemove.forEach(k => userCol.delete(k));
   } catch (e) {}
 
   seedDefaults();
@@ -229,13 +248,24 @@ export function setLocalDoc(collection: string, id: string, data: any): boolean 
   loadDbFromDisk();
   try {
     const now = new Date().toISOString();
-    const existing = getLocalDoc(collection, id) || {};
-    const merged = { ...existing, ...data, id, updatedAt: data?.updatedAt || now };
+    let targetId = id;
 
-    getColMap(collection).set(id, merged);
+    // For users, ensure we always key by canonical UID rather than email
+    if (collection === "users") {
+      const canonicalUid = data?.uid || data?.id;
+      if (canonicalUid && !String(canonicalUid).includes("@")) {
+        targetId = String(canonicalUid).trim();
+      }
+    }
 
-    if (collection === "users" && merged.email) {
-      getColMap(collection).set(merged.email.toLowerCase(), merged);
+    const existing = getLocalDoc(collection, targetId) || {};
+    const merged = { ...existing, ...data, id: targetId, updatedAt: data?.updatedAt || now };
+
+    getColMap(collection).set(targetId, merged);
+
+    // If an email-keyed document existed previously, remove it to prevent double listing
+    if (collection === "users" && id !== targetId && id.includes("@")) {
+      getColMap(collection).delete(id);
     }
 
     saveDbToDisk();
@@ -264,9 +294,23 @@ export function listLocalDocs(collection: string, limitCount = 300): any[] {
   if (colMap.size > 0) {
     const list = Array.from(colMap.values());
     const unique = new Map<string, any>();
+    const seenEmails = new Set<string>();
+    const seenUids = new Set<string>();
+
     for (const item of list) {
-      const key = item.id || item.uid || JSON.stringify(item);
-      if (!unique.has(key)) unique.set(key, item);
+      if (!item) continue;
+      if (collection === "users") {
+        const uid = String(item.uid || item.id || "").trim();
+        const email = String(item.email || item.userEmail || "").trim().toLowerCase();
+        if (uid && seenUids.has(uid)) continue;
+        if (email && seenEmails.has(email)) continue;
+        if (uid) seenUids.add(uid);
+        if (email) seenEmails.add(email);
+        unique.set(uid || email || String(Math.random()), item);
+      } else {
+        const key = item.id || item.uid || JSON.stringify(item);
+        if (!unique.has(key)) unique.set(key, item);
+      }
     }
     const result = Array.from(unique.values());
     result.sort((a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime());
