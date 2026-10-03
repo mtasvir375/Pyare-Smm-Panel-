@@ -54,7 +54,7 @@
       {
         "data": {
           "id": "doc_1790970585810_2enek",
-          "name": "Smm bin \u2665\ufe0f",
+          "name": "Smm bin ♥️",
           "apiUrl": "https://www.smmbin.com/api/v2",
           "apiKey": "f55bb2dfdc035f9c3c9e737bb72922a51d64309f",
           "createdAt": "2026-10-02T19:49:45.808Z",
@@ -70,23 +70,23 @@
       {
         "data": {
           "id": "srv_ig_followers",
-          "title": "Instagram Followers [High Quality]",
-          "price": 15.5,
-          "pricePerThousand": 15.5,
-          "minLimit": 100,
-          "providerId": "doc_1790970585810_2enek",
-          "providerServiceId": "4545",
-          "category": "Instagram",
-          "serviceType": "likes",
-          "preventDuplicateLink": false,
-          "isPackage": false,
+          "price": 1,
+          "title": "Reels view 😀",
           "isCombo": false,
+          "category": "Instagram",
+          "minLimit": 200,
+          "isPackage": false,
+          "updatedAt": "2026-10-03T07:11:32.130Z",
           "comboItems": [],
+          "providerId": "doc_1790970585810_2enek",
+          "serviceType": "likes",
           "packagePrice": null,
           "packageQuantity": null,
-          "updatedAt": "2026-10-02T19:50:02.915Z"
+          "pricePerThousand": 1,
+          "providerServiceId": "4545",
+          "preventDuplicateLink": false
         },
-        "time": 1791022465739
+        "time": 1791024160640
       }
     ],
     [
@@ -118,7 +118,7 @@
           "packagePrice": null,
           "packageQuantity": null
         },
-        "time": 1791022465740
+        "time": 1791024160641
       }
     ],
     [
@@ -143,7 +143,7 @@
           "createdAt": "2026-10-02T10:33:01.410Z",
           "updatedAt": "2026-10-02T10:33:01.410Z"
         },
-        "time": 1791022465742
+        "time": 1791024160642
       }
     ],
     [
@@ -168,7 +168,7 @@
           "createdAt": "2026-10-02T10:33:01.410Z",
           "updatedAt": "2026-10-02T10:33:01.410Z"
         },
-        "time": 1791022465743
+        "time": 1791024160643
       }
     ],
     [
@@ -193,7 +193,7 @@
           "createdAt": "2026-10-02T10:33:01.410Z",
           "updatedAt": "2026-10-02T10:33:01.410Z"
         },
-        "time": 1791022465744
+        "time": 1791024160644
       }
     ],
     [
@@ -218,7 +218,7 @@
           "createdAt": "2026-10-02T10:33:01.410Z",
           "updatedAt": "2026-10-02T10:33:01.410Z"
         },
-        "time": 1791022465746
+        "time": 1791024160645
       }
     ],
     [
@@ -243,7 +243,7 @@
           "createdAt": "2026-10-02T10:33:01.409Z",
           "updatedAt": "2026-10-02T10:33:01.409Z"
         },
-        "time": 1791022465747
+        "time": 1791024160646
       }
     ],
     [
@@ -268,7 +268,7 @@
           "createdAt": "2026-10-02T10:33:01.409Z",
           "updatedAt": "2026-10-02T10:33:01.409Z"
         },
-        "time": 1791022465748
+        "time": 1791024160646
       }
     ],
     [
@@ -293,7 +293,7 @@
           "createdAt": "2026-10-02T10:33:01.409Z",
           "updatedAt": "2026-10-02T10:33:01.409Z"
         },
-        "time": 1791022465749
+        "time": 1791024160647
       }
     ],
     [
@@ -318,7 +318,7 @@
           "createdAt": "2026-10-02T10:33:01.409Z",
           "updatedAt": "2026-10-02T10:33:01.409Z"
         },
-        "time": 1791022465750
+        "time": 1791024160648
       }
     ],
     [
@@ -343,7 +343,7 @@
           "createdAt": "2026-10-02T10:33:01.409Z",
           "updatedAt": "2026-10-02T10:33:01.409Z"
         },
-        "time": 1791022465751
+        "time": 1791024160650
       }
     ],
     [
@@ -368,7 +368,7 @@
           "createdAt": "2026-10-02T10:33:01.409Z",
           "updatedAt": "2026-10-02T10:33:01.409Z"
         },
-        "time": 1791022465752
+        "time": 1791024160651
       }
     ],
     [
@@ -393,7 +393,7 @@
           "createdAt": "2026-10-02T10:33:01.409Z",
           "updatedAt": "2026-10-02T10:33:01.409Z"
         },
-        "time": 1791022465755
+        "time": 1791024160652
       }
     ],
     [
@@ -418,7 +418,7 @@
           "createdAt": "2026-10-02T10:33:01.408Z",
           "updatedAt": "2026-10-02T10:33:01.408Z"
         },
-        "time": 1791022465756
+        "time": 1791024160653
       }
     ]
   ],
@@ -552,7 +552,7 @@
             },
             {
               "id": "ord_1791012671568_dt8we",
-              "title": "Reels view \ud83d\ude00",
+              "title": "Reels view 😀",
               "status": "In progress",
               "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
               "category": "Instagram",
@@ -567,7 +567,7 @@
             },
             {
               "id": "ord_1791011500320_pjok8",
-              "title": "Reels view \ud83d\ude00",
+              "title": "Reels view 😀",
               "status": "In progress",
               "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
               "category": "Instagram",
@@ -581,7 +581,8 @@
               "providerOrderId": "2848744"
             }
           ],
-          "lastOrderedAt": "2026-10-03T10:03:23.022Z"
+          "lastOrderedAt": "2026-10-03T10:03:23.022Z",
+          "uid": "c4w6bjFk9leTy9SR2ijM0YyJVfx1"
         },
         "time": 1791022465765
       }
@@ -1601,7 +1602,7 @@
           "userEmail": "mdsarfarajalam727712@gmail.com",
           "displayName": "Sarfaraj Alam",
           "role": "admin",
-          "balance": 1.0,
+          "balance": 1,
           "createdAt": "2026-10-01T18:31:07.014Z",
           "updatedAt": "2026-10-01T18:31:08.675Z"
         },
@@ -2923,7 +2924,7 @@
           "totalPrice": 1,
           "comboItems": [],
           "isCombo": false,
-          "title": "Reels Views \u267b\ufe0f",
+          "title": "Reels Views ♻️",
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "createdAt": "2026-08-30T10:06:50.784Z",
           "targetLink": "https://instagram.com/Mhdlhdldlysyks",
@@ -2955,7 +2956,7 @@
           "isCombo": false,
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "providerOrderId": "1016745490",
-          "title": "Like (Lifetime \u267b\ufe0f) ",
+          "title": "Like (Lifetime ♻️) ",
           "category": "Instagram",
           "error": "",
           "comboItems": [],
@@ -2974,7 +2975,7 @@
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "userEmail": "mtasvir375@gmail.com",
           "courseId": "9RJJQ79l92KtRYMLNiLA",
-          "courseTitle": "Reels Views (Lifetime \u267b\ufe0f)",
+          "courseTitle": "Reels Views (Lifetime ♻️)",
           "category": "Instagram",
           "quantity": 1000,
           "targetLink": "Yyttrrd",
@@ -2995,7 +2996,7 @@
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "userEmail": "mtasvir375@gmail.com",
           "courseId": "EUEsSLoKiJziaepvTUpw",
-          "courseTitle": "Like (Lifetime \u267b\ufe0f)",
+          "courseTitle": "Like (Lifetime ♻️)",
           "category": "Instagram",
           "quantity": 100,
           "targetLink": "Shshshhshs.snnsnsnsn",
@@ -3018,7 +3019,7 @@
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "userEmail": "mtasvir375@gmail.com",
           "courseId": "9RJJQ79l92KtRYMLNiLA",
-          "courseTitle": "Reels Views (Lifetime \u267b\ufe0f)",
+          "courseTitle": "Reels Views (Lifetime ♻️)",
           "category": "Instagram",
           "quantity": 1000,
           "targetLink": "Ggfffff",
@@ -3038,7 +3039,7 @@
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "userEmail": "mtasvir375@gmail.com",
           "courseId": "Nbh8gxjzqCUGD9WpAchF",
-          "courseTitle": "Reels Views \u267b\ufe0f",
+          "courseTitle": "Reels Views ♻️",
           "category": "Instagram",
           "quantity": 1000,
           "targetLink": "Fffsss",
@@ -3058,7 +3059,7 @@
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "userEmail": "mtasvir375@gmail.com",
           "courseId": "iEtn6J95FYpvKc2GIP82",
-          "courseTitle": "Like (Lifetime \u267b\ufe0f)",
+          "courseTitle": "Like (Lifetime ♻️)",
           "category": "Instagram",
           "quantity": 100000,
           "targetLink": "Hshssh",
@@ -3106,7 +3107,7 @@
           "targetLink": "Bhvgfc.bvh",
           "userEmail": "mtasvir375@gmail.com",
           "serviceId": "4JImtKjIzm1Gg5NjJhlN",
-          "title": "Reels/Post Share \ud83e\udef4",
+          "title": "Reels/Post Share 🫴",
           "category": "Instagram",
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "status": "Pending",
@@ -3125,7 +3126,7 @@
           "providerOrderId": "PENDING",
           "comboItems": [],
           "isCombo": true,
-          "title": "Reels Views \u267b\ufe0f",
+          "title": "Reels Views ♻️",
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "createdAt": "2026-08-25T13:40:46.049Z",
           "targetLink": "https://Ffffgggggg.crc",
@@ -3149,7 +3150,7 @@
           "userEmail": "mtasvir375@gmail.com",
           "serviceId": "QqFbpGujCOyCkZLq5tBQ",
           "courseId": "QqFbpGujCOyCkZLq5tBQ",
-          "title": "Reels Views \u267b\ufe0f",
+          "title": "Reels Views ♻️",
           "category": "Instagram",
           "quantity": 100,
           "targetLink": "Zzbzbvsbs.ajsj",
@@ -3197,7 +3198,7 @@
           "totalPrice": 1,
           "providerOrderId": "2729032",
           "serviceId": "QqFbpGujCOyCkZLq5tBQ",
-          "title": "Reels Views \u267b\ufe0f",
+          "title": "Reels Views ♻️",
           "targetLink": "https://instagram.com/aad9befe-802c-4b3f-b3e7-26cae4640b8c",
           "comboItems": [],
           "category": "Instagram",
@@ -3293,7 +3294,7 @@
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "userEmail": "mtasvir375@gmail.com",
           "courseId": "1b9eKPIfLF9dOP8XeyDP",
-          "courseTitle": "Video View (Lifetime \u267b\ufe0f)",
+          "courseTitle": "Video View (Lifetime ♻️)",
           "category": "Facebook",
           "quantity": 1000,
           "targetLink": "Wsdde",
@@ -3313,7 +3314,7 @@
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "userEmail": "mtasvir375@gmail.com",
           "courseId": "RZrnwpgacRaRhVMg2M6j",
-          "courseTitle": "Followers (Lifetime \u267b\ufe0f)",
+          "courseTitle": "Followers (Lifetime ♻️)",
           "category": "Instagram",
           "quantity": 250,
           "targetLink": "https://www.instagram.com/md_saud_009?igsh=MWZ4d3Uzb3JtenV1Zw==",
@@ -3353,7 +3354,7 @@
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "userEmail": "mtasvir375@gmail.com",
           "courseId": "x53hZs1cI2w5pos0YkV7",
-          "courseTitle": "Reels Views \u267b\ufe0f",
+          "courseTitle": "Reels Views ♻️",
           "category": "Instagram",
           "quantity": 1000,
           "targetLink": "https://www.instagram.com/dc_rohit_15?igsh=MXZlNGg1YWdsOHh0Yg==",
@@ -3373,7 +3374,7 @@
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "userEmail": "mtasvir375@gmail.com",
           "courseId": "ZrRKGrTRHaQPTKsfkJWt",
-          "courseTitle": "Followers (Lifetime \u267b\ufe0f)",
+          "courseTitle": "Followers (Lifetime ♻️)",
           "category": "Instagram",
           "quantity": 100,
           "targetLink": "Ggfffff",
@@ -3415,7 +3416,7 @@
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "userEmail": "mtasvir375@gmail.com",
           "courseId": "RZrnwpgacRaRhVMg2M6j",
-          "courseTitle": "Followers (Lifetime \u267b\ufe0f)",
+          "courseTitle": "Followers (Lifetime ♻️)",
           "category": "Instagram",
           "quantity": 1050,
           "targetLink": "https://www.instagram.com/dhrv.x9?igsh=MTVveWt0bDdrMTVyeQ==",
@@ -3436,7 +3437,7 @@
           "userEmail": "mtasvir375@gmail.com",
           "status": "Pending",
           "isCombo": false,
-          "title": "Like (Lifetime \u267b\ufe0f) ",
+          "title": "Like (Lifetime ♻️) ",
           "updatedAt": "2026-09-14T18:05:24.160Z",
           "providerOrderId": "1016785641",
           "targetLink": "https://instagram.com/mdsaudalam621@okicici",
@@ -3460,7 +3461,7 @@
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "userEmail": "mtasvir375@gmail.com",
           "courseId": "2MjOiwRjMYpprdzgMNi6",
-          "courseTitle": "Followers ( Lifetime \u267b\ufe0f )",
+          "courseTitle": "Followers ( Lifetime ♻️ )",
           "category": "Instagram",
           "quantity": 214,
           "targetLink": "https://www.instagram.com/monetizeyoutubeyt?igsh=MXcwN29pdjc5dGthbQ==",
@@ -3481,7 +3482,7 @@
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "userEmail": "mtasvir375@gmail.com",
           "courseId": "Nbh8gxjzqCUGD9WpAchF",
-          "courseTitle": "Reels Views \u267b\ufe0f",
+          "courseTitle": "Reels Views ♻️",
           "category": "Instagram",
           "quantity": 1000,
           "targetLink": "https://www.instagram.com/reel/DJL4QrozeRN/?igsh=dWt4dzk4dWQxc2Zz",
@@ -3526,7 +3527,7 @@
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "userEmail": "mtasvir375@gmail.com",
           "courseId": "x53hZs1cI2w5pos0YkV7",
-          "courseTitle": "Reels Views \u267b\ufe0f",
+          "courseTitle": "Reels Views ♻️",
           "category": "Instagram",
           "quantity": 1000,
           "targetLink": "https://www.instagram.com/dc_rohit_15?igsh=MXZlNGg1YWdsHh0Yg==",
@@ -3551,7 +3552,7 @@
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "userEmail": "mtasvir375@gmail.com",
           "courseId": "x53hZs1cI2w5pos0YkV7",
-          "courseTitle": "Reels Views \u267b\ufe0f",
+          "courseTitle": "Reels Views ♻️",
           "category": "Instagram",
           "quantity": 1000,
           "targetLink": "Hshshss.snnsn",
@@ -3599,7 +3600,7 @@
           "targetLink": "https://www.instagram.com/_mr__rohit_09?igsh=dmYzZjdjeGRndnVi",
           "userEmail": "mtasvir375@gmail.com",
           "serviceId": "RZrnwpgacRaRhVMg2M6j",
-          "title": "Followers (Lifetime \u267b\ufe0f)  5859",
+          "title": "Followers (Lifetime ♻️)  5859",
           "category": "Instagram",
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "providerRawResponse": "{\"order\":1015461535}",
@@ -3641,7 +3642,7 @@
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "userEmail": "mtasvir375@gmail.com",
           "courseId": "RZrnwpgacRaRhVMg2M6j",
-          "courseTitle": "Followers (Lifetime \u267b\ufe0f)",
+          "courseTitle": "Followers (Lifetime ♻️)",
           "category": "Instagram",
           "quantity": 104,
           "targetLink": "https://www.instagram.com/sonuraj052?igsh=bGkwMmYwdzAxdHd1",
@@ -3669,7 +3670,7 @@
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "userEmail": "mtasvir375@gmail.com",
           "error": "",
-          "title": "Reels Views \u267b\ufe0f",
+          "title": "Reels Views ♻️",
           "updatedAt": "2026-09-14T18:05:24.165Z",
           "comboItems": [],
           "category": "Instagram",
@@ -3710,7 +3711,7 @@
           "providerOrderId": "PENDING",
           "comboItems": [],
           "isCombo": true,
-          "title": "Reels Views \u267b\ufe0f",
+          "title": "Reels Views ♻️",
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "createdAt": "2026-08-14T14:48:31.219Z",
           "targetLink": "https://www.instagram.com/dc_rohit_15?igsh=MXZlNGg1YWdsOHh0Yg==",
@@ -3732,7 +3733,7 @@
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "userEmail": "mtasvir375@gmail.com",
           "courseId": "x53hZs1cI2w5pos0YkV7",
-          "courseTitle": "Reels Views \u267b\ufe0f",
+          "courseTitle": "Reels Views ♻️",
           "category": "Instagram",
           "quantity": 1000,
           "targetLink": "https://www.instagram.com/dc_rohit_15?igsh=MXZlNGg1YWdsOHh0Yg==",
@@ -3757,7 +3758,7 @@
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "userEmail": "mtasvir375@gmail.com",
           "courseId": "x53hZs1cI2w5pos0YkV7",
-          "courseTitle": "Reels Views \u267b\ufe0f",
+          "courseTitle": "Reels Views ♻️",
           "category": "Instagram",
           "quantity": 1000,
           "targetLink": "https://whatsapp.com/channel/0029Vb7zsyi6RGJFemxpzy0b",
@@ -3803,7 +3804,7 @@
           "id": "ord_1783436816225_9fk1i",
           "quantity": 1000,
           "totalPrice": 1,
-          "title": "Reels Views \u267b\ufe0f  ",
+          "title": "Reels Views ♻️  ",
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "createdAt": "2026-07-07T15:06:56.466Z",
           "targetLink": "https://www.instagram.com/rohit_15?igsh=MXZlNGg1YWdsOHh0Yg==",
@@ -3825,7 +3826,7 @@
           "id": "ord_1783418495538_0jlw5",
           "quantity": 5200,
           "totalPrice": 5.2,
-          "title": "Reels Views \u267b\ufe0f  ",
+          "title": "Reels Views ♻️  ",
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "createdAt": "2026-07-07T10:01:36.276Z",
           "targetLink": "https://www.instagram.com/reel/DafJl5EIO1o/?igsh=MWc0ZGdneDIzMXZ3aw==",
@@ -3899,7 +3900,7 @@
           "targetLink": "https://www.instagram.com/dc_rohit_15?igsh=MXZlNGg1YWdsOHh0Yg==",
           "userEmail": "mtasvir375@gmail.com",
           "serviceId": "wylJzacKfTUddKbw28dq",
-          "title": "Reels Views \u267b\ufe0f ",
+          "title": "Reels Views ♻️ ",
           "category": "Instagram",
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "providerRawResponse": "{\"order\":1015462640}",
@@ -3920,7 +3921,7 @@
           "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
           "userEmail": "mtasvir375@gmail.com",
           "courseId": "EUEsSLoKiJziaepvTUpw",
-          "courseTitle": "Like (Lifetime \u267b\ufe0f)",
+          "courseTitle": "Like (Lifetime ♻️)",
           "category": "Instagram",
           "quantity": 100,
           "targetLink": "https://www.instagram.com/dc_rohit_15?igsh=MXZlNGg1YWdsOHh0Yg==",
@@ -4069,7 +4070,7 @@
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "userEmail": "mdsaudalam621@gmail.com",
           "courseId": "9RJJQ79l92KtRYMLNiLA",
-          "courseTitle": "Reels Views (Lifetime \u267b\ufe0f)",
+          "courseTitle": "Reels Views (Lifetime ♻️)",
           "category": "Instagram",
           "quantity": 1000,
           "targetLink": "Ssss",
@@ -4090,7 +4091,7 @@
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "userEmail": "mdsaudalam621@gmail.com",
           "courseId": "x53hZs1cI2w5pos0YkV7",
-          "courseTitle": "Reels Views \u267b\ufe0f ",
+          "courseTitle": "Reels Views ♻️ ",
           "category": "Instagram",
           "quantity": 1000,
           "targetLink": "648883759724",
@@ -4115,7 +4116,7 @@
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "userEmail": "mdsaudalam621@gmail.com",
           "courseId": "4JImtKjIzm1Gg5NjJhlN",
-          "courseTitle": "Reels/Post Share \ud83e\udef4",
+          "courseTitle": "Reels/Post Share 🫴",
           "category": "Instagram",
           "quantity": 100,
           "targetLink": "https://www.instagram.com/dc_rohit_15?igsh=MXZlNGg1YWdsOHh0Yg==",
@@ -4139,7 +4140,7 @@
           "id": "ord_1788114295016_hcfzo",
           "updatedAt": "2026-09-26T10:12:50.095Z",
           "quantity": 50,
-          "title": "Like (Lifetime \u267b\ufe0f) ",
+          "title": "Like (Lifetime ♻️) ",
           "category": "Instagram",
           "status": "Pending",
           "targetLink": "https://Ffffgggggg.crcvv",
@@ -4165,7 +4166,7 @@
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "userEmail": "mdsaudalam621@gmail.com",
           "courseId": "4JImtKjIzm1Gg5NjJhlN",
-          "courseTitle": "Reels/Post Share \ud83e\udef4",
+          "courseTitle": "Reels/Post Share 🫴",
           "category": "Instagram",
           "quantity": 100,
           "targetLink": "https://www.instagram.com/dc_rohit_15?igsh=MXZlNGg1YWdsOHh0Yg==",
@@ -4190,7 +4191,7 @@
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "userEmail": "mdsaudalam621@gmail.com",
           "courseId": "x53hZs1cI2w5pos0YkV7",
-          "courseTitle": "Reels Views \u267b\ufe0f ",
+          "courseTitle": "Reels Views ♻️ ",
           "category": "Instagram",
           "quantity": 1000,
           "targetLink": "https://www.instagram.com/dc_rohit_15?igsh=MXZlNGg1YWdsOHh0Yg==",
@@ -4215,7 +4216,7 @@
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "userEmail": "mdsaudalam621@gmail.com",
           "courseId": "EUEsSLoKiJziaepvTUpw",
-          "courseTitle": "Like (Lifetime \u267b\ufe0f)",
+          "courseTitle": "Like (Lifetime ♻️)",
           "category": "Instagram",
           "quantity": 100,
           "targetLink": "https://www.instagram.com/dc_rohit_15?igsh=MXZlNGg1YWdsOHh0Yg==",
@@ -4238,7 +4239,7 @@
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "userEmail": "mdsaudalam621@gmail.com",
           "courseId": "21LfNHmOmnAmxOEEdnMk",
-          "courseTitle": "Followers indian \ud83c\uddee\ud83c\uddf3 (Lifetime \u267b\ufe0f)",
+          "courseTitle": "Followers indian 🇮🇳 (Lifetime ♻️)",
           "category": "Instagram",
           "quantity": 100,
           "targetLink": "https://www.instagram.com/reel/DXtvdQage-A/?igsh=eDJqeXF4Y2dhcGZ1",
@@ -4288,7 +4289,7 @@
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "createdAt": "2026-08-30T15:18:57.478Z",
           "courseId": "EUEsSLoKiJziaepvTUpw",
-          "title": "Like (Lifetime \u267b\ufe0f) ",
+          "title": "Like (Lifetime ♻️) ",
           "category": "Instagram",
           "targetLink": "https://instagram.com/Ddd bgdxagcyk",
           "totalPrice": 0.75,
@@ -4308,7 +4309,7 @@
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "userEmail": "mdsaudalam621@gmail.com",
           "courseId": "XaUhsixnw6D2sgRL75ig",
-          "courseTitle": "Comment Positive \ud83e\udd70 ",
+          "courseTitle": "Comment Positive 🥰 ",
           "category": "Instagram",
           "quantity": 1000,
           "targetLink": "Fff",
@@ -4328,7 +4329,7 @@
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "userEmail": "mdsaudalam621@gmail.com",
           "courseId": "x53hZs1cI2w5pos0YkV7",
-          "courseTitle": "Reels Views \u267b\ufe0f ",
+          "courseTitle": "Reels Views ♻️ ",
           "category": "Instagram",
           "quantity": 1000,
           "targetLink": "https://www.instagram.com/dc_rohit_15?igsh=MXZlNGg1YWdsOHh0Yg==",
@@ -4353,7 +4354,7 @@
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "userEmail": "mdsaudalam621@gmail.com",
           "courseId": "kZuLCxdvTWoiP17qwKGw",
-          "courseTitle": "Telegram mix positive reaction \ud83d\ude00\ud83e\udd70\u2764\ufe0f\ud83e\udd2a",
+          "courseTitle": "Telegram mix positive reaction 😀🥰❤️🤪",
           "category": "Telegram",
           "quantity": 100,
           "targetLink": "https://t.me/saudbhai/6",
@@ -4398,7 +4399,7 @@
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "userEmail": "mdsaudalam621@gmail.com",
           "courseId": "x53hZs1cI2w5pos0YkV7",
-          "courseTitle": "Reels Views \u267b\ufe0f ",
+          "courseTitle": "Reels Views ♻️ ",
           "category": "Instagram",
           "quantity": 1000,
           "targetLink": "326845808564",
@@ -4470,7 +4471,7 @@
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "userEmail": "mdsaudalam621@gmail.com",
           "courseId": "3IL9DJR60P0XTAjQWnW4",
-          "courseTitle": "Followers indian \ud83c\uddee\ud83c\uddf3 (Lifetime \u267b\ufe0f)",
+          "courseTitle": "Followers indian 🇮🇳 (Lifetime ♻️)",
           "category": "Instagram",
           "quantity": 100,
           "targetLink": "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app/dashboard",
@@ -4539,7 +4540,7 @@
           "totalPrice": 1.52,
           "comboItems": [],
           "isCombo": false,
-          "title": "Reels Views \u267b\ufe0f",
+          "title": "Reels Views ♻️",
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "createdAt": "2026-08-30T10:17:36.673Z",
           "targetLink": "https://instagram.com/Bzbzbzzbzbzb",
@@ -4569,7 +4570,7 @@
           "totalPrice": 1,
           "courseId": "QqFbpGujCOyCkZLq5tBQ",
           "comboItems": [],
-          "title": "Reels Views \u267b\ufe0f",
+          "title": "Reels Views ♻️",
           "providerOrderId": "2728992",
           "error": "",
           "category": "Instagram",
@@ -4589,7 +4590,7 @@
           "id": "ord_1788207677229_yer8p",
           "createdAt": "2026-08-31T20:21:20.571Z",
           "category": "Instagram",
-          "title": "Reels Views \u267b\ufe0f",
+          "title": "Reels Views ♻️",
           "userEmail": "mdsaudalam621@gmail.com",
           "status": "Pending",
           "quantity": 1000,
@@ -4640,7 +4641,7 @@
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "userEmail": "mdsaudalam621@gmail.com",
           "courseId": "kZuLCxdvTWoiP17qwKGw",
-          "courseTitle": "Telegram mix positive reaction \ud83d\ude00\ud83e\udd70\u2764\ufe0f\ud83e\udd2a",
+          "courseTitle": "Telegram mix positive reaction 😀🥰❤️🤪",
           "category": "Telegram",
           "quantity": 100,
           "targetLink": "https://t.me/saudbhai/6",
@@ -4659,7 +4660,7 @@
           "id": "ord_1783431901785_a9tp5",
           "quantity": 1000,
           "totalPrice": 1,
-          "title": "Reels Views \u267b\ufe0f  ",
+          "title": "Reels Views ♻️  ",
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "createdAt": "2026-07-07T13:45:02.369Z",
           "targetLink": "https://www.instagram.com/reel/DYKFJkIJQ-P/?igsh=aTR6azViZW1zYzNv",
@@ -4681,7 +4682,7 @@
           "id": "ord_1783436111600_s90vh",
           "quantity": 1000,
           "totalPrice": 1,
-          "title": "Reels Views \u267b\ufe0f  ",
+          "title": "Reels Views ♻️  ",
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "createdAt": "2026-07-07T14:55:12.383Z",
           "targetLink": "https:/bzbzbzbz/www.instagram.com/reel/DYKFJkIJQ-P/?igsh=aTR6azViZW1zYzNv",
@@ -4728,7 +4729,7 @@
           "providerOrderId": "PENDING",
           "comboItems": [],
           "isCombo": false,
-          "title": "Reels Views \u267b\ufe0f",
+          "title": "Reels Views ♻️",
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "createdAt": "2026-08-30T11:08:49.379Z",
           "targetLink": "https://Fffvfgggggg.crc",
@@ -4752,7 +4753,7 @@
           "userEmail": "mdsaudalam621@gmail.com",
           "serviceId": "tbnPbHdzQVi8IkKhlwAr",
           "courseId": "tbnPbHdzQVi8IkKhlwAr",
-          "title": "Share reels/post \u267b\ufe0f",
+          "title": "Share reels/post ♻️",
           "category": "Instagram",
           "quantity": 100,
           "targetLink": "Uytrewwasdgfghkjoiyy.g",
@@ -4777,7 +4778,7 @@
           "category": "Instagram",
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "quantity": 50,
-          "title": "Like (Lifetime \u267b\ufe0f) ",
+          "title": "Like (Lifetime ♻️) ",
           "userEmail": "mdsaudalam621@gmail.com",
           "serviceId": "EUEsSLoKiJziaepvTUpw",
           "isCombo": false,
@@ -4826,7 +4827,7 @@
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "userEmail": "mdsaudalam621@gmail.com",
           "courseId": "4JImtKjIzm1Gg5NjJhlN",
-          "courseTitle": "Reels/Post Share \ud83e\udef4",
+          "courseTitle": "Reels/Post Share 🫴",
           "category": "Instagram",
           "quantity": 100,
           "targetLink": "https://youtu.be/AfT_7C0xTZk?si=bCQIajs0sZ5Er4pt",
@@ -4851,7 +4852,7 @@
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "userEmail": "mdsaudalam621@gmail.com",
           "courseId": "x53hZs1cI2w5pos0YkV7",
-          "courseTitle": "Reels Views \u267b\ufe0f ",
+          "courseTitle": "Reels Views ♻️ ",
           "category": "Instagram",
           "quantity": 1000,
           "targetLink": "https://www.instagram.com/dc_rohit_15?igsh=MXZlNGg1YWdsOHh0Yg==",
@@ -4901,7 +4902,7 @@
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "userEmail": "mdsaudalam621@gmail.com",
           "courseId": "Nbh8gxjzqCUGD9WpAchF",
-          "courseTitle": "Reels Views \u267b\ufe0f",
+          "courseTitle": "Reels Views ♻️",
           "category": "Instagram",
           "quantity": 1000,
           "targetLink": "Ddrr",
@@ -4920,7 +4921,7 @@
           "id": "ord_1783376351988_1icig",
           "quantity": 1000,
           "totalPrice": 1,
-          "title": "Reels Views \u267b\ufe0f  ",
+          "title": "Reels Views ♻️  ",
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "createdAt": "2026-07-06T22:19:12.153Z",
           "targetLink": "85455555555522",
@@ -4942,7 +4943,7 @@
           "id": "ord_1783431908643_pnbf3",
           "quantity": 1000,
           "totalPrice": 1,
-          "title": "Reels Views \u267b\ufe0f  ",
+          "title": "Reels Views ♻️  ",
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "createdAt": "2026-07-07T13:45:08.875Z",
           "targetLink": "Nrhdhddhdhdh",
@@ -4988,7 +4989,7 @@
           "createdAt": "2026-08-31T10:35:34.834Z",
           "quantity": 1200,
           "error": "",
-          "title": "Like (Lifetime \u267b\ufe0f) ",
+          "title": "Like (Lifetime ♻️) ",
           "totalPrice": 18,
           "updatedAt": "2026-09-26T10:12:50.154Z",
           "providerOrderId": "1016755099",
@@ -5011,7 +5012,7 @@
           "id": "ord_1783436057166_isqn3",
           "quantity": 1000,
           "totalPrice": 1,
-          "title": "Reels Views \u267b\ufe0f  ",
+          "title": "Reels Views ♻️  ",
           "userId": "w1VAF0MJoYducsSTQtMRW907OBX2",
           "createdAt": "2026-07-07T14:54:17.714Z",
           "targetLink": "http/www.instagram.com/dc_rohit_15?igsh=MXZlNGg1YWdsOHh0Yg==",
@@ -5105,7 +5106,7 @@
           "userEmail": "mtasvir375@gmail.com",
           "serviceId": "srv_test_auto_save",
           "courseId": "srv_test_auto_save",
-          "title": "Reels view \ud83d\ude04",
+          "title": "Reels view 😄",
           "category": "Instagram",
           "quantity": 330,
           "targetLink": "Hsdhhddhs.jssjsjs",
@@ -5304,7 +5305,7 @@
           "title": "Instagram Followers [High Quality]",
           "category": "Instagram",
           "quantity": 2500,
-          "targetLink": "Bhggcxc\u0964\u0928\u092c",
+          "targetLink": "Bhggcxc।नब",
           "totalPrice": 38.75,
           "isCombo": false,
           "comboItems": [],
@@ -5681,7 +5682,7 @@
         "provider": "sms_forwarder",
         "sender": "SMS Forwarder App",
         "time": 1790329868812,
-        "rawSms": "Mr MD SAUD ALAM paid you \u20b92.01\n854271923759",
+        "rawSms": "Mr MD SAUD ALAM paid you ₹2.01\n854271923759",
         "status": "available"
       }
     ],
@@ -5692,7 +5693,7 @@
         "provider": "sms_forwarder",
         "sender": "SMS Forwarder App",
         "time": 1790329879886,
-        "rawSms": "Mr MD SAUD ALAM paid you \u20b92.00\n630536994778",
+        "rawSms": "Mr MD SAUD ALAM paid you ₹2.00\n630536994778",
         "status": "available"
       }
     ],
@@ -5703,7 +5704,7 @@
         "provider": "sms_forwarder",
         "sender": "SMS Forwarder App",
         "time": 1790330652796,
-        "rawSms": "Mr MD SAUD ALAM paid you \u20b95.00\n711447704740",
+        "rawSms": "Mr MD SAUD ALAM paid you ₹5.00\n711447704740",
         "status": "available"
       }
     ],
@@ -5735,7 +5736,7 @@
       "id": "sms_1790330652796_9nlz",
       "timestamp": "2026-09-25T10:04:12.796Z",
       "sender": "SMS Forwarder App",
-      "rawText": "Mr MD SAUD ALAM paid you \u20b95.00\n711447704740",
+      "rawText": "Mr MD SAUD ALAM paid you ₹5.00\n711447704740",
       "isCredit": true,
       "amount": 5,
       "utr": "711447704740",
@@ -5746,7 +5747,7 @@
       "id": "sms_1790329879886_cfyu",
       "timestamp": "2026-09-25T09:51:19.886Z",
       "sender": "SMS Forwarder App",
-      "rawText": "Mr MD SAUD ALAM paid you \u20b92.00\n630536994778",
+      "rawText": "Mr MD SAUD ALAM paid you ₹2.00\n630536994778",
       "isCredit": true,
       "amount": 2,
       "utr": "630536994778",
@@ -5757,7 +5758,7 @@
       "id": "sms_1790329868812_9phu",
       "timestamp": "2026-09-25T09:51:08.812Z",
       "sender": "SMS Forwarder App",
-      "rawText": "Mr MD SAUD ALAM paid you \u20b92.01\n854271923759",
+      "rawText": "Mr MD SAUD ALAM paid you ₹2.01\n854271923759",
       "isCredit": true,
       "amount": 2.01,
       "utr": "854271923759",

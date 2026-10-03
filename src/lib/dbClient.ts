@@ -120,10 +120,12 @@ export const dbClient = {
       } catch (e) {}
     }
 
-    // 3. Write directly to Firestore SDK to ensure instant permanent sync across ALL domains!
+    // 3. Write directly to Firestore SDK to ensure instant permanent sync across ALL domains (non-blocking)
     try {
       const docRef = doc(db, table, id);
-      await setFirestoreDoc(docRef, merged, { merge: true });
+      setFirestoreDoc(docRef, merged, { merge: true }).catch((fsErr: any) => {
+        console.warn(`[DB-CLIENT-FS-WRITE-WARN] ${table}/${id}:`, fsErr.message);
+      });
     } catch (fsErr: any) {
       console.warn(`[DB-CLIENT-FS-WRITE-WARN] ${table}/${id}:`, fsErr.message);
     }
@@ -157,7 +159,7 @@ export const dbClient = {
     axios.post(formatApiUrl('/api/db/delete'), { collection: table, id }).catch(() => {});
     try {
       const docRef = doc(db, table, id);
-      await deleteFirestoreDoc(docRef);
+      deleteFirestoreDoc(docRef).catch(() => {});
     } catch (fsErr: any) {}
   },
 

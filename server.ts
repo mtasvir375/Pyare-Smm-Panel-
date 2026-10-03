@@ -2063,17 +2063,23 @@ export async function startServer() {
 
   const setDocSafe = async (col: string, id: string, data: any, token?: string) => {
     setLocalDoc(col, id, data);
-    await setDocInSupabase(col, id, data); // Await write to Supabase
+    
+    // Background async write to Supabase (non-blocking)
+    setDocInSupabase(col, id, data).catch((err: any) => {
+      console.warn(`[SUPABASE-SET-ERR-BACKGROUND] Failed for ${col}/${id}:`, err.message);
+    });
+    
     setDocRESTAsync(col, id, data);
     
-    // Authoritative Admin SDK Write (Ensures 100% permanence on custom domain)
+    // Background async write to Firebase Admin SDK (non-blocking)
     if (fdb) {
-      try {
-        await fdb.collection(col).doc(id).set(data, { merge: true });
-        console.log(`[FIREBASE-ADMIN-SET] Successfully saved ${col}/${id} via Admin SDK.`);
-      } catch (err: any) {
-        console.warn(`[FIREBASE-ADMIN-SET-WARN] Failed for ${col}/${id}:`, err.message);
-      }
+      fdb.collection(col).doc(id).set(data, { merge: true })
+        .then(() => {
+          console.log(`[FIREBASE-ADMIN-SET] Successfully saved ${col}/${id} via Admin SDK.`);
+        })
+        .catch((err: any) => {
+          console.warn(`[FIREBASE-ADMIN-SET-WARN] Failed for ${col}/${id}:`, err.message);
+        });
     }
 
     invalidateCachesForCollection(col, id);
@@ -2141,16 +2147,22 @@ export async function startServer() {
     const now = new Date().toISOString();
     const docData = { id: generatedId, ...data, createdAt: data.createdAt || now, updatedAt: now };
 
-    await setDocInSupabase(col, generatedId, docData); // Await write to Supabase
+    // Background async write to Supabase (non-blocking)
+    setDocInSupabase(col, generatedId, docData).catch((err: any) => {
+      console.warn(`[SUPABASE-ADD-ERR-BACKGROUND] Failed for ${col}/${generatedId}:`, err.message);
+    });
+    
     setDocRESTAsync(col, generatedId, docData);
 
+    // Background async write to Firebase Admin SDK (non-blocking)
     if (fdb) {
-      try {
-        await fdb.collection(col).doc(generatedId).set(docData, { merge: true });
-        console.log(`[FIREBASE-ADMIN-ADD] Successfully saved ${col}/${generatedId} via Admin SDK.`);
-      } catch (err: any) {
-        console.warn(`[FIREBASE-ADMIN-ADD-WARN] Failed for ${col}/${generatedId}:`, err.message);
-      }
+      fdb.collection(col).doc(generatedId).set(docData, { merge: true })
+        .then(() => {
+          console.log(`[FIREBASE-ADMIN-ADD] Successfully saved ${col}/${generatedId} via Admin SDK.`);
+        })
+        .catch((err: any) => {
+          console.warn(`[FIREBASE-ADMIN-ADD-WARN] Failed for ${col}/${generatedId}:`, err.message);
+        });
     }
 
     if (col === "orders") {
@@ -2173,17 +2185,23 @@ export async function startServer() {
 
   const deleteDocSafe = async (col: string, id: string) => {
     deleteLocalDoc(col, id);
-    await deleteDocInSupabase(col, id); // Await delete from Supabase
+    
+    // Background async delete from Supabase (non-blocking)
+    deleteDocInSupabase(col, id).catch((err: any) => {
+      console.warn(`[SUPABASE-DEL-ERR-BACKGROUND] Failed for ${col}/${id}:`, err.message);
+    });
+    
     deleteDocRESTAsync(col, id);
     
-    // Authoritative Admin SDK Delete
+    // Background async delete from Firebase Admin SDK (non-blocking)
     if (fdb) {
-      try {
-        await fdb.collection(col).doc(id).delete();
-        console.log(`[FIREBASE-ADMIN-DELETE] Successfully deleted ${col}/${id} via Admin SDK.`);
-      } catch (err: any) {
-        console.warn(`[FIREBASE-ADMIN-DELETE-WARN] Failed for ${col}/${id}:`, err.message);
-      }
+      fdb.collection(col).doc(id).delete()
+        .then(() => {
+          console.log(`[FIREBASE-ADMIN-DELETE] Successfully deleted ${col}/${id} via Admin SDK.`);
+        })
+        .catch((err: any) => {
+          console.warn(`[FIREBASE-ADMIN-DELETE-WARN] Failed for ${col}/${id}:`, err.message);
+        });
     }
 
     if (col === "providers") {
