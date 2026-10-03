@@ -38,8 +38,19 @@ export const formatApiUrl = (endpoint: string): string => {
   return cleanEndpoint;
 };
 
-// Configure global Axios base URL
+// Configure global Axios base URL and Interceptor
 if (typeof window !== "undefined") {
   const initialBase = getApiBaseUrl();
   axios.defaults.baseURL = initialBase || undefined;
+
+  // Intercept all Axios requests to ensure relative /api endpoints point to the live backend on custom domain
+  axios.interceptors.request.use((config) => {
+    const base = getApiBaseUrl();
+    if (base && config.url && config.url.startsWith("/api/")) {
+      config.url = `${base}${config.url}`;
+    }
+    return config;
+  }, (error) => {
+    return Promise.reject(error);
+  });
 }
