@@ -892,26 +892,32 @@ export default function Courses() {
                     animate={{ opacity: 1, y: 0 }}
                     className="absolute z-50 w-full mt-2 bg-card border border-border rounded-2xl shadow-xl max-h-60 overflow-y-auto p-1.5 transition-all duration-300"
                   >
-                    {categories.map((cat) => (
-                      <button
-                        key={cat}
-                        onClick={() => {
-                          setSelectedCategory(cat);
-                          setIsCategoryOpen(false);
-                        }}
-                        className={cn(
-                          "w-full flex items-center gap-3 p-3 rounded-xl text-sm transition-all hover:bg-muted/50",
-                          selectedCategory === cat ? "bg-primary/5 text-primary font-bold" : "text-gray-600"
-                        )}
-                      >
-                        <CategoryIcon 
-                        category={cat} 
-                        iconUrl={courses.find(c => c.category === cat)?.iconUrl || courses.find(c => c.category === cat)?.icon_url}
-                        className="w-4 h-4" 
-                      />
-                        {cat}
-                      </button>
-                    ))}
+                    {categories.length === 0 ? (
+                      <div className="p-4 text-center text-xs text-gray-400">
+                        No services added yet. Please add services from Admin Panel.
+                      </div>
+                    ) : (
+                      categories.map((cat) => (
+                        <button
+                          key={cat}
+                          onClick={() => {
+                            setSelectedCategory(cat);
+                            setIsCategoryOpen(false);
+                          }}
+                          className={cn(
+                            "w-full flex items-center gap-3 p-3 rounded-xl text-sm transition-all hover:bg-muted/50",
+                            selectedCategory === cat ? "bg-primary/5 text-primary font-bold" : "text-gray-600"
+                          )}
+                        >
+                          <CategoryIcon 
+                            category={cat} 
+                            iconUrl={courses.find(c => c.category === cat)?.iconUrl || courses.find(c => c.category === cat)?.icon_url}
+                            className="w-4 h-4" 
+                          />
+                          {cat}
+                        </button>
+                      ))
+                    )}
                   </motion.div>
                 </>
               )}

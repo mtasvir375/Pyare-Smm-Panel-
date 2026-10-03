@@ -226,6 +226,98 @@ export default function Admin() {
   const [providerToDelete, setProviderToDelete] = useState<any>(null);
   const [processingActions, setProcessingActions] = useState<Set<string>>(new Set());
 
+  // Turso Cloud Database State
+  const [tursoUrl, setTursoUrl] = useState("");
+  const [tursoAuthToken, setTursoAuthToken] = useState("");
+  const [tursoStatus, setTursoStatus] = useState<any>(null);
+  const [tursoTesting, setTursoTesting] = useState(false);
+  const [tursoSaving, setTursoSaving] = useState(false);
+  const [tursoSyncing, setTursoSyncing] = useState(false);
+  const [tursoTestResult, setTursoTestResult] = useState<{ success?: boolean; message?: string } | null>(null);
+
+  const fetchTursoStatus = async () => {
+    try {
+      const res = await axios.get(formatApiUrl("/api/turso/status"));
+      if (res.data) {
+        setTursoStatus(res.data);
+        if (res.data.url && !tursoUrl) {
+          setTursoUrl(res.data.url);
+        }
+      }
+    } catch (e) {}
+  };
+
+  const handleTestTurso = async () => {
+    if (!tursoUrl || !tursoAuthToken) {
+      toast.error("कृपया Turso Database URL और Auth Token दोनों भरें");
+      return;
+    }
+    setTursoTesting(true);
+    setTursoTestResult(null);
+    try {
+      const res = await axios.post(formatApiUrl("/api/turso/test"), {
+        url: tursoUrl.trim(),
+        authToken: tursoAuthToken.trim()
+      });
+      setTursoTestResult(res.data);
+      if (res.data.success) {
+        toast.success(res.data.message || "Turso connection successful!");
+        fetchTursoStatus();
+      } else {
+        toast.error(res.data.message || "Connection failed");
+      }
+    } catch (err: any) {
+      const msg = err.response?.data?.message || err.message || "Connection failed";
+      setTursoTestResult({ success: false, message: msg });
+      toast.error(msg);
+    } finally {
+      setTursoTesting(false);
+    }
+  };
+
+  const handleSaveTurso = async () => {
+    if (!tursoUrl || !tursoAuthToken) {
+      toast.error("कृपया Turso Database URL और Auth Token दोनों भरें");
+      return;
+    }
+    setTursoSaving(true);
+    try {
+      const res = await axios.post(formatApiUrl("/api/turso/config"), {
+        url: tursoUrl.trim(),
+        authToken: tursoAuthToken.trim(),
+        autoSync: true
+      });
+      if (res.data.success) {
+        toast.success("Turso Database सफलतापूर्वक कनेक्ट और सेव हो गया! (सभी डेटा सिंक हो रहा है)");
+        fetchTursoStatus();
+      } else {
+        toast.error(res.data.message || "Save failed");
+      }
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || err.message || "Failed to save Turso config");
+    } finally {
+      setTursoSaving(false);
+    }
+  };
+
+  const handleSyncTurso = async () => {
+    setTursoSyncing(true);
+    const syncToast = toast.loading("Turso में सारा डेटा (Services, Orders, Users, Providers) सिंक हो रहा है...");
+    try {
+      const res = await axios.post(formatApiUrl("/api/turso/sync"));
+      if (res.data.success) {
+        toast.success(res.data.message || "Data synced to Turso!", { id: syncToast });
+        fetchTursoStatus();
+      } else {
+        toast.error(res.data.message || "Sync failed", { id: syncToast });
+      }
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || err.message || "Sync error", { id: syncToast });
+    } finally {
+      setTursoSyncing(false);
+    }
+  };
+
   const checkOrdersStatus = async (force = false) => {
     if (checkingStatus || !isAdmin) return;
     
@@ -387,6 +479,7 @@ export default function Admin() {
           const savedBackendUrl = settingsData.backendApiUrl || "";
           setBackendApiUrl(savedBackendUrl);
         }
+        fetchTursoStatus();
       }
       setFetchedTabs(prev => {
         const next = new Set(prev);
@@ -2790,6 +2883,155 @@ export default function Admin() {
                 renderTabPlaceholder("settings", "Settings")
               ) : (
                 <>
+                  {/* Turso Cloud Database (turso.tech) Card */}
+                  <Card className="border-2 border-emerald-500/30 bg-gradient-to-br from-emerald-50/50 via-white to-teal-50/40 shadow-sm rounded-3xl overflow-hidden">
+                    <CardHeader className="pb-4 border-b border-emerald-100/70 bg-emerald-500/5">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2.5 bg-emerald-600 text-white rounded-2xl shadow-xs">
+                            <Database className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <CardTitle className="text-base font-bold text-gray-900 flex items-center gap-2">
+                              Turso Cloud Database (turso.tech)
+                              {tursoStatus?.connected ? (
+                                <Badge className="bg-emerald-500 text-white hover:bg-emerald-600 text-[10px] px-2.5 py-0.5 rounded-full flex items-center gap-1 font-semibold">
+                                  <CheckCircle2 className="w-3 h-3" /> Connected (Free libSQL)
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-gray-500 border-gray-300 text-[10px] px-2 py-0.5 rounded-full">
+                                  Disconnected / Local Storage
+                                </Badge>
+                              )}
+                            </CardTitle>
+                            <CardDescription className="text-xs text-gray-500 mt-0.5">
+                              100M Reads & 25M Writes / Month 100% Free • Edge SQLite • High Performance
+                            </CardDescription>
+                          </div>
+                        </div>
+                        <a 
+                          href="https://turso.tech" 
+                          target="_blank" 
+                          rel="noreferrer" 
+                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 px-3.5 py-1.5 rounded-xl transition-colors self-start sm:self-center"
+                        >
+                          Create Free Turso Account <ExternalLink className="w-3.5 h-3.5" />
+                        </a>
+                      </div>
+                    </CardHeader>
+
+                    <CardContent className="p-6 space-y-5">
+                      {/* Setup Guide Banner */}
+                      <div className="bg-white border border-emerald-200/80 rounded-2xl p-4 text-xs text-gray-700 space-y-2.5 shadow-2xs">
+                        <p className="font-bold text-emerald-900 flex items-center gap-1.5 text-xs">
+                          <Zap className="w-4 h-4 text-amber-500" />
+                          Turso डेटाबेस कैसे जोड़ें (3 आसान स्टेप्स):
+                        </p>
+                        <ol className="list-decimal list-inside space-y-1 text-gray-600 pl-1 leading-relaxed text-[11px]">
+                          <li><b>turso.tech</b> पर जाएं और Google/GitHub से बिल्कुल मुफ़्त साइन अप करें।</li>
+                          <li><b>Create Database</b> पर क्लिक करके डेटाबेस बनाएं (जैसे <code className="bg-emerald-50 text-emerald-800 px-1 py-0.5 rounded font-mono">smm-panel-db</code>)।</li>
+                          <li>वहां से <b>Database URL</b> (<code className="bg-gray-100 px-1 py-0.5 rounded font-mono">libsql://...turso.io</code>) और <b>Auth Token</b> कॉपी करके नीचे पेस्ट करें और <b>"Save & Connect Turso"</b> दबाएं!</li>
+                        </ol>
+                      </div>
+
+                      {/* Inputs Grid */}
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold uppercase tracking-wider text-gray-600 flex items-center justify-between">
+                            <span>Turso Database URL</span>
+                            <span className="text-[10px] text-gray-400 font-normal">libsql://...turso.io</span>
+                          </label>
+                          <Input 
+                            placeholder="libsql://your-db-username.turso.io" 
+                            value={tursoUrl}
+                            onChange={(e) => setTursoUrl(e.target.value)}
+                            className="rounded-xl h-11 bg-white border-emerald-200 focus:border-emerald-500 font-mono text-xs"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold uppercase tracking-wider text-gray-600 flex items-center justify-between">
+                            <span>Turso Auth Token</span>
+                            <span className="text-[10px] text-gray-400 font-normal">Token from Turso Dashboard</span>
+                          </label>
+                          <Input 
+                            type="password"
+                            placeholder="eyJhbGciOiJFZERTQ..." 
+                            value={tursoAuthToken}
+                            onChange={(e) => setTursoAuthToken(e.target.value)}
+                            className="rounded-xl h-11 bg-white border-emerald-200 focus:border-emerald-500 font-mono text-xs"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Live Stats if Connected */}
+                      {tursoStatus?.connected && (
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+                          <div className="bg-white border border-emerald-100 rounded-xl p-3 shadow-2xs">
+                            <p className="text-[10px] font-semibold text-gray-400 uppercase">Services in Turso</p>
+                            <p className="text-lg font-bold text-gray-800">{tursoStatus.stats?.courses || 0}</p>
+                          </div>
+                          <div className="bg-white border border-emerald-100 rounded-xl p-3 shadow-2xs">
+                            <p className="text-[10px] font-semibold text-gray-400 uppercase">Orders in Turso</p>
+                            <p className="text-lg font-bold text-gray-800">{tursoStatus.stats?.orders || 0}</p>
+                          </div>
+                          <div className="bg-white border border-emerald-100 rounded-xl p-3 shadow-2xs">
+                            <p className="text-[10px] font-semibold text-gray-400 uppercase">Users in Turso</p>
+                            <p className="text-lg font-bold text-gray-800">{tursoStatus.stats?.users || 0}</p>
+                          </div>
+                          <div className="bg-white border border-emerald-100 rounded-xl p-3 shadow-2xs">
+                            <p className="text-[10px] font-semibold text-gray-400 uppercase">Providers in Turso</p>
+                            <p className="text-lg font-bold text-gray-800">{tursoStatus.stats?.providers || 0}</p>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Buttons Action Bar */}
+                      <div className="flex flex-wrap items-center gap-3 pt-1">
+                        <Button 
+                          type="button"
+                          variant="outline"
+                          onClick={handleTestTurso}
+                          disabled={tursoTesting || !tursoUrl}
+                          className="rounded-xl border-emerald-300 text-emerald-700 hover:bg-emerald-50 h-10 px-4 text-xs font-semibold"
+                        >
+                          {tursoTesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <ShieldCheck className="w-3.5 h-3.5 mr-1.5 text-emerald-600" />}
+                          Test Connection
+                        </Button>
+
+                        <Button 
+                          type="button"
+                          onClick={handleSaveTurso}
+                          disabled={tursoSaving || !tursoUrl || !tursoAuthToken}
+                          className="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white h-10 px-5 text-xs font-semibold shadow-xs"
+                        >
+                          {tursoSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Check className="w-3.5 h-3.5 mr-1.5" />}
+                          Save & Connect Turso
+                        </Button>
+
+                        {tursoStatus?.connected && (
+                          <Button 
+                            type="button"
+                            variant="secondary"
+                            onClick={handleSyncTurso}
+                            disabled={tursoSyncing}
+                            className="rounded-xl bg-emerald-100 hover:bg-emerald-200 text-emerald-900 h-10 px-4 text-xs font-semibold sm:ml-auto"
+                          >
+                            {tursoSyncing ? <RefreshCw className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <RefreshCw className="w-3.5 h-3.5 mr-1.5 text-emerald-700" />}
+                            Sync All Local Data to Turso
+                          </Button>
+                        )}
+                      </div>
+
+                      {tursoTestResult && (
+                        <div className={`p-3 rounded-xl text-xs flex items-center gap-2 ${tursoTestResult.success ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-rose-100 text-rose-800 border border-rose-200'}`}>
+                          {tursoTestResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" /> : <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />}
+                          <span>{tursoTestResult.message}</span>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
                   <Card className="border-none shadow-sm">
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">

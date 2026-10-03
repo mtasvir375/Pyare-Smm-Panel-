@@ -7,10 +7,34 @@ import axios from "axios";
 import dotenv from "dotenv";
 import Razorpay from "razorpay";
 import crypto from "crypto";
-import { createClient } from "@supabase/supabase-js";
 import https from "https";
 import http from "http";
-import { getLocalSqliteDb, getLocalDoc, setLocalDoc, updateLocalDoc, addLocalDoc, listLocalDocs, deleteLocalDoc } from "./api/localDb";
+import {
+  getTursoStatus,
+  saveTursoConfig,
+  testTursoConnection,
+  syncAllLocalDataToTurso,
+  tursoSetDoc,
+  tursoDeleteDoc,
+  tursoGetDoc,
+  tursoListDocs,
+  isTursoConnected,
+  getTursoClient,
+  getTursoDoc,
+  setTursoDoc,
+  listTursoDocs,
+  deleteTursoDoc
+} from "./server/tursoDb";
+import {
+  getLocalSqliteDb,
+  getLocalDoc,
+  setLocalDoc,
+  updateLocalDoc,
+  addLocalDoc,
+  listLocalDocs,
+  deleteLocalDoc,
+  getAllLocalCollections
+} from "./api/localDb";
 import { migrateAllFromFirebase } from "./api/migrateFromFirebase";
 
 import admin from "firebase-admin";
@@ -120,17 +144,6 @@ try {
   } catch (e2) {
     console.warn("[FIREBASE] getFirestore fallback:", e2);
   }
-}
-
-// Initialize Supabase Client dynamically from environment variables
-const supabaseUrl = process.env.SUPABASE_URL || "";
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
-const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
-
-if (supabase) {
-  console.log(`[SUPABASE] Successfully initialized client for URL: ${supabaseUrl}`);
-} else {
-  console.log(`[SUPABASE-WARN] Client not configured. Using Firestore as backup database.`);
 }
 
 const PORT = 3000;
@@ -711,57 +724,8 @@ export async function startServer() {
     }
   };
 
-  // Background cloud database synchronization at startup to protect against ephemeral disk resets
-  const syncFromSupabaseOnStartup = async () => {
-    if (!supabase) return;
-    try {
-      console.log("[SUPABASE-STARTUP-SYNC] Synchronizing settings, courses, and SMM providers from Supabase cloud database...");
-      
-      // 1. Sync Settings
-      const paymentSnap = await getDocFromSupabase("settings", "payment");
-      if (paymentSnap && Object.keys(paymentSnap).length > 0) {
-        console.log("[SUPABASE-STARTUP-SYNC] Loaded Settings/Payment from Supabase:", paymentSnap.upiId);
-        setLocalDoc("settings", "payment", paymentSnap);
-        serverCache.settings = { data: paymentSnap, time: Date.now() };
-        serverCachedSettings = paymentSnap;
-        serverCachedSettingsTime = Date.now();
-      }
-
-      // 2. Sync Courses
-      const coursesSnap = await listDocsFromSupabase("courses", 500);
-      if (coursesSnap && Array.isArray(coursesSnap) && coursesSnap.length > 0) {
-        console.log(`[SUPABASE-STARTUP-SYNC] Loaded ${coursesSnap.length} Courses/Services from Supabase.`);
-        coursesSnap.forEach(c => {
-          if (c && c.id) {
-            setLocalDoc("courses", c.id, c);
-            serverCache.courses.set(c.id, { data: c, time: Date.now() });
-          }
-        });
-        serverCachedCourses = coursesSnap;
-        serverCachedCoursesTime = Date.now();
-      }
-
-      // 3. Sync Providers
-      const providersSnap = await listDocsFromSupabase("providers", 100);
-      if (providersSnap && Array.isArray(providersSnap) && providersSnap.length > 0) {
-        console.log(`[SUPABASE-STARTUP-SYNC] Loaded ${providersSnap.length} Providers from Supabase.`);
-        providersSnap.forEach(p => {
-          if (p && p.id) {
-            setLocalDoc("providers", p.id, p);
-            serverCache.providers.set(p.id, { data: p, time: Date.now() });
-          }
-        });
-      }
-
-      savePersistentCache();
-    } catch (err: any) {
-      console.error("[SUPABASE-STARTUP-SYNC-ERROR] Failed to sync database at boot:", err.message);
-    }
-  };
-
   // Run the disk cache loader right away
   loadPersistentCache();
-  syncFromSupabaseOnStartup().catch(console.error);
   // Initialize Telegram Bot & local bank alerts service (0 Firestore reads/writes)
   try {
     initTelegramBotService();
@@ -1484,94 +1448,7 @@ export async function startServer() {
 
   // Skip startup write to save Firestore writes
 
-  // Supabase Database Sync Helper Operations (Generic JSONB Schema)
-  const getDocFromSupabase = async (collect: string, id: string): Promise<any> => {
-    if (!supabase) return null;
-    try {
-      const { data, error } = await supabase
-        .from("documents")
-        .select("data")
-        .eq("collection", collect)
-        .eq("id", id)
-        .maybeSingle();
-      
-      if (error) {
-        if (error.message?.includes("relation") && error.message?.includes("does not exist")) {
-          console.warn(`[SUPABASE-GET-WARN] 'documents' table does not exist yet. Please run the SQL migration.`);
-        } else {
-          console.warn(`[SUPABASE-GET-WARN] Failed for ${collect}/${id}:`, error.message);
-        }
-        return null;
-      }
-      return data?.data || null;
-    } catch (err: any) {
-      console.warn(`[SUPABASE-GET-ERR] Network error for ${collect}/${id} (project may be paused):`, err.message);
-      return null;
-    }
-  };
-
-  const setDocInSupabase = async (collect: string, id: string, data: any): Promise<boolean> => {
-    if (!supabase) return false;
-    try {
-      const { error } = await supabase
-        .from("documents")
-        .upsert({
-          collection: collect,
-          id: id,
-          data: data,
-          updated_at: new Date().toISOString()
-        }, { onConflict: "collection,id" });
-      
-      if (error) {
-        console.warn(`[SUPABASE-SET-WARN] Failed for ${collect}/${id}:`, error.message);
-        return false;
-      }
-      return true;
-    } catch (err: any) {
-      console.warn(`[SUPABASE-SET-ERR] Network error for ${collect}/${id} (project may be paused):`, err.message);
-      return false;
-    }
-  };
-
-  const deleteDocInSupabase = async (collect: string, id: string): Promise<boolean> => {
-    if (!supabase) return false;
-    try {
-      const { error } = await supabase
-        .from("documents")
-        .delete()
-        .eq("collection", collect)
-        .eq("id", id);
-      
-      if (error) {
-        console.warn(`[SUPABASE-DEL-WARN] Failed for ${collect}/${id}:`, error.message);
-        return false;
-      }
-      return true;
-    } catch (err: any) {
-      console.warn(`[SUPABASE-DEL-ERR] Network error for ${collect}/${id} (project may be paused):`, err.message);
-      return false;
-    }
-  };
-
-  const listDocsFromSupabase = async (collect: string, limitCount = 100): Promise<any[] | null> => {
-    if (!supabase) return null;
-    try {
-      const { data, error } = await supabase
-        .from("documents")
-        .select("data")
-        .eq("collection", collect)
-        .limit(limitCount);
-      
-      if (error) {
-        console.warn(`[SUPABASE-LIST-WARN] Failed for ${collect}:`, error.message);
-        return null;
-      }
-      return data ? data.map(d => d.data) : [];
-    } catch (err: any) {
-      console.warn(`[SUPABASE-LIST-ERR] Network error for ${collect} (project may be paused):`, err.message);
-      return null;
-    }
-  };
+  // Database Access Layer Helper Operations
 
   // Firebase-Firestore Helpers that replace Supabase ones
   const getDocSafe = async (collect: string, id: string, token?: string, forceFresh?: boolean) => {
@@ -1662,13 +1539,13 @@ export async function startServer() {
 
     let result = { exists: false, data: () => null as any };
 
-    // Try reading from Supabase first (0 Firestore reads!)
-    if (supabase) {
-      const sbData = await getDocFromSupabase(collect, id);
-      if (sbData) {
-        result = { exists: true, data: () => sbData };
+    // 1. Try Turso Database first
+    try {
+      const tursoData = await getTursoDoc(collect, id);
+      if (tursoData) {
+        return { exists: true, data: () => tursoData };
       }
-    }
+    } catch (tursoErr) {}
 
     const isCoreColl = collect === "providers" || collect === "settings" || collect === "courses" || collect === "services";
 
@@ -1831,24 +1708,18 @@ export async function startServer() {
       }
     }
 
-    // 1.5 Try reading from Supabase (0 Firestore reads!)
-    if (supabase) {
-      try {
-        const limitCount = collect === "courses" ? 500 : 100;
-        const sbList = await listDocsFromSupabase(collect, limitCount);
-        if (sbList && Array.isArray(sbList) && sbList.length > 0) {
-          sbList.forEach(item => {
-            const id = item.id;
-            if (id) {
-              docMap.set(id, { id, data: () => item });
-            }
-          });
-          console.log(`[SUPABASE-LIST-SAFE] Loaded ${sbList.length} docs for ${collect} directly from Supabase.`);
-          return { docs: Array.from(docMap.values()) };
-        }
-      } catch (err: any) {
-        console.warn(`[SUPABASE-LIST-SAFE-WARN] Failed for ${collect}:`, err.message);
+    // 1.5. Query Turso Database (Fast & Zero Firestore Reads)
+    try {
+      const limitCount = collect === "courses" ? 500 : 100;
+      const tursoDocs = await listTursoDocs(collect, limitCount);
+      if (tursoDocs && Array.isArray(tursoDocs) && tursoDocs.length > 0) {
+        tursoDocs.forEach(d => {
+          if (d && d.id) docMap.set(d.id, { id: d.id, data: () => d });
+        });
+        return { docs: Array.from(docMap.values()) };
       }
+    } catch (tErr: any) {
+      console.warn(`[TURSO-LIST-SAFE-WARN] ${collect}:`, tErr.message);
     }
 
     // 2. Firestore Admin SDK (Authoritative)
@@ -2064,23 +1935,10 @@ export async function startServer() {
   const setDocSafe = async (col: string, id: string, data: any, token?: string) => {
     setLocalDoc(col, id, data);
     
-    // Background async write to Supabase (non-blocking)
-    setDocInSupabase(col, id, data).catch((err: any) => {
-      console.warn(`[SUPABASE-SET-ERR-BACKGROUND] Failed for ${col}/${id}:`, err.message);
+    // Background write to Turso Database
+    setTursoDoc(col, id, data).catch((err: any) => {
+      console.warn(`[TURSO-SET-WARN] Failed for ${col}/${id}:`, err.message);
     });
-    
-    setDocRESTAsync(col, id, data);
-    
-    // Background async write to Firebase Admin SDK (non-blocking)
-    if (fdb) {
-      fdb.collection(col).doc(id).set(data, { merge: true })
-        .then(() => {
-          console.log(`[FIREBASE-ADMIN-SET] Successfully saved ${col}/${id} via Admin SDK.`);
-        })
-        .catch((err: any) => {
-          console.warn(`[FIREBASE-ADMIN-SET-WARN] Failed for ${col}/${id}:`, err.message);
-        });
-    }
 
     invalidateCachesForCollection(col, id);
     if (col === "providers") {
@@ -2147,23 +2005,10 @@ export async function startServer() {
     const now = new Date().toISOString();
     const docData = { id: generatedId, ...data, createdAt: data.createdAt || now, updatedAt: now };
 
-    // Background async write to Supabase (non-blocking)
-    setDocInSupabase(col, generatedId, docData).catch((err: any) => {
-      console.warn(`[SUPABASE-ADD-ERR-BACKGROUND] Failed for ${col}/${generatedId}:`, err.message);
+    // Background write to Turso Database
+    setTursoDoc(col, generatedId, docData).catch((err: any) => {
+      console.warn(`[TURSO-ADD-WARN] Failed for ${col}/${generatedId}:`, err.message);
     });
-    
-    setDocRESTAsync(col, generatedId, docData);
-
-    // Background async write to Firebase Admin SDK (non-blocking)
-    if (fdb) {
-      fdb.collection(col).doc(generatedId).set(docData, { merge: true })
-        .then(() => {
-          console.log(`[FIREBASE-ADMIN-ADD] Successfully saved ${col}/${generatedId} via Admin SDK.`);
-        })
-        .catch((err: any) => {
-          console.warn(`[FIREBASE-ADMIN-ADD-WARN] Failed for ${col}/${generatedId}:`, err.message);
-        });
-    }
 
     if (col === "orders") {
       addOrderToMemory(generatedId, docData);
@@ -2186,23 +2031,10 @@ export async function startServer() {
   const deleteDocSafe = async (col: string, id: string) => {
     deleteLocalDoc(col, id);
     
-    // Background async delete from Supabase (non-blocking)
-    deleteDocInSupabase(col, id).catch((err: any) => {
-      console.warn(`[SUPABASE-DEL-ERR-BACKGROUND] Failed for ${col}/${id}:`, err.message);
+    // Background delete from Turso Database
+    deleteTursoDoc(col, id).catch((err: any) => {
+      console.warn(`[TURSO-DEL-WARN] Failed for ${col}/${id}:`, err.message);
     });
-    
-    deleteDocRESTAsync(col, id);
-    
-    // Background async delete from Firebase Admin SDK (non-blocking)
-    if (fdb) {
-      fdb.collection(col).doc(id).delete()
-        .then(() => {
-          console.log(`[FIREBASE-ADMIN-DELETE] Successfully deleted ${col}/${id} via Admin SDK.`);
-        })
-        .catch((err: any) => {
-          console.warn(`[FIREBASE-ADMIN-DELETE-WARN] Failed for ${col}/${id}:`, err.message);
-        });
-    }
 
     if (col === "providers") {
       serverCache.providers.delete(id);
@@ -2584,6 +2416,53 @@ export async function startServer() {
     } catch (err: any) {
       console.error("[SETTINGS-SAVE-ERR]", err.message);
       return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Turso Database Management Routes
+  app.get("/api/turso/status", async (req, res) => {
+    try {
+      const status = await getTursoStatus();
+      res.json(status);
+    } catch (e: any) {
+      res.status(500).json({ connected: false, error: e.message });
+    }
+  });
+
+  app.post("/api/turso/test", async (req, res) => {
+    try {
+      const { url, authToken } = req.body || {};
+      const result = await testTursoConnection(url, authToken);
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ success: false, message: e.message });
+    }
+  });
+
+  app.post("/api/turso/config", async (req, res) => {
+    try {
+      const { url, authToken, autoSync } = req.body || {};
+      const result = await saveTursoConfig(url, authToken, autoSync !== false);
+      if (result.success && url && authToken) {
+        // Automatically sync all data on config save
+        const allData = getAllLocalCollections();
+        syncAllLocalDataToTurso(allData).catch(err => {
+          console.warn("[TURSO] Auto-sync on config save:", err);
+        });
+      }
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ success: false, message: e.message });
+    }
+  });
+
+  app.post("/api/turso/sync", async (req, res) => {
+    try {
+      const allData = getAllLocalCollections();
+      const result = await syncAllLocalDataToTurso(allData);
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ success: false, message: e.message });
     }
   });
 

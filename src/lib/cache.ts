@@ -146,15 +146,7 @@ export const getCachedCourses = async (forceRefresh = false) => {
     }
   } catch(e) {}
 
-  // ULTIMATE SAFETY NET: Default seed services so website is NEVER blank even if browser cache is cleared
-  const defaultRescueServices = [
-    { id: "srv_ig_followers", title: "Instagram Followers [High Quality]", category: "Instagram", price: 15.50, minLimit: 100, status: "active", pricePerThousand: 15.50 },
-    { id: "srv_ig_likes", title: "Instagram Likes [Instant]", category: "Instagram", price: 5.20, minLimit: 50, status: "active", pricePerThousand: 5.20 },
-    { id: "srv_yt_views", title: "YouTube Views [Non-Drop]", category: "YouTube", price: 120.00, minLimit: 1000, status: "active", pricePerThousand: 120.00 },
-    { id: "srv_tg_members", title: "Telegram Members [Non-Drop]", category: "Telegram", price: 75.00, minLimit: 100, status: "active", pricePerThousand: 75.00 }
-  ];
-
-  return sortServicesList(mapServiceList(cachedCourses && cachedCourses.length > 0 ? cachedCourses : defaultRescueServices));
+  return cachedCourses && Array.isArray(cachedCourses) ? sortServicesList(mapServiceList(cachedCourses)) : [];
 };
 
 let cachedSettings: any = null;

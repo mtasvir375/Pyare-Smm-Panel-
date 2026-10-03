@@ -146,61 +146,8 @@ function saveDbToDisk() {
   } catch (e) {}
 }
 
-const DEFAULT_PROVIDERS: Record<string, any> = {
-  "talVdnSEg8QGpNVpaUTi": {
-    id: "talVdnSEg8QGpNVpaUTi",
-    name: "Wholesale Smm Store",
-    apiKey: "e88f2599c82bf15a44b759e61f63673ceae954b8",
-    apiUrl: "https://wholesalesmmstore.com/api/v2",
-    createdAt: "2026-09-05T23:14:00.000Z"
-  },
-  "z4luhVVgYKgHULKPXj8j": {
-    id: "z4luhVVgYKgHULKPXj8j",
-    name: "The main smm provider",
-    apiKey: "e104906e7686a6177f614c7ddbe0a240124a1795",
-    apiUrl: "https://themainsmmprovider.com/api/v2",
-    createdAt: "2026-09-05T23:14:00.000Z"
-  },
-  "z9lfdj7ByNCeGNO6WbGZ": {
-    id: "z9lfdj7ByNCeGNO6WbGZ",
-    name: "Smm bin",
-    apiKey: "f55bb2dfdc035f9c3c9e737bb72922a51d64309f",
-    apiUrl: "https://smmbin.com/api/v2",
-    createdAt: "2026-09-05T23:14:00.000Z"
-  },
-  "1RmzJhc5ZeyOCU23uZMy": {
-    id: "1RmzJhc5ZeyOCU23uZMy",
-    name: "MainSMMpanel ♥️",
-    apiKey: "5a2749e1fdafdf50cd81f2137f9b5806",
-    apiUrl: "https://mainsmmpanel.in/api/v2",
-    createdAt: "2026-09-05T23:14:00.000Z"
-  }
-};
-
 function seedDefaults() {
-  const isFirstRun = !fs.existsSync(dbFile);
-
-  // 1. Seed courses ONLY on first brand new run if empty
-  const courseCol = getColMap("courses");
-  if (courseCol.size === 0 && DEFAULT_SERVICES.length > 0) {
-    for (const service of DEFAULT_SERVICES) {
-      setLocalDoc("courses", service.id, {
-        ...service,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      });
-    }
-  }
-
-  // 2. Seed providers if empty
-  const providerCol = getColMap("providers");
-  if (providerCol.size === 0) {
-    for (const [pId, pData] of Object.entries(DEFAULT_PROVIDERS)) {
-      setLocalDoc("providers", pId, pData);
-    }
-  }
-
-  // 3. Seed initial users if missing
+  // Only seed admin profile if missing so admin login remains accessible
   for (const [key, userProfile] of Object.entries(INITIAL_USERS)) {
     const existing = getLocalDoc("users", key);
     if (!existing) {
@@ -334,6 +281,18 @@ export function deleteLocalDoc(collection: string, id: string): boolean {
   } catch (err: any) {
     return false;
   }
+}
+
+export function getAllLocalCollections(): Record<string, Record<string, any>> {
+  loadDbFromDisk();
+  const result: Record<string, Record<string, any>> = {};
+  for (const [colName, colMap] of memoryStore.entries()) {
+    result[colName] = {};
+    for (const [docId, docData] of colMap.entries()) {
+      result[colName][docId] = docData;
+    }
+  }
+  return result;
 }
 
 export default function handler(req: any, res: any) {

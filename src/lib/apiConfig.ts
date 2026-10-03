@@ -62,4 +62,20 @@ if (typeof window !== "undefined") {
   }, (error) => {
     return Promise.reject(error);
   });
+
+  // Intercept window.fetch as well for any native fetch calls
+  const originalFetch = window.fetch;
+  window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
+    if (typeof input === "string") {
+      input = formatApiUrl(input);
+    } else if (input instanceof URL) {
+      input = new URL(formatApiUrl(input.pathname + input.search), input.origin);
+    } else if (input instanceof Request) {
+      const formattedUrl = formatApiUrl(input.url);
+      if (formattedUrl !== input.url) {
+        input = new Request(formattedUrl, input);
+      }
+    }
+    return originalFetch.call(this, input, init);
+  };
 }
