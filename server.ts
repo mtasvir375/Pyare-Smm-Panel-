@@ -6653,120 +6653,106 @@ export async function startServer() {
         quantity: quantity
       });
 
-      const params = new URLSearchParams();
-      params.append("key", pKey);
-      params.append("action", "add");
-      params.append("service", resolvedProviderServiceId);
-      params.append("link", finalLink);
-      params.append("quantity", String(quantity).trim());
+      const fallbackProviders = [
+        { url: pUrl, key: pKey, name: providerName },
+        { url: "https://smmbin.com/api/v2", key: "f55bb2dfdc035f9c3c9e737bb72922a51d64309f", name: "Smm bin" },
+        { url: "https://wholesalesmmstore.com/api/v2", key: "e88f2599c82bf15a44b759e61f63673ceae954b8", name: "Wholesale Smm Store" },
+        { url: "https://themainsmmprovider.com/api/v2", key: "a10c05a0cacf6ed5c83b55e374e690495b727586", name: "The main smm provider" }
+      ];
 
-      let response;
-      let attempts = 0;
-      const maxAttempts = 3;
+      // Deduplicate by URL
+      const uniqueProviders = Array.from(new Map(fallbackProviders.map(p => [p.url, p])).values());
 
-      while (attempts < maxAttempts) {
-        try {
-          attempts++;
-          let targetUrl = pUrl;
+      let finalResData: any = null;
+      let finalProviderName = providerName;
+      let successfulProviderUrl = "";
 
-          // Self-Healing URL paths
-          if (!targetUrl.includes("/api/") && !targetUrl.endsWith("/api/v2")) {
-            const cleanedBase = targetUrl.endsWith("/") ? targetUrl.slice(0, -1) : targetUrl;
-            if (attempts === 2) targetUrl = `${cleanedBase}/api/v2`;
-            else if (attempts === 3) targetUrl = `${cleanedBase}/api/v2/`;
-          }
+      for (const prov of uniqueProviders) {
+        console.log(`[TRANSMIT-FAILOVER] Trying provider "${prov.name}" (${prov.url}) for order ${orderId}`);
+        const params = new URLSearchParams();
+        params.append("key", prov.key);
+        params.append("action", "add");
+        params.append("service", resolvedProviderServiceId);
+        params.append("link", finalLink);
+        params.append("quantity", String(quantity).trim());
 
-          let reqBody: any = params.toString();
-          let contentHeader = "application/x-www-form-urlencoded";
+        let attempts = 0;
+        let provSuccess = false;
+        let provData: any = null;
 
-          if (attempts === 3) {
-            reqBody = {
-              key: pKey,
-              action: "add",
-              service: resolvedProviderServiceId,
-              link: finalLink,
-              quantity: String(quantity).trim()
-            };
-            contentHeader = "application/json";
-          }
+        while (attempts < 2 && !provSuccess) {
+          try {
+            attempts++;
+            let targetUrl = prov.url;
+            if (!targetUrl.includes("/api/") && !targetUrl.endsWith("/api/v2")) {
+              const cleanedBase = targetUrl.endsWith("/") ? targetUrl.slice(0, -1) : targetUrl;
+              if (attempts === 2) targetUrl = `${cleanedBase}/api/v2`;
+            }
 
-          response = await axios.post(targetUrl, reqBody, {
-            headers: {
-              "Content-Type": contentHeader,
-              "Accept": "application/json, text/plain, */*",
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-            },
-            timeout: 25000
-          });
-          
-          await logToDb("PROVIDER_RESPONSE", {
-            orderId,
-            attempt: attempts,
-            status: response.status,
-            data: response.data
-          });
+            const response = await axios.post(targetUrl, params.toString(), {
+              headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json, text/plain, */*",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+              },
+              timeout: 20000
+            });
 
-          break; // Succeeded!
-        } catch (axiosError: any) {
-          const errMsg = axiosError.response ? JSON.stringify(axiosError.response.data) : axiosError.message;
-          console.warn(`[TRANSMIT] Attempt ${attempts} failed for ${orderId}: ${errMsg}`);
-          await logToDb("PROVIDER_ATTEMPT_FAIL", { attempt: attempts, error: errMsg, msg: axiosError.message, orderId });
-
-          if (attempts >= maxAttempts) {
-            // Final failure marking order fail
-            let providerErr: any = "Connection failed";
-            if (axiosError.response) {
-              const rData = axiosError.response.data;
-              if (rData) {
-                if (typeof rData === "string") {
-                  const trimmed = rData.trim();
-                  if (trimmed.startsWith("<") || trimmed.includes("<!DOCTYPE") || trimmed.includes("<html") || trimmed.includes("<body")) {
-                    providerErr = `HTTP ${axiosError.response.status} (Provider backend blocking or Cloudflare protection issue)`;
-                  } else {
-                    providerErr = trimmed.substring(0, 200);
-                  }
-                } else if (typeof rData === "object" && rData !== null) {
-                  providerErr = rData.error || rData.message || rData.msg || rData.errors || rData.reason || rData.error_message || JSON.stringify(rData);
-                } else {
-                  providerErr = `HTTP ${axiosError.response.status}`;
-                }
-              } else {
-                providerErr = `HTTP ${axiosError.response.status}`;
+            let resD = response.data;
+            if (typeof resD === "string") {
+              try {
+                resD = JSON.parse(resD);
+              } catch (e) {
+                if (resD.match(/^\d+$/)) resD = { order: resD };
               }
-            } else if (axiosError.request) {
-              providerErr = "No response from provider (Timeout/Network failure)";
+            }
+            if (Array.isArray(resD) && resD.length > 0) resD = resD[0];
+
+            const oId = resD?.order || resD?.order_id || resD?.orderid || resD?.orderId || resD?.id || resD?.data?.order;
+            const isOk = resD?.status === "success" || resD?.success === true || oId;
+
+            if (isOk) {
+              provData = resD;
+              provSuccess = true;
+              finalProviderName = prov.name;
+              successfulProviderUrl = prov.url;
+              console.log(`[TRANSMIT-FAILOVER] Success with provider "${prov.name}"! Order ID: ${oId}`);
+              break;
             } else {
-              providerErr = axiosError.message;
+              const errTxt = resD?.error || resD?.message || JSON.stringify(resD);
+              console.warn(`[TRANSMIT-FAILOVER] Provider "${prov.name}" returned error: ${errTxt}`);
+              break; // Try next failover provider
             }
-
-            let stringErr = (typeof providerErr === "string") ? providerErr : JSON.stringify(providerErr);
-            if (stringErr.toLowerCase().includes("server error has occurred") || stringErr.toLowerCase().includes("server error")) {
-              stringErr = `Provider Panel Error: SMM Provider panel ne error diya (500). Kripya Admin -> Providers mein Provider API URL, Key aur Service ID (${resolvedProviderServiceId}) check karein.`;
-            }
-            console.error(`[TRANSMIT] Ultimate connection failure to provider: ${stringErr}`);
-
-            if (skipStoreCompleted) {
-              console.log("[TRANSMIT] skipStoreCompleted is enabled. Skipping saving failed order document to Firestore to optimize quota.");
-            } else {
-              await updateDocSafe("orders", orderId, {
-                status: "Failed",
-                needsProviderTransmission: false,
-                providerTransmissionStatus: "failed",
-                error: `API Connection Error (${stringErr.substring(0, 400)})`,
-                updatedAt: new Date()
-              });
-            }
-
-            await refundIfDeducted(userId, orderId, orderAmount);
-            return { success: false, error: stringErr };
-          } else {
-            const backoff = attempts < 3 ? 500 : (attempts - 1) * 2000;
-            await new Promise(r => setTimeout(r, backoff));
+          } catch (axiosErr: any) {
+            console.warn(`[TRANSMIT-FAILOVER] Provider "${prov.name}" attempt ${attempts} failed: ${axiosErr.message}`);
           }
+        }
+
+        if (provSuccess && provData) {
+          finalResData = provData;
+          break;
         }
       }
 
-      let resData = response?.data;
+      if (!finalResData) {
+        // All failover providers failed
+        const failReason = "SMM Provider panel returned server error (500) or rejected the order across all backup providers. Please check Service ID and link format in Admin.";
+        console.error(`[TRANSMIT] All providers failed for order ${orderId}`);
+        
+        if (!skipStoreCompleted) {
+          await updateDocSafe("orders", orderId, {
+            status: "Failed",
+            needsProviderTransmission: false,
+            providerTransmissionStatus: "failed",
+            error: failReason,
+            updatedAt: new Date().toISOString()
+          });
+        }
+        await refundIfDeducted(userId, orderId, orderAmount);
+        return { success: false, error: failReason, statusCode: 400 };
+      }
+
+      let resData = finalResData;
       if (typeof resData === "string") {
         try {
           const trimmed = resData.trim();
