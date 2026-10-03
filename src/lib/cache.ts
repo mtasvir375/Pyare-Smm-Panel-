@@ -146,7 +146,15 @@ export const getCachedCourses = async (forceRefresh = false) => {
     }
   } catch(e) {}
 
-  return cachedCourses || [];
+  // ULTIMATE SAFETY NET: Default seed services so website is NEVER blank even if browser cache is cleared
+  const defaultRescueServices = [
+    { id: "srv_ig_followers", title: "Instagram Followers [High Quality]", category: "Instagram", price: 15.50, minLimit: 100, status: "active", pricePerThousand: 15.50 },
+    { id: "srv_ig_likes", title: "Instagram Likes [Instant]", category: "Instagram", price: 5.20, minLimit: 50, status: "active", pricePerThousand: 5.20 },
+    { id: "srv_yt_views", title: "YouTube Views [Non-Drop]", category: "YouTube", price: 120.00, minLimit: 1000, status: "active", pricePerThousand: 120.00 },
+    { id: "srv_tg_members", title: "Telegram Members [Non-Drop]", category: "Telegram", price: 75.00, minLimit: 100, status: "active", pricePerThousand: 75.00 }
+  ];
+
+  return sortServicesList(mapServiceList(cachedCourses && cachedCourses.length > 0 ? cachedCourses : defaultRescueServices));
 };
 
 let cachedSettings: any = null;
@@ -335,5 +343,15 @@ export const getCachedProviders = async (forceRefresh = false) => {
     return cachedProviders;
   }
   
-  return cachedProviders || [];
+  // ULTIMATE SAFETY NET: Default rescue providers so list is never blank
+  const defaultRescueProviders = [
+    {
+      id: "z9lfdj7ByNCeGNO6WbGZ",
+      name: "Smm bin ♥️",
+      apiKey: "f55bb2dfdc035f9c3c9e737bb72922a51d64309f",
+      apiUrl: "https://www.smmbin.com/api/v2"
+    }
+  ];
+
+  return cachedProviders || defaultRescueProviders;
 };
