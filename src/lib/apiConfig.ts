@@ -7,7 +7,7 @@ export const getApiBaseUrl = (): string => {
     return "";
   }
   
-  // Check if custom backend URL is explicitly saved in localStorage
+  // Check if custom backend URL is saved in localStorage
   try {
     const customBackend = localStorage.getItem("custom_backend_api_url");
     if (customBackend && customBackend.trim().startsWith("http")) {
@@ -15,8 +15,14 @@ export const getApiBaseUrl = (): string => {
     }
   } catch (e) {}
 
-  // Use same-origin relative paths for all domains (localhost, run.app, custom domains like pyaresmmpanel.online)
-  // This ensures 100% native same-origin routing with zero CORS or Network Errors!
+  const hostname = window.location.hostname;
+  // If running on a custom domain (like pyaresmmpanel.online), static hosting only serves
+  // frontend HTML/JS. We MUST route all API requests directly to the live Cloud Run backend!
+  if (hostname !== "localhost" && hostname !== "127.0.0.1" && !hostname.includes("run.app") && !hostname.includes("webcontainer.io") && !hostname.includes("aistudio")) {
+    return STABLE_CLOUD_RUN_BACKEND;
+  }
+
+  // Same-origin relative paths for preview/localhost
   return "";
 };
 
