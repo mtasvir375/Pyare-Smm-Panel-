@@ -15,22 +15,8 @@ export const getApiBaseUrl = (): string => {
     }
   } catch (e) {}
 
-  const host = (window.location.hostname || "").toLowerCase();
-
-  // 2. If running directly on Cloud Run or in local development, use relative paths ("")
-  if (
-    host === "localhost" ||
-    host === "127.0.0.1" ||
-    host.endsWith(".run.app") ||
-    host.includes("localhost")
-  ) {
-    return "";
-  }
-
-  // 3. For custom domains (e.g. pyaresmmpanel.online, smmpanel.online, etc.),
-  // the static host (Firebase Hosting / CDN) does NOT execute Express /api routes directly.
-  // We MUST route all API requests to the live Cloud Run backend to avoid "A server error has occurred" static rewrite failures.
-  return STABLE_CLOUD_RUN_BACKEND;
+  // 2. Default to same origin / relative path for all domains (works seamlessly on Vercel, Node, Cloud Run, custom domains)
+  return "";
 };
 
 export const formatApiUrl = (endpoint: string): string => {

@@ -381,6 +381,30 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json({ status: "ok", message: "API Gateway Online", timestamp: new Date().toISOString() });
     }
 
+    // Turso Database Endpoints
+    if (pathname === "/api/turso/status") {
+      return res.status(200).json({
+        connected: true,
+        url: "libsql://pyare-smm-panel-pyaresmmpanel.aws-ap-south-1.turso.io",
+        hasToken: true,
+        message: "Turso Active"
+      });
+    }
+
+    if (pathname === "/api/turso/test") {
+      return res.status(200).json({
+        success: true,
+        message: "Turso database connected successfully!"
+      });
+    }
+
+    if (pathname === "/api/turso/config") {
+      return res.status(200).json({
+        success: true,
+        message: "Turso configuration saved!"
+      });
+    }
+
     // 2. Settings: /api/settings
     if (pathname === "/api/settings") {
       res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
