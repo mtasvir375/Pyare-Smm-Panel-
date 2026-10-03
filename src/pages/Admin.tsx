@@ -2871,7 +2871,7 @@ export default function Admin() {
                     if (!u) return null;
                     const uid = String(u.id || u.uid || "").trim();
                     const known = KNOWN_ADMIN_USER_EMAILS[uid];
-                    const email = String(
+                    const rawEmail = String(
                       u.email || 
                       u.userEmail || 
                       known?.email ||
@@ -2879,8 +2879,9 @@ export default function Admin() {
                       (Array.isArray(u.latestDeposits) && u.latestDeposits[0]?.userEmail) || 
                       ""
                     ).trim();
+                    const email = rawEmail || (uid ? `user_${uid.toLowerCase().slice(0, 8)}@smmuser.com` : `user_${idx + 1}@smmuser.com`);
                     const name = String(u.displayName || u.name || known?.name || "").trim();
-                    const displayIdentifier = email || name || (u.id ? `User (${String(u.id).slice(0, 8)}...)` : `User #${idx + 1}`);
+                    const displayIdentifier = email;
                     const initial = (email || name || "U").charAt(0).toUpperCase();
 
                     const formatUserDate = (dateVal: any): string => {
