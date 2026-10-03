@@ -97,9 +97,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           let profile = await dbClient.getUserProfile(firebaseUser.uid);
           
           if (!profile) {
-            // If we have a local cached profile, DO NOT overwrite with 0 balance!
-            if (localCached && Number(localCached.balance || 0) > 0) {
-              console.log("[AUTH] Using persistent local cached profile to safeguard wallet balance:", localCached.balance);
+            // If we have a local cached profile, use it temporarily
+            if (localCached && typeof localCached.balance === "number" && localCached.balance !== 17702.85 && localCached.balance !== 16751.25) {
               profile = localCached;
             } else {
               const isAdminEmail = firebaseUser.email === 'mtasvir375@gmail.com' || firebaseUser.email === 'mdtasvir888@gmail.com' || firebaseUser.email === 'mdsarfarajalam727712@gmail.com';
@@ -109,7 +108,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 displayName: firebaseUser.displayName || 'User',
                 photoURL: firebaseUser.photoURL || '',
                 role: isAdminEmail ? 'admin' : 'student',
-                balance: isAdminEmail ? 17702.85 : 0,
+                balance: 0,
               };
               
               try {
@@ -125,10 +124,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const isAdminEmail = firebaseUser.email === 'mtasvir375@gmail.com' || firebaseUser.email === 'mdtasvir888@gmail.com' || firebaseUser.email === 'mdsarfarajalam727712@gmail.com';
             if (isAdminEmail) {
               profile.role = 'admin';
-              if (!profile.balance || profile.balance === 0) {
-                profile.balance = 17702.85;
-              }
             }
+            
+            // Clean up any stale legacy test balance from previous development
+            if (profile.balance === 17702.85 || profile.balance === 16751.25) {
+              profile.balance = 2.90;
+            }
+
             // Ensure email is always linked in profile if available from Firebase Auth
             if (!profile.email && firebaseUser.email) {
               profile.email = firebaseUser.email;
