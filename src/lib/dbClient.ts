@@ -21,6 +21,7 @@ export interface UserProfile {
   photoURL: string;
   role: 'student' | 'instructor' | 'admin' | 'payment_admin';
   balance: number;
+  bonusCredited?: boolean;
   createdAt: any;
   latestOrders?: any[];
   latestDeposits?: any[];

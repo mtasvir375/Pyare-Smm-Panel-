@@ -6,6 +6,7 @@ import {
 } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { dbClient, UserProfile } from '@/lib/dbClient';
+import { toast } from 'sonner';
 import axios from 'axios';
 
 interface AuthContextType {
@@ -108,12 +109,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 displayName: firebaseUser.displayName || 'User',
                 photoURL: firebaseUser.photoURL || '',
                 role: isAdminEmail ? 'admin' : 'student',
-                balance: 0,
+                balance: 1.00, // ₹1.00 test bonus on first login
+                bonusCredited: true,
+                createdAt: new Date()
               };
               
               try {
                 await dbClient.createUserProfile(firebaseUser.uid, newProfile);
                 profile = { ...newProfile, createdAt: new Date() };
+                toast.success("🎉 स्वागत है! पहले लॉगिन पर ₹1 का टेस्ट बोनस मिला है।");
               } catch (createErr) {
                 profile = { ...newProfile, createdAt: new Date() };
               }
@@ -126,9 +130,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               profile.role = 'admin';
             }
             
-            // Clean up any stale legacy test balance from previous development
+            // Clean up any stale legacy test balance from previous development (except real admin balance)
             if (profile.balance === 17702.85 || profile.balance === 16751.25) {
               profile.balance = 2.90;
+            }
+
+            // First time login bonus for existing zero-balance users who haven't received bonus yet
+            if ((profile.balance === 0 || profile.balance === undefined) && !profile.bonusCredited && !isAdminEmail) {
+              profile.balance = 1.00;
+              profile.bonusCredited = true;
+              dbClient.updateUserProfile(firebaseUser.uid, { balance: 1.00, bonusCredited: true }).catch(() => {});
             }
 
             // Ensure email is always linked in profile if available from Firebase Auth
