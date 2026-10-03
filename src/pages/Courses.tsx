@@ -405,21 +405,33 @@ export default function Courses() {
         const res = await axios.post(targetApiUrl, orderPayload, { headers, timeout: 35000 });
         resData = res.data;
       } catch (apiErr: any) {
-        console.error("[ORDER] API proxy call failed:", apiErr.message, apiErr.response?.data);
-        const respData = apiErr.response?.data;
-        if (respData && typeof respData.currentBalance === "number" && updateUserProfileLocal) {
-          updateUserProfileLocal({ balance: respData.currentBalance });
+        console.warn("[ORDER] Primary API call failed, attempting fallback backend...", apiErr.message);
+        
+        // Fallback to alternate Cloud Run endpoint if custom domain or first endpoint failed
+        const altBackendUrl = targetApiUrl.includes("ais-pre")
+          ? "https://ais-dev-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app/api/proxy-provider"
+          : "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app/api/proxy-provider";
+
+        try {
+          const resFallback = await axios.post(altBackendUrl, orderPayload, { headers, timeout: 35000 });
+          resData = resFallback.data;
+        } catch (fallbackErr: any) {
+          console.error("[ORDER] API proxy call failed:", apiErr.message, apiErr.response?.data);
+          const respData = apiErr.response?.data || fallbackErr.response?.data;
+          if (respData && typeof respData.currentBalance === "number" && updateUserProfileLocal) {
+            updateUserProfileLocal({ balance: respData.currentBalance });
+          }
+          let cleanErrStr = "Failed to place order. Please check your link or try again.";
+          if (respData) {
+            if (typeof respData.error === "string") cleanErrStr = respData.error;
+            else if (typeof respData.message === "string") cleanErrStr = respData.message;
+            else if (typeof respData === "string") cleanErrStr = respData;
+            else if (respData.error && typeof respData.error === "object") cleanErrStr = respData.error.message || JSON.stringify(respData.error);
+          } else if (apiErr.message) {
+            cleanErrStr = apiErr.message;
+          }
+          throw new Error(cleanErrStr);
         }
-        let cleanErrStr = "Failed to place order. Please check your link or try again.";
-        if (respData) {
-          if (typeof respData.error === "string") cleanErrStr = respData.error;
-          else if (typeof respData.message === "string") cleanErrStr = respData.message;
-          else if (typeof respData === "string") cleanErrStr = respData;
-          else if (respData.error && typeof respData.error === "object") cleanErrStr = respData.error.message || JSON.stringify(respData.error);
-        } else if (apiErr.message) {
-          cleanErrStr = apiErr.message;
-        }
-        throw new Error(cleanErrStr);
       }
 
       if (!resData || resData.success !== true || !resData.providerOrderId || String(resData.providerOrderId).trim() === "PENDING" || String(resData.providerOrderId).trim() === "" || String(resData.providerOrderId).trim() === "PENDING_DISPATCH") {
