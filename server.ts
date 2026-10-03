@@ -6143,7 +6143,15 @@ export async function startServer() {
               }
             }
 
-            // Sync in-memory and persistent cache
+            // Sync in-memory, localDb, and Turso Cloud Database
+            const refundUserData = {
+              uid,
+              balance: refundedBal,
+              updatedAt: new Date().toISOString()
+            };
+            setLocalDoc("users", uid, refundUserData);
+            tursoSetDoc("users", uid, refundUserData).catch(() => {});
+
             if (serverCache.users.has(uid)) {
               const cached = serverCache.users.get(uid);
               serverCache.users.set(uid, {
@@ -6185,15 +6193,61 @@ export async function startServer() {
         throw new Error("Missing required field: service_id");
       }
 
-      // 1. Direct live check of user balance from Firebase Firestore
-      console.log(`[TRANSMIT] Checking live balance directly in Firebase for order ${orderId} (User ID: ${userId}, Amount: ₹${orderAmount})`);
+      // 1. Direct live check of user balance from Turso Cloud Database & Local Storage
+      console.log(`[TRANSMIT] Checking live balance for order ${orderId} (User ID: ${userId}, Amount: ₹${orderAmount})`);
       
       let userDocData: any = null;
       let liveBalance = 0;
       let userFound = false;
 
-      // Check Admin SDK directly if available (0 REST overhead)
-      if (!useRestFallback && adminSdkSucceeded) {
+      // 1. Check Turso Cloud Database FIRST (Authoritative Cloud Source)
+      try {
+        const tursoUser = await tursoGetDoc("users", userId);
+        if (tursoUser && (tursoUser.balance !== undefined || tursoUser.walletBalance !== undefined)) {
+          userDocData = tursoUser;
+          userFound = true;
+          liveBalance = Number(tursoUser.balance ?? tursoUser.walletBalance ?? 0);
+          console.log(`[TURSO-BALANCE-CHECK] Found user ${userId} in Turso with balance ₹${liveBalance}`);
+        }
+      } catch (tursoErr: any) {
+        console.warn(`[TURSO-BALANCE-CHECK] Turso check warning: ${tursoErr.message}`);
+      }
+
+      // 1.1 Check Turso by email if not found by ID
+      if (!userFound && currentOrderData?.userEmail) {
+        try {
+          const client = getTursoClient();
+          if (client) {
+            const res = await client.execute({
+              sql: "SELECT * FROM smm_users WHERE LOWER(email) = LOWER(?) LIMIT 1;",
+              args: [String(currentOrderData.userEmail).trim()]
+            });
+            if (res.rows.length > 0) {
+              const row: any = res.rows[0];
+              const parsed = row.data ? JSON.parse(row.data) : row;
+              userDocData = parsed;
+              userFound = true;
+              liveBalance = Number(parsed.balance ?? parsed.walletBalance ?? 0);
+              console.log(`[TURSO-BALANCE-EMAIL] Found user by email in Turso with balance ₹${liveBalance}`);
+            }
+          }
+        } catch (e) {}
+      }
+
+      // 2. Fallback: Local database lookup (100% resilient)
+      if (!userFound) {
+        try {
+          const lUser = getLocalDoc("users", userId) || (currentOrderData.userEmail ? getLocalDoc("users", currentOrderData.userEmail) : null);
+          if (lUser) {
+            userDocData = lUser;
+            userFound = true;
+            liveBalance = Number(lUser.balance ?? lUser.walletBalance ?? 0);
+          }
+        } catch (e) {}
+      }
+
+      // 3. Fallback: Firebase Admin SDK
+      if (!userFound && !useRestFallback && adminSdkSucceeded) {
         try {
           const directUserSnap = await fdb.collection("users").doc(userId).get();
           if (directUserSnap.exists) {
@@ -6206,7 +6260,7 @@ export async function startServer() {
         }
       }
 
-      // Fallback: Direct Firestore REST get
+      // 4. Fallback: Direct Firestore REST get
       if (!userFound) {
         try {
           const restSnap = await getDocREST("users", userId);
@@ -6218,18 +6272,6 @@ export async function startServer() {
         } catch (e: any) {
           console.warn(`[DIRECT-BALANCE] REST direct get error: ${e.message}`);
         }
-      }
-
-      // Fallback: Local database lookup (100% resilient across custom domain)
-      if (!userFound) {
-        try {
-          const lUser = getLocalDoc("users", userId) || (currentOrderData.userEmail ? getLocalDoc("users", currentOrderData.userEmail) : null);
-          if (lUser) {
-            userDocData = lUser;
-            userFound = true;
-            liveBalance = Number(lUser.balance ?? lUser.walletBalance ?? 0);
-          }
-        } catch (e) {}
       }
 
       // Fallback: Memory cache
@@ -6306,12 +6348,16 @@ export async function startServer() {
           }
         }
 
-        // Immediately update server RAM & disk cache so all internal endpoints see updated balance instantly (0 extra reads)
+        // Immediately update Turso Cloud Database, localDb, and RAM cache
         const updatedUserData = {
           ...(userDocData || { uid: userId }),
           balance: newBalance,
           updatedAt: new Date().toISOString()
         };
+        setLocalDoc("users", userId, updatedUserData);
+        tursoSetDoc("users", userId, updatedUserData).catch((err: any) => {
+          console.warn(`[TURSO-BALANCE-DEDUCT-WARN] Failed to write new balance to Turso:`, err.message);
+        });
         serverCache.users.set(userId, { data: updatedUserData, time: Date.now() });
         savePersistentCache();
 

@@ -7,8 +7,53 @@
       "userEmail": "mtasvir375@gmail.com",
       "displayName": "Tasvir",
       "role": "admin",
-      "balance": 0,
-      "createdAt": "2026-10-03T21:00:00.000Z"
+      "balance": 9,
+      "createdAt": "2026-10-03T21:00:00.000Z",
+      "updatedAt": "2026-10-03T22:43:18.819Z",
+      "latestOrders": [
+        {
+          "id": "ord_1791067395809_niwky",
+          "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+          "userEmail": "mtasvir375@gmail.com",
+          "courseId": "doc_1791066026910_4i9cd",
+          "serviceId": "doc_1791066026910_4i9cd",
+          "title": "Reels view 😀",
+          "category": "Instagram",
+          "quantity": 1000,
+          "targetLink": "Hrwgegn.yeny",
+          "totalPrice": 1,
+          "status": "In progress",
+          "providerOrderId": "2852034",
+          "createdAt": "2026-10-03T22:43:17.912Z"
+        }
+      ],
+      "lastOrderedAt": "2026-10-03T22:43:17.912Z"
+    },
+    "5LRJPrkW5vVimfCFKGbzTKhXtji2": {
+      "uid": "5LRJPrkW5vVimfCFKGbzTKhXtji2",
+      "id": "5LRJPrkW5vVimfCFKGbzTKhXtji2",
+      "email": "mdsarfarajalam727712@gmail.com",
+      "userEmail": "mdsarfarajalam727712@gmail.com",
+      "displayName": "Sarfaraj Alam",
+      "role": "admin",
+      "balance": 1,
+      "createdAt": "2026-10-03T21:19:55.722Z",
+      "updatedAt": "2026-10-03T21:19:55.723Z"
+    },
+    "UlsK3PLAGHdiSZAhx58Cb23FXLq2": {
+      "uid": "UlsK3PLAGHdiSZAhx58Cb23FXLq2",
+      "id": "UlsK3PLAGHdiSZAhx58Cb23FXLq2",
+      "email": "mdtasvir888@gmail.com",
+      "userEmail": "mdtasvir888@gmail.com",
+      "displayName": "Tasvir",
+      "role": "admin",
+      "balance": 10,
+      "createdAt": "2026-10-03T21:19:55.722Z",
+      "updatedAt": "2026-10-03T21:19:55.723Z"
+    },
+    "w1VAF0MJoYducsSTQtMRW907OBX2": {
+      "balance": 1500,
+      "id": "w1VAF0MJoYducsSTQtMRW907OBX2"
     }
   },
   "orders": {},
