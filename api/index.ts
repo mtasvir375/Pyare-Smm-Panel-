@@ -536,8 +536,6 @@ export default async function handler(req: any, res: any) {
       if (finalQty) params.append("quantity", finalQty);
       if (runs) params.append("runs", String(runs));
       if (interval) params.append("interval", String(interval));
-      params.append("terms", "1");
-      params.append("agree", "1");
 
       try {
         const provRes = await axios.post(apiUrl, params.toString(), {

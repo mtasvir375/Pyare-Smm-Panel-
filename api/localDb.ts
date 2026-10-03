@@ -1,6 +1,44 @@
 import fs from "fs";
 import path from "path";
-import { DEFAULT_SERVICES, DEFAULT_SETTINGS } from "../src/data/defaultServices";
+
+const DEFAULT_SERVICES: any[] = [
+  {
+    id: "srv_ig_followers_nondrop",
+    title: "Instagram Followers [Non-Drop] [Lifetime Guarantee] [Super Fast]",
+    category: "Instagram",
+    pricePerThousand: 65,
+    price: 65,
+    minLimit: 100,
+    maxLimit: 100000,
+    status: "active",
+    providerId: "talVdnSEg8QGpNVpaUTi",
+    providerServiceId: "101"
+  },
+  {
+    id: "srv_ig_likes_hq",
+    title: "Instagram Real Likes [HQ] [Fast Start] [Non-Drop]",
+    category: "Instagram",
+    pricePerThousand: 18,
+    price: 18,
+    minLimit: 50,
+    maxLimit: 50000,
+    status: "active",
+    providerId: "talVdnSEg8QGpNVpaUTi",
+    providerServiceId: "102"
+  },
+  {
+    id: "srv_ig_views_viral",
+    title: "Instagram Reels Views [Instant Speed] [Explore High Reach]",
+    category: "Instagram",
+    pricePerThousand: 10.5,
+    price: 10.5,
+    minLimit: 200,
+    maxLimit: 1000000,
+    status: "active",
+    providerId: "z9lfdj7ByNCeGNO6WbGZ",
+    providerServiceId: "4545"
+  }
+];
 
 const isVercel = !!process.env.VERCEL;
 const dbDir = isVercel ? "/tmp" : path.join(process.cwd(), "data");
