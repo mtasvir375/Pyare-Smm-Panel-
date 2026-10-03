@@ -73,7 +73,7 @@ const INITIAL_USERS: Record<string, any> = {
     userEmail: "mdsarfarajalam727712@gmail.com",
     displayName: "Sarfaraj Alam",
     role: "admin",
-    balance: 5000,
+    balance: 1,
     createdAt: new Date().toISOString()
   },
   "UlsK3PLAGHdiSZAhx58Cb23FXLq2": {

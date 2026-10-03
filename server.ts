@@ -6360,8 +6360,8 @@ export async function startServer() {
       }
 
       if (!userFound) {
-        // If user is authenticated in UI, initialize their balance gracefully
-        const fallbackBal = 500;
+        // Default uninitialized user balance must be 0 (never grant automatic funds)
+        const fallbackBal = 0;
         userDocData = { uid: userId, email: currentOrderData?.userEmail || "", balance: fallbackBal };
         userFound = true;
         liveBalance = fallbackBal;
