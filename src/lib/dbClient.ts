@@ -62,6 +62,22 @@ export const dbClient = {
   async getDocs(table: string, constraints: any[] = []): Promise<any[]> {
     const limitCount = table === 'courses' ? 100 : (table === 'providers' ? 50 : 30);
 
+    // 0. For courses and providers, fetch directly from high-speed server cache endpoints (0 Firestore reads!)
+    if (table === 'courses') {
+      try {
+        const { getCachedCourses } = await import('./cache');
+        const courses = await getCachedCourses(true);
+        if (Array.isArray(courses) && courses.length > 0) return courses;
+      } catch (e) {}
+    }
+    if (table === 'providers') {
+      try {
+        const { getCachedProviders } = await import('./cache');
+        const providers = await getCachedProviders(true);
+        if (Array.isArray(providers) && providers.length > 0) return providers;
+      } catch (e) {}
+    }
+
     // 1. Try API gateway
     try {
       const res = await axios.post(formatApiUrl('/api/db/list'), { collection: table, limit: limitCount }, { timeout: 4000 });
@@ -70,15 +86,17 @@ export const dbClient = {
       }
     } catch (proxyErr: any) {}
 
-    // 2. Direct Firestore fallback
-    try {
-      const colRef = collection(db, table);
-      const q = fsQuery(colRef, fsLimit(limitCount));
-      const snap = await getFirestoreDocs(q);
-      if (!snap.empty) {
-        return snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      }
-    } catch (fsErr: any) {}
+    // 2. Direct Firestore fallback (Only for non-cached collections)
+    if (table !== 'courses' && table !== 'providers') {
+      try {
+        const colRef = collection(db, table);
+        const q = fsQuery(colRef, fsLimit(limitCount));
+        const snap = await getFirestoreDocs(q);
+        if (!snap.empty) {
+          return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        }
+      } catch (fsErr: any) {}
+    }
 
     return [];
   },

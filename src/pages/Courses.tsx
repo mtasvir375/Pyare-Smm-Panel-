@@ -387,29 +387,37 @@ export default function Courses() {
       let finalProviderOrderId = "";
       let userToken = "";
       try {
-        userToken = await user.getIdToken();
-      } catch (tokErr) {}
+        if (user && typeof user.getIdToken === "function") {
+          userToken = await user.getIdToken(true);
+        }
+      } catch (tokErr) {
+        console.warn("[ORDER] Token refresh warning:", tokErr);
+      }
 
       const headers: any = { "Content-Type": "application/json" };
       if (userToken) headers["Authorization"] = `Bearer ${userToken}`;
 
       let resData: any = null;
+      const targetApiUrl = formatApiUrl("/api/proxy-provider");
+      console.log(`[ORDER] Submitting order to backend API: ${targetApiUrl}`);
+
       try {
-        const res = await axios.post(formatApiUrl("/api/proxy-provider"), orderPayload, { headers, timeout: 35000 });
+        const res = await axios.post(targetApiUrl, orderPayload, { headers, timeout: 35000 });
         resData = res.data;
       } catch (apiErr: any) {
+        console.error("[ORDER] API request failed:", apiErr.message, apiErr.response?.data);
         const respData = apiErr.response?.data;
         if (respData && typeof respData.currentBalance === "number" && updateUserProfileLocal) {
           updateUserProfileLocal({ balance: respData.currentBalance });
         }
-        let cleanErrStr = "Failed to place order. Please check your link or try again.";
+        let cleanErrStr = "Network Error: Unable to reach backend server. Please check your internet connection.";
         if (respData) {
           if (typeof respData.error === "string") cleanErrStr = respData.error;
           else if (typeof respData.message === "string") cleanErrStr = respData.message;
           else if (typeof respData === "string") cleanErrStr = respData;
           else if (respData.error && typeof respData.error === "object") cleanErrStr = respData.error.message || JSON.stringify(respData.error);
         } else if (apiErr.message) {
-          cleanErrStr = apiErr.message;
+          cleanErrStr = `Network Error (${apiErr.message}). Please verify custom domain API connection.`;
         }
         throw new Error(cleanErrStr);
       }
