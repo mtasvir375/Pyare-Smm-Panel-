@@ -94,9 +94,11 @@ let memAllUsersCache: { data: any[]; time: number } | null = null;
 
 // Registry of known user profiles to guarantee 100% email visibility & searchability in Admin panel
 const KNOWN_USER_EMAILS: Record<string, { email: string; name?: string }> = {
+  "c4w6bjFk9leTy9SR2ijM0YyJVfx1": { email: "mtasvir375@gmail.com", name: "Tasvir (Admin)" },
   "5LRJPrkW5vVimfCFKGbzTKhXtji2": { email: "mdsarfarajalam727712@gmail.com", name: "Sarfaraj Alam" },
   "UlsK3PLAGHdiSZAhx58Cb23FXLq2": { email: "mdtasvir888@gmail.com", name: "Tasvir" },
   "w1VAF0MJoYducsSTQtMRW907OBX2": { email: "mdsaudalam621@gmail.com", name: "Md Saud Alam" },
+  "evVy5BL2BQXHZT2v7xcmTM1zRJe2": { email: "tachunique621@gmail.com", name: "tachunique621" },
   "test_e2e_user": { email: "test_e2e@pyaresmm.com", name: "Test User" },
   "test_user_race_1": { email: "test_race1@pyaresmm.com", name: "Race Test User" },
   "user_pending_test": { email: "pending_test@pyaresmm.com", name: "Pending User" },
