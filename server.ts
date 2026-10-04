@@ -2697,6 +2697,64 @@ export async function startServer() {
         });
       }
 
+      // 1.2 Gather all users directly from Turso SQL Database
+      try {
+        const client = getTursoClient();
+        if (client) {
+          const res = await client.execute("SELECT id, email, role, balance, data FROM smm_users;");
+          if (res && res.rows) {
+            for (const r of res.rows) {
+              const uId = String(r.id || "");
+              const uEmail = String(r.email || "");
+              let parsed: any = {};
+              if (typeof r.data === "string") {
+                try { parsed = JSON.parse(r.data); } catch (e) {}
+              }
+              const userData = {
+                ...parsed,
+                id: uId,
+                uid: uId,
+                email: uEmail || parsed.email || parsed.userEmail,
+                userEmail: uEmail || parsed.email || parsed.userEmail,
+                balance: Number(r.balance ?? parsed.balance ?? 0),
+                role: r.role || parsed.role || "user"
+              };
+              addOrMergeUser(userData, uId);
+              serverCache.users.set(uId, { data: userData, time: Date.now() });
+            }
+          }
+        }
+      } catch (tursoUserErr: any) {
+        console.warn("[SEARCH-USERS-TURSO] Error:", tursoUserErr.message);
+      }
+
+      // 1.3 Ensure known users are ALWAYS present and properly attributed
+      const KNOWN_USERS_REGISTRY: Record<string, { email: string; name?: string }> = {
+        "c4w6bjFk9leTy9SR2ijM0YyJVfx1": { email: "mtasvir375@gmail.com", name: "Tasvir (Admin)" },
+        "5LRJPrkW5vVimfCFKGbzTKhXtji2": { email: "mdsarfarajalam727712@gmail.com", name: "Sarfaraj Alam" },
+        "UlsK3PLAGHdiSZAhx58Cb23FXLq2": { email: "mdtasvir888@gmail.com", name: "Tasvir" },
+        "w1VAF0MJoYducsSTQtMRW907OBX2": { email: "mdsaudalam621@gmail.com", name: "Md Saud Alam" },
+        "evVy5BL2BQXHZT2v7xcmTM1zRJe2": { email: "tachunique621@gmail.com", name: "tachunique621" }
+      };
+      for (const [kUid, kInfo] of Object.entries(KNOWN_USERS_REGISTRY)) {
+        if (!userMap.has(kUid)) {
+          addOrMergeUser({
+            id: kUid,
+            uid: kUid,
+            email: kInfo.email,
+            userEmail: kInfo.email,
+            displayName: kInfo.name || kInfo.email.split("@")[0],
+            role: kInfo.email === "mtasvir375@gmail.com" ? "admin" : "user",
+            balance: 0
+          }, kUid);
+        } else {
+          const ex = userMap.get(kUid);
+          ex.email = kInfo.email;
+          ex.userEmail = kInfo.email;
+          if (!ex.displayName || ex.displayName === "User") ex.displayName = kInfo.name;
+        }
+      }
+
       // 2. Fetch users using listDocsSafe (Firestore SDK / REST with zero crash risk)
       try {
         const docsResult = await listDocsSafe("users", undefined, false);

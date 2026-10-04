@@ -521,13 +521,102 @@ export async function tursoListDocs(collection: string, limit: number = 200): Pr
       args: [collection, limit]
     });
 
-    return res.rows.map(r => {
+    const docs = res.rows.map(r => {
       try {
         return JSON.parse(String(r.data));
       } catch (e) {
         return null;
       }
     }).filter(Boolean);
+
+    if (collection === "users") {
+      try {
+        const uRes = await client.execute({
+          sql: `SELECT id, email, role, balance, data FROM smm_users LIMIT ?;`,
+          args: [limit]
+        });
+        const existingIds = new Set(docs.map((d: any) => d.id || d.uid));
+        for (const row of uRes.rows) {
+          const uId = String(row.id || "");
+          if (uId && !existingIds.has(uId)) {
+            let parsed: any = {};
+            if (typeof row.data === "string") {
+              try { parsed = JSON.parse(row.data); } catch (e) {}
+            }
+            docs.push({
+              ...parsed,
+              id: uId,
+              uid: uId,
+              email: row.email || parsed.email,
+              userEmail: row.email || parsed.email,
+              role: row.role || parsed.role || "user",
+              balance: Number(row.balance ?? parsed.balance ?? 0)
+            });
+            existingIds.add(uId);
+          }
+        }
+      } catch (uErr) {}
+    } else if (collection === "courses") {
+      try {
+        const cRes = await client.execute({
+          sql: `SELECT id, title, category, price, provider_id, provider_service_id, min_limit, max_limit, status, data FROM smm_courses LIMIT ?;`,
+          args: [limit]
+        });
+        const existingIds = new Set(docs.map((d: any) => d.id));
+        for (const row of cRes.rows) {
+          const cId = String(row.id || "");
+          if (cId && !existingIds.has(cId)) {
+            let parsed: any = {};
+            if (typeof row.data === "string") {
+              try { parsed = JSON.parse(row.data); } catch (e) {}
+            }
+            docs.push({
+              ...parsed,
+              id: cId,
+              title: row.title || parsed.title,
+              category: row.category || parsed.category || "General",
+              price: Number(row.price ?? parsed.price ?? 0),
+              pricePerThousand: Number(row.price ?? parsed.pricePerThousand ?? parsed.price ?? 0),
+              providerId: row.provider_id || parsed.providerId,
+              providerServiceId: row.provider_service_id || parsed.providerServiceId,
+              minLimit: Number(row.min_limit ?? parsed.minLimit ?? 0),
+              maxLimit: Number(row.max_limit ?? parsed.maxLimit ?? 0),
+              status: row.status || parsed.status || "active"
+            });
+            existingIds.add(cId);
+          }
+        }
+      } catch (cErr) {}
+    } else if (collection === "providers") {
+      try {
+        const pRes = await client.execute({
+          sql: `SELECT id, name, api_url, api_key, balance, status, data FROM smm_providers LIMIT ?;`,
+          args: [limit]
+        });
+        const existingIds = new Set(docs.map((d: any) => d.id));
+        for (const row of pRes.rows) {
+          const pId = String(row.id || "");
+          if (pId && !existingIds.has(pId)) {
+            let parsed: any = {};
+            if (typeof row.data === "string") {
+              try { parsed = JSON.parse(row.data); } catch (e) {}
+            }
+            docs.push({
+              ...parsed,
+              id: pId,
+              name: row.name || parsed.name,
+              apiUrl: row.api_url || parsed.apiUrl,
+              apiKey: row.api_key || parsed.apiKey,
+              balance: Number(row.balance ?? parsed.balance ?? 0),
+              status: row.status || parsed.status || "active"
+            });
+            existingIds.add(pId);
+          }
+        }
+      } catch (pErr) {}
+    }
+
+    return docs;
   } catch (err) {
     return [];
   }
