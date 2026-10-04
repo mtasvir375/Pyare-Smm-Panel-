@@ -4,7 +4,7 @@ import { formatApiUrl } from "./apiConfig";
 
 let cachedCourses: any = null;
 let lastCoursesFetch = 0;
-const CACHE_DURATION = 24 * 60 * 60 * 1000;
+const CACHE_DURATION = 30 * 1000;
 
 // Clear cache (useful for admin when they update something)
 export const clearCache = () => {

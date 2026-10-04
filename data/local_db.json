@@ -52,8 +52,12 @@
       "updatedAt": "2026-10-03T21:19:55.723Z"
     },
     "w1VAF0MJoYducsSTQtMRW907OBX2": {
-      "balance": 1500,
-      "id": "w1VAF0MJoYducsSTQtMRW907OBX2"
+      "id": "w1VAF0MJoYducsSTQtMRW907OBX2",
+      "uid": "w1VAF0MJoYducsSTQtMRW907OBX2",
+      "email": "mdsaudalam621@gmail.com",
+      "userEmail": "mdsaudalam621@gmail.com",
+      "displayName": "Md Saud Alam",
+      "balance": 1500
     }
   },
   "orders": {},

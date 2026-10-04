@@ -85,6 +85,16 @@ const INITIAL_USERS: Record<string, any> = {
     role: "admin",
     balance: 10,
     createdAt: new Date().toISOString()
+  },
+  "w1VAF0MJoYducsSTQtMRW907OBX2": {
+    uid: "w1VAF0MJoYducsSTQtMRW907OBX2",
+    id: "w1VAF0MJoYducsSTQtMRW907OBX2",
+    email: "mdsaudalam621@gmail.com",
+    userEmail: "mdsaudalam621@gmail.com",
+    displayName: "Md Saud Alam",
+    role: "user",
+    balance: 1500,
+    createdAt: new Date().toISOString()
   }
 };
 
