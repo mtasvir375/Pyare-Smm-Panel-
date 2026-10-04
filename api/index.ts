@@ -1,5 +1,6 @@
 import axios from "axios";
 import { getLocalDoc, setLocalDoc, updateLocalDoc, listLocalDocs, addLocalDoc, deleteLocalDoc, getLocalSqliteDb, queryLocalDocs } from "./localDb";
+import { getTursoDoc, setTursoDoc, listTursoDocs, deleteTursoDoc } from "./turso";
 
 // Environment & Configuration
 const FIREBASE_PROJECT_ID = "gen-lang-client-0629912823";
@@ -107,6 +108,14 @@ for (const [uid, info] of Object.entries(KNOWN_USER_EMAILS)) {
 }
 
 async function getRestDoc(collection: string, docId: string, fresh = false): Promise<any> {
+  try {
+    const tursoDoc = await getTursoDoc(collection, docId);
+    if (tursoDoc) {
+      setLocalDoc(collection, docId, tursoDoc);
+      return tursoDoc;
+    }
+  } catch (e) {}
+
   if (!fresh && collection !== "settings" && collection !== "courses" && collection !== "providers") {
     const local = getLocalDoc(collection, docId);
     if (local) return local;
@@ -117,12 +126,12 @@ async function getRestDoc(collection: string, docId: string, fresh = false): Pro
     const fetched = res.data ? unwrapFirestoreFields(res.data.fields) : null;
     if (fetched) {
       setLocalDoc(collection, docId, fetched);
+      await setTursoDoc(collection, docId, fetched).catch(() => {});
       return fetched;
     }
     return null;
   } catch (err: any) {
     if (err.response && err.response.status === 404) return null;
-    console.warn(`[REST-GET-WARN] ${collection}/${docId}:`, err.message);
     return getLocalDoc(collection, docId) || null;
   }
 }
@@ -130,37 +139,29 @@ async function getRestDoc(collection: string, docId: string, fresh = false): Pro
 async function setRestDoc(collection: string, docId: string, data: any): Promise<any> {
   const merged = { ...(data || {}), id: docId };
   setLocalDoc(collection, docId, merged);
+  await setTursoDoc(collection, docId, merged).catch(err => {
+    console.warn(`[TURSO-SET-ERR] ${collection}/${docId}:`, err.message);
+  });
   try {
     const fields = wrapFirestoreFields(merged);
     const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}?key=${FIREBASE_API_KEY}`;
-    const res = await axios.patch(url, { fields }, { timeout: 10000 });
-    const saved = res.data ? unwrapFirestoreFields(res.data.fields) : merged;
-    setLocalDoc(collection, docId, { ...merged, ...saved });
-    return { ...merged, ...saved };
-  } catch (patchErr: any) {
-    console.warn(`[REST-SET-WARN] ${collection}/${docId}:`, patchErr.response?.data || patchErr.message);
-    // If update failed due to mask or payload, retry with standard query
-    try {
-      const keys = Object.keys(merged).filter(k => merged[k] !== undefined);
-      const maskQuery = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
-      const sep = maskQuery ? `?${maskQuery}&` : "?";
-      const fallbackUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}${sep}key=${FIREBASE_API_KEY}`;
-      const fields = wrapFirestoreFields(merged);
-      const res = await axios.patch(fallbackUrl, { fields }, { timeout: 10000 });
-      const saved = res.data ? unwrapFirestoreFields(res.data.fields) : merged;
-      setLocalDoc(collection, docId, { ...merged, ...saved });
-      return { ...merged, ...saved };
-    } catch (fallbackErr: any) {
-      console.error(`[REST-SET-FALLBACK-ERR] ${collection}/${docId}:`, fallbackErr.response?.data || fallbackErr.message);
-    }
-  }
-  return getLocalDoc(collection, docId) || merged;
+    await axios.patch(url, { fields }, { timeout: 10000 }).catch(() => {});
+  } catch (e) {}
+  return merged;
 }
 
 async function listRestDocs(collection: string, pageSize = 100, fresh = false): Promise<any[]> {
+  try {
+    const tursoList = await listTursoDocs(collection, pageSize);
+    if (tursoList && Array.isArray(tursoList) && tursoList.length > 0) {
+      tursoList.forEach(item => {
+        if (item && item.id) setLocalDoc(collection, item.id, item);
+      });
+      return tursoList;
+    }
+  } catch (e) {}
+
   const fetchedDocs: any[] = [];
-  
-  // 1. Standard Collection List API (Most Authoritative & Reliable across Google Cloud)
   try {
     const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}?pageSize=${pageSize}&key=${FIREBASE_API_KEY}`;
     const res = await axios.get(url, { timeout: 8000 });
@@ -176,52 +177,19 @@ async function listRestDocs(collection: string, pageSize = 100, fresh = false): 
         return fetchedDocs;
       }
     }
-  } catch (listErr: any) {
-    console.warn(`[REST-LIST-WARN] Direct list for ${collection}:`, listErr.message);
-  }
+  } catch (listErr: any) {}
 
-  // 2. Structured runQuery fallback
-  try {
-    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents:runQuery?key=${FIREBASE_API_KEY}`;
-    const payload = {
-      structuredQuery: {
-        from: [{ collectionId: collection }],
-        limit: pageSize
-      }
-    };
-    const res = await axios.post(url, payload, { timeout: 8000 });
-    if (res.data && Array.isArray(res.data)) {
-      res.data
-        .filter((item: any) => item.document)
-        .forEach((item: any) => {
-          const doc = item.document;
-          const id = doc.name.split("/").pop();
-          const data = unwrapFirestoreFields(doc.fields || {});
-          const merged = { id, ...data };
-          setLocalDoc(collection, id, merged);
-          fetchedDocs.push(merged);
-        });
-      if (fetchedDocs.length > 0) {
-        return fetchedDocs;
-      }
-    }
-  } catch (err: any) {
-    console.warn(`[REST-QUERY-WARN] runQuery for ${collection}:`, err.message);
-  }
-
-  // 3. Fallback to local in-memory store
   return listLocalDocs(collection, pageSize);
 }
 
 async function deleteRestDoc(collection: string, docId: string): Promise<boolean> {
   deleteLocalDoc(collection, docId);
+  await deleteTursoDoc(collection, docId).catch(() => {});
   try {
     const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}?key=${FIREBASE_API_KEY}`;
     await axios.delete(url, { timeout: 4000 }).catch(() => {});
-    return true;
-  } catch (e) {
-    return false;
-  }
+  } catch (e) {}
+  return true;
 }
 
 async function queryRestDocs(collection: string, field: string, value: string, pageSize = 50): Promise<any[]> {
