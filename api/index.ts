@@ -1,6 +1,6 @@
 import axios from "axios";
 import { getLocalDoc, setLocalDoc, updateLocalDoc, listLocalDocs, addLocalDoc, deleteLocalDoc, getLocalSqliteDb, queryLocalDocs } from "./localDb";
-import { getTursoDoc, setTursoDoc, listTursoDocs, deleteTursoDoc } from "./turso";
+import { getTursoDoc, setTursoDoc, listTursoDocs, deleteTursoDoc, getTursoClient } from "./turso";
 
 // Environment & Configuration
 const FIREBASE_PROJECT_ID = "gen-lang-client-0629912823";
@@ -272,6 +272,11 @@ const KNOWN_PROVIDERS: Record<string, { apiUrl: string; apiKey: string; name: st
     name: "MainSMMpanel ♥️",
     apiUrl: "https://mainsmmpanel.in/api/v2",
     apiKey: "5a2749e1fdafdf50cd81f2137f9b5806"
+  },
+  "doc_1791067476261_cjt5c": {
+    name: "Smm bin (Primary)",
+    apiUrl: "https://smmbin.com/api/v2",
+    apiKey: "f55bb2dfdc035f9c3c9e737bb72922a51d64309f"
   }
 };
 
@@ -475,19 +480,35 @@ export default async function handler(req: any, res: any) {
         interval
       } = body || {};
 
-      let apiUrl = "";
-      let apiKey = "";
+      let apiUrl = String(body.providerApiUrl || body.apiUrl || "").trim();
+      let apiKey = String(body.providerApiKey || body.apiKey || "").trim();
 
       const resolvedProviderId = providerId || orderData?.providerId || "";
-      if (resolvedProviderId && KNOWN_PROVIDERS[resolvedProviderId]) {
+      if (!apiKey && resolvedProviderId && KNOWN_PROVIDERS[resolvedProviderId]) {
         apiUrl = KNOWN_PROVIDERS[resolvedProviderId].apiUrl;
         apiKey = KNOWN_PROVIDERS[resolvedProviderId].apiKey;
-      } else if (resolvedProviderId) {
+      } else if (!apiKey && resolvedProviderId) {
         try {
           const pDoc = await getRestDoc("providers", resolvedProviderId);
           if (pDoc) {
-            apiUrl = pDoc.apiUrl || pDoc.url;
-            apiKey = pDoc.apiKey || pDoc.key;
+            apiUrl = (pDoc.apiUrl || pDoc.url || pDoc.api_url || pDoc.providerApiUrl || "").trim();
+            apiKey = (pDoc.apiKey || pDoc.key || pDoc.api_key || pDoc.providerApiKey || "").trim();
+          }
+        } catch (e) {}
+      }
+
+      if (!apiKey && resolvedProviderId) {
+        try {
+          const client = getTursoClient();
+          if (client) {
+            const pRes = await client.execute({
+              sql: `SELECT api_url, api_key FROM smm_providers WHERE id = ? LIMIT 1;`,
+              args: [resolvedProviderId]
+            });
+            if (pRes.rows.length > 0) {
+              if (!apiUrl) apiUrl = String(pRes.rows[0].api_url || "").trim();
+              if (!apiKey) apiKey = String(pRes.rows[0].api_key || "").trim();
+            }
           }
         } catch (e) {}
       }
@@ -651,6 +672,109 @@ export default async function handler(req: any, res: any) {
           error: cleanErr,
           currentBalance: currentUserBal
         });
+      }
+    }
+
+    // 5.5 Test Provider API & Check Balance: /api/test-provider
+    if (pathname === "/api/test-provider") {
+      const { providerId, providerApiUrl, providerApiKey } = body || {};
+      let pUrl = String(providerApiUrl || body?.apiUrl || "").trim();
+      let pKey = String(providerApiKey || body?.apiKey || "").trim();
+
+      if (!pUrl || !pKey) {
+        const pId = String(providerId || "").trim();
+        if (pId && KNOWN_PROVIDERS[pId]) {
+          if (!pUrl) pUrl = KNOWN_PROVIDERS[pId].apiUrl;
+          if (!pKey) pKey = KNOWN_PROVIDERS[pId].apiKey;
+        }
+        if ((!pUrl || !pKey) && pId) {
+          try {
+            const pDoc = await getRestDoc("providers", pId);
+            if (pDoc) {
+              if (!pUrl) pUrl = (pDoc.apiUrl || pDoc.url || pDoc.api_url || pDoc.providerApiUrl || "").trim();
+              if (!pKey) pKey = (pDoc.apiKey || pDoc.key || pDoc.api_key || pDoc.providerApiKey || "").trim();
+            }
+          } catch (e) {}
+        }
+        if ((!pUrl || !pKey) && pId) {
+          try {
+            const client = getTursoClient();
+            if (client) {
+              const pRes = await client.execute({
+                sql: `SELECT api_url, api_key FROM smm_providers WHERE id = ? LIMIT 1;`,
+                args: [pId]
+              });
+              if (pRes.rows.length > 0) {
+                if (!pUrl) pUrl = String(pRes.rows[0].api_url || "").trim();
+                if (!pKey) pKey = String(pRes.rows[0].api_key || "").trim();
+              }
+            }
+          } catch (e) {}
+        }
+        if (!pUrl || !pKey) {
+          try {
+            const sDoc = await getRestDoc("settings", "payment");
+            if (sDoc) {
+              if (!pUrl) pUrl = (sDoc.providerApiUrl || sDoc.apiUrl || sDoc.api_url || "").trim();
+              if (!pKey) pKey = (sDoc.providerApiKey || sDoc.apiKey || sDoc.api_key || "").trim();
+            }
+          } catch (e) {}
+        }
+      }
+
+      if (!pUrl) pUrl = "https://smmbin.com/api/v2";
+      if (!pKey) {
+        return res.status(400).json({ success: false, error: "Provider API Key is missing. Please configure it in Providers tab." });
+      }
+      if (!pUrl.startsWith("http")) pUrl = "https://" + pUrl;
+
+      const params = new URLSearchParams();
+      params.append("key", pKey);
+      params.append("action", "balance");
+
+      const headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/json, text/plain, */*",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+      };
+
+      try {
+        let provRes: any = null;
+        try {
+          provRes = await axios.post(pUrl, params.toString(), { headers, timeout: 15000 });
+        } catch (postErr: any) {
+          const sep = pUrl.includes("?") ? "&" : "?";
+          provRes = await axios.get(`${pUrl}${sep}${params.toString()}`, { headers, timeout: 15000 });
+        }
+
+        let resData = provRes?.data;
+        if (typeof resData === "string") {
+          try { resData = JSON.parse(resData); } catch (e) {}
+        }
+
+        if (resData && resData.balance !== undefined) {
+          const numBal = Number(resData.balance);
+          if (providerId) {
+            try {
+              const client = getTursoClient();
+              if (client) {
+                await client.execute({
+                  sql: `UPDATE smm_providers SET balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;`,
+                  args: [numBal, providerId]
+                });
+              }
+            } catch (updErr) {}
+          }
+          return res.status(200).json({ success: true, balance: resData.balance, currency: resData.currency || "INR" });
+        } else if (resData && resData.error) {
+          const errMsg = typeof resData.error === "string" ? resData.error : JSON.stringify(resData.error);
+          return res.status(400).json({ success: false, error: errMsg });
+        } else {
+          return res.status(400).json({ success: false, error: "Could not retrieve balance from provider API" });
+        }
+      } catch (err: any) {
+        const errorDetail = err.response?.data?.error || err.response?.data?.message || err.message || "Connection failed";
+        return res.status(500).json({ success: false, error: String(errorDetail) });
       }
     }
 

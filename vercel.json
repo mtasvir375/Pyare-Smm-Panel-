@@ -2,6 +2,12 @@
   "framework": "vite",
   "buildCommand": "vite build",
   "outputDirectory": "dist",
+  "functions": {
+    "api/*.ts": {
+      "maxDuration": 60,
+      "memory": 1024
+    }
+  },
   "rewrites": [
     { "source": "/__/auth/:path*", "destination": "https://gen-lang-client-0629912823.firebaseapp.com/__/auth/:path*" },
     { "source": "/api/(.*)", "destination": "/api?endpoint=$1" },

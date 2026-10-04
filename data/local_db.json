@@ -135,7 +135,16 @@
       "price": 1
     }
   },
-  "providers": {},
+  "providers": {
+    "doc_1791067476261_cjt5c": {
+      "id": "doc_1791067476261_cjt5c",
+      "createdAt": "2026-10-03T22:44:36.261Z",
+      "apiKey": "f55bb2dfdc035f9c3c9e737bb72922a51d64309f",
+      "apiUrl": "https://www.smmbin.com/api/v2",
+      "name": "Smm bin ♥️",
+      "updatedAt": "2026-10-04T09:00:01.289Z"
+    }
+  },
   "settings": {
     "payment": {
       "id": "payment",

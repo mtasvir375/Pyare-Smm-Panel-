@@ -405,6 +405,16 @@ export default function Courses() {
         const res = await axios.post(targetApiUrl, orderPayload, { headers, timeout: 35000 });
         resData = res.data;
       } catch (apiErr: any) {
+        // If primary backend or provider gave a specific rejection (e.g. current link already in work, insufficient balance), show it directly
+        const primaryData = apiErr.response?.data;
+        if (primaryData && (primaryData.error || primaryData.message) && typeof primaryData !== "string") {
+          const cleanErrStr = typeof primaryData.error === "string" ? primaryData.error : (primaryData.message || JSON.stringify(primaryData.error));
+          if (primaryData.currentBalance !== undefined && updateUserProfileLocal) {
+            updateUserProfileLocal({ balance: primaryData.currentBalance });
+          }
+          throw new Error(cleanErrStr);
+        }
+
         console.warn("[ORDER] Primary API call failed, attempting fallback backend...", apiErr.message);
         
         // Fallback to alternate Cloud Run endpoint if custom domain or first endpoint failed
