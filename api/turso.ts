@@ -8,8 +8,11 @@ let isInitialized = false;
 export function getTursoClient(): Client {
   if (tursoClient) return tursoClient;
 
-  const url = process.env.TURSO_DATABASE_URL || process.env.VITE_TURSO_DATABASE_URL || "";
-  const authToken = process.env.TURSO_AUTH_TOKEN || process.env.VITE_TURSO_AUTH_TOKEN || "";
+  const DEFAULT_TURSO_URL = "libsql://pyare-smm-panel-pyaresmmpanel.aws-ap-south-1.turso.io";
+  const DEFAULT_TURSO_TOKEN = "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTEwNjQ0NzgsImlkIjoiMDFhMTAzYzEtNzYwMS03NDk5LTljYWMtYzdkMDExOWU5M2ZkIiwia2lkIjoiYVFCV3BPanpQSVA2czQzcGlrZ29pbkJtVlNodDZOTmh0YndUejBpaDRGOCIsInJpZCI6IjM0MTg2ZDIxLTgwYTUtNDU1YS1hOWQ3LWJhNGQzZTJlNTIzYSJ9.MXelOKfVsMZZoYfKiflhegiqqXQD5-0HN_faUU4z7WtQdjiQQTWXpU-i8jF1DiQrRpFUUV5wol-7dikl8pW5Dw";
+
+  const url = process.env.TURSO_DATABASE_URL || process.env.VITE_TURSO_DATABASE_URL || DEFAULT_TURSO_URL;
+  const authToken = process.env.TURSO_AUTH_TOKEN || process.env.VITE_TURSO_AUTH_TOKEN || DEFAULT_TURSO_TOKEN;
 
   if (url && url.startsWith("libsql://")) {
     tursoClient = createClient({
