@@ -2777,22 +2777,6 @@ export async function startServer() {
         }
       }
 
-      // 2. Fetch users using listDocsSafe (Firestore SDK / REST with zero crash risk)
-      try {
-        const docsResult = await listDocsSafe("users", undefined, false);
-        if (docsResult && docsResult.docs) {
-          docsResult.docs.forEach((docItem: any) => {
-            const d = typeof docItem.data === "function" ? docItem.data() : docItem.data;
-            const uid = docItem.id;
-            if (d && uid) {
-              addOrMergeUser(d, uid);
-            }
-          });
-        }
-      } catch (listErr: any) {
-        console.warn("[SEARCH-USERS-LIST] Error:", listErr.message);
-      }
-
       // 3. Fallback Auth lookup for direct email search if not found
       const searchLower = query.toLowerCase();
       if (searchLower && searchLower.includes("@")) {

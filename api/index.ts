@@ -1509,22 +1509,40 @@ export default async function handler(req: any, res: any) {
         return u;
       };
 
-      // 1. Get/refresh users list from Turso Database & Firestore REST
+      // 1. Get/refresh users list EXCLUSIVELY from Turso Database
       const now = Date.now();
       let usersList: any[] = [];
-      if (memAllUsersCache && (now - memAllUsersCache.time < 60 * 1000)) {
+      if (memAllUsersCache && (now - memAllUsersCache.time < 30 * 1000)) {
         usersList = memAllUsersCache.data;
       } else {
         const userMap = new Map<string, any>();
 
-        // A. Fetch from Turso Database (smm_users & smm_documents)
+        // A. Fetch directly from Turso SQL Database smm_users table
         try {
-          const tursoUsers = await listTursoDocs("users", 500);
-          if (Array.isArray(tursoUsers)) {
-            for (const u of tursoUsers) {
-              if (u && (u.id || u.uid)) {
-                const enriched = enrichUser(u);
-                userMap.set(enriched.id || enriched.uid, enriched);
+          const client = getTursoClient();
+          if (client) {
+            const res = await client.execute("SELECT id, email, role, balance, data, updated_at FROM smm_users;");
+            if (res && res.rows) {
+              for (const r of res.rows) {
+                const uId = String(r.id || "").trim();
+                if (!uId) continue;
+                const uEmail = String(r.email || "").trim().toLowerCase();
+                let parsed: any = {};
+                if (typeof r.data === "string") {
+                  try { parsed = JSON.parse(r.data); } catch (e) {}
+                }
+                const known = KNOWN_USER_EMAILS[uId];
+                const finalEmail = uEmail || parsed.email || parsed.userEmail || known?.email || "";
+                userMap.set(uId, {
+                  ...parsed,
+                  id: uId,
+                  uid: uId,
+                  email: finalEmail,
+                  userEmail: finalEmail,
+                  displayName: parsed.displayName || parsed.name || known?.name || (finalEmail ? finalEmail.split("@")[0] : "User"),
+                  balance: Number(r.balance ?? parsed.balance ?? 0),
+                  role: r.role || parsed.role || (finalEmail === "mtasvir375@gmail.com" ? "admin" : "user")
+                });
               }
             }
           }
@@ -1532,29 +1550,33 @@ export default async function handler(req: any, res: any) {
           console.warn("[SEARCH-USERS-TURSO-WARN]", tErr.message);
         }
 
-        // B. Fetch from Firestore REST as fallback/merge
+        // B. Fetch from Turso smm_documents table for collection = 'users'
         try {
-          const docs = await listRestDocs("users", 300);
-          for (const u of docs) {
-            if (u && (u.id || u.uid)) {
-              const enriched = enrichUser(u);
-              const uId = enriched.id || enriched.uid;
-              if (!userMap.has(uId)) {
-                userMap.set(uId, enriched);
-              } else {
-                const ex = userMap.get(uId);
-                userMap.set(uId, { ...ex, ...enriched, email: enriched.email || ex.email });
+          const docs = await listTursoDocs("users", 300);
+          if (Array.isArray(docs)) {
+            for (const d of docs) {
+              const uId = String(d.id || d.uid || "").trim();
+              if (uId && !userMap.has(uId)) {
+                const known = KNOWN_USER_EMAILS[uId];
+                const finalEmail = String(d.email || d.userEmail || known?.email || "").trim().toLowerCase();
+                userMap.set(uId, {
+                  ...d,
+                  id: uId,
+                  uid: uId,
+                  email: finalEmail,
+                  userEmail: finalEmail,
+                  displayName: d.displayName || d.name || known?.name || (finalEmail ? finalEmail.split("@")[0] : "User"),
+                  balance: Number(d.balance ?? 0)
+                });
               }
             }
           }
-        } catch (fetchErr: any) {
-          console.warn("[SEARCH-USERS-REST-WARN]", fetchErr.message);
-        }
+        } catch (fetchErr: any) {}
 
         // C. Always ensure known registry users are present
         for (const [kUid, kInfo] of Object.entries(KNOWN_USER_EMAILS)) {
           if (!userMap.has(kUid)) {
-            userMap.set(kUid, enrichUser({
+            userMap.set(kUid, {
               id: kUid,
               uid: kUid,
               email: kInfo.email,
@@ -1562,12 +1584,14 @@ export default async function handler(req: any, res: any) {
               displayName: kInfo.name || kInfo.email.split("@")[0],
               role: kInfo.email === "mtasvir375@gmail.com" ? "admin" : "user",
               balance: 0
-            }));
+            });
           } else {
             const ex = userMap.get(kUid);
-            ex.email = kInfo.email;
-            ex.userEmail = kInfo.email;
-            if (!ex.displayName || ex.displayName === "User") ex.displayName = kInfo.name;
+            if (!ex.email || ex.email.includes("@smmuser.com")) {
+              ex.email = kInfo.email;
+              ex.userEmail = kInfo.email;
+              ex.displayName = kInfo.name || kInfo.email.split("@")[0];
+            }
           }
         }
 

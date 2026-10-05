@@ -483,18 +483,38 @@ export const dbClient = {
   async getUsersAdmin(l = 100): Promise<any[]> {
     let usersList: any[] = [];
     try {
-      const response = await axios.post(formatApiUrl('/api/admin/search-user'), { query: '' }, { timeout: 4000 });
+      const response = await axios.post(formatApiUrl('/api/admin/search-user'), { query: '' }, { timeout: 5000 });
       if (response.data && Array.isArray(response.data.users) && response.data.users.length > 0) {
         usersList = response.data.users;
       }
     } catch (e) {}
 
-    // Firestore direct fallback if API had no users
+    // Turso Web client fallback if API had no users
     if (usersList.length === 0) {
       try {
-        const snap = await getFirestoreDocs(fsQuery(collection(db, 'users'), fsLimit(l)));
-        if (!snap.empty) {
-          usersList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const { getTursoWebClient } = await import('./tursoClient');
+        const client = getTursoWebClient();
+        if (client) {
+          const res = await client.execute("SELECT id, email, role, balance, data FROM smm_users;");
+          if (res && res.rows) {
+            usersList = res.rows.map((r: any) => {
+              const uId = String(r.id || "").trim();
+              const uEmail = String(r.email || "").trim().toLowerCase();
+              let parsed: any = {};
+              if (typeof r.data === "string") {
+                try { parsed = JSON.parse(r.data); } catch (e) {}
+              }
+              return {
+                ...parsed,
+                id: uId,
+                uid: uId,
+                email: uEmail || parsed.email,
+                userEmail: uEmail || parsed.email,
+                balance: Number(r.balance ?? parsed.balance ?? 0),
+                role: r.role || parsed.role || "user"
+              };
+            });
+          }
         }
       } catch (e) {}
     }
