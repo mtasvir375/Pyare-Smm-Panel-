@@ -164,6 +164,19 @@ export default function Courses() {
 
   useEffect(() => {
     fetchCourses(false);
+
+    const handleTabRefresh = () => {
+      console.log("[COURSES] Tab refreshed/focused: Fetching fresh services and prices from server...");
+      fetchCourses(true);
+    };
+
+    window.addEventListener("tabRefreshed", handleTabRefresh);
+    window.addEventListener("focus", handleTabRefresh);
+
+    return () => {
+      window.removeEventListener("tabRefreshed", handleTabRefresh);
+      window.removeEventListener("focus", handleTabRefresh);
+    };
   }, [searchParams]);
 
   useEffect(() => {

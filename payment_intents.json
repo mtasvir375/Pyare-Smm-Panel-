@@ -379,5 +379,20 @@
     "senderBank": "UPI Payment",
     "walletCredited": true,
     "credited": true
+  },
+  {
+    "intentId": "pi_test_992696872954",
+    "orderRef": "992696872954",
+    "amount": 1.5,
+    "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+    "userEmail": "mtasvir375@gmail.com",
+    "status": "completed",
+    "createdAt": 1791225896843,
+    "completedAt": 1791225897507,
+    "utr": "992696872954",
+    "senderBank": "UPI Payment",
+    "walletCredited": true,
+    "credited": true,
+    "notified": true
   }
 ]

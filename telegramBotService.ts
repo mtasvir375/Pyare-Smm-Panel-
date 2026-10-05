@@ -1010,14 +1010,28 @@ export async function tryMatchAndCompleteIntent(params: {
           console.error("[ZERO-UTR-CALLBACK-ERR]", cbErr.message);
         }
       } else {
-        // Direct Firestore credit ONLY if no server callback is registered
+        // Direct Turso & Firestore credit
         try {
-          const uDoc = await getRestDoc("users", matchedIntent.userId);
-          const currentBal = Number(uDoc?.balance || 0);
-          const newBal = currentBal + Number(matchedIntent.amount);
-          await setRestDoc("users", matchedIntent.userId, { balance: newBal });
+          let currentBal = 0;
+          let uDoc: any = null;
+
+          try {
+            uDoc = await getTursoDoc("users", matchedIntent.userId);
+            if (uDoc) {
+              currentBal = Number(uDoc.balance || 0);
+            }
+          } catch (tErr) {}
+
+          if (!uDoc) {
+            try {
+              uDoc = await getRestDoc("users", matchedIntent.userId);
+              currentBal = Number(uDoc?.balance || 0);
+            } catch (rErr) {}
+          }
+
+          const newBal = Number((currentBal + Number(matchedIntent.amount)).toFixed(2));
           const depId = `dep_auto_${matchedIntent.utr}_${Date.now()}`;
-          await setRestDoc("deposits", depId, {
+          const depData = {
             id: depId,
             userId: matchedIntent.userId,
             userEmail: matchedIntent.userEmail || "",
@@ -1028,10 +1042,24 @@ export async function tryMatchAndCompleteIntent(params: {
             provider: detectedBank || "UPI Payment",
             verifiedAt: new Date().toISOString(),
             createdAt: new Date().toISOString()
-          });
-          console.log(`[DIRECT-FIRESTORE-WALLET-CREDITED] User ${matchedIntent.userEmail || matchedIntent.userId} credited ₹${matchedIntent.amount}, new balance: ₹${newBal}`);
+          };
+
+          const userPayload = {
+            ...uDoc,
+            balance: newBal,
+            updatedAt: new Date().toISOString()
+          };
+
+          await Promise.all([
+            setTursoDoc("users", matchedIntent.userId, userPayload).catch(() => {}),
+            setTursoDoc("deposits", depId, depData).catch(() => {}),
+            setRestDoc("users", matchedIntent.userId, { balance: newBal }).catch(() => {}),
+            setRestDoc("deposits", depId, depData).catch(() => {})
+          ]);
+
+          console.log(`[TELEGRAM-TURSO-WALLET-CREDITED] User ${matchedIntent.userEmail || matchedIntent.userId} credited ₹${matchedIntent.amount}, new balance in Turso: ₹${newBal}`);
         } catch (fCreditErr: any) {
-          console.warn("[DIRECT-FIRESTORE-WALLET-CREDIT-WARN]", fCreditErr.message);
+          console.warn("[TELEGRAM-WALLET-CREDIT-WARN]", fCreditErr.message);
         }
       }
     }

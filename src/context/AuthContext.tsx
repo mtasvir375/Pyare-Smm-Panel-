@@ -186,6 +186,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
+  // Automatic sync when user returns to Chrome tab or focuses the website
+  useEffect(() => {
+    let isSyncing = false;
+    const handleTabReturn = async () => {
+      if (document.visibilityState === "visible" && !isSyncing) {
+        isSyncing = true;
+        console.log("[TAB-RETURN-SYNC] User focused/returned to tab. Refreshing services, settings & wallet balance...");
+        try {
+          const { clearCache } = await import("@/lib/cache");
+          clearCache();
+        } catch (e) {}
+
+        // Notify active pages to re-fetch fresh services & prices
+        window.dispatchEvent(new CustomEvent("tabRefreshed"));
+
+        if (auth.currentUser) {
+          try {
+            const profile = await dbClient.getUserProfile(auth.currentUser.uid);
+            if (profile) {
+              setUserProfile(profile);
+              localStorage.setItem(`user_profile_${auth.currentUser.uid}`, JSON.stringify(profile));
+            }
+          } catch (e) {}
+        }
+        setTimeout(() => { isSyncing = false; }, 1000);
+      }
+    };
+
+    window.addEventListener("focus", handleTabReturn);
+    document.addEventListener("visibilitychange", handleTabReturn);
+
+    // Background periodic refresh every 30 seconds
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        handleTabReturn();
+      }
+    }, 30000);
+
+    return () => {
+      window.removeEventListener("focus", handleTabReturn);
+      document.removeEventListener("visibilitychange", handleTabReturn);
+      clearInterval(interval);
+    };
+  }, []);
+
   const signOut = async () => {
     try {
       console.log("[AUTH_CONTEXT] Clearing local state and signing out...");
