@@ -58,11 +58,11 @@ export async function clientTursoSetDoc(collection: string, id: string, data: an
           id,
           data.title || data.name || "",
           data.category || "General",
-          Number(data.pricePerThousand || data.price || 0),
-          data.providerId || data.provider_id || "doc_1791067476261_cjt5c",
-          data.providerServiceId || data.provider_service_id || "4545",
-          Number(data.minLimit || data.min_limit || 1),
-          Number(data.maxLimit || data.max_limit || 100000),
+          Number(data.pricePerThousand !== undefined ? data.pricePerThousand : data.price !== undefined ? data.price : 0),
+          String(data.providerId ?? data.provider_id ?? "").trim(),
+          String(data.providerServiceId ?? data.provider_service_id ?? "").trim(),
+          Number(data.minLimit !== undefined ? data.minLimit : data.min_limit !== undefined ? data.min_limit : 1),
+          Number(data.maxLimit !== undefined ? data.maxLimit : data.max_limit !== undefined ? data.max_limit : 100000),
           data.status || "published",
           dataJson,
           now
@@ -168,5 +168,22 @@ export async function clientTursoGetDoc(collection: string, id: string): Promise
     return raw || null;
   } catch (err: any) {
     return null;
+  }
+}
+
+/**
+ * Direct update to Turso Cloud Database with existing data merging
+ */
+export async function clientTursoUpdateDoc(collection: string, id: string, data: any): Promise<boolean> {
+  const client = getTursoWebClient();
+  if (!client || !collection || !id) return false;
+
+  try {
+    const existing = (await clientTursoGetDoc(collection, id)) || {};
+    const merged = { ...existing, ...data, id, updatedAt: new Date().toISOString() };
+    return await clientTursoSetDoc(collection, id, merged);
+  } catch (err: any) {
+    console.warn(`[TURSO-UPDATE-WARN] ${collection}/${id}:`, err?.message || err);
+    return false;
   }
 }

@@ -6,10 +6,9 @@
   "enabled": true,
   "lastUpdateId": 33028666,
   "botUsername": "BbbSmart_bot",
-  "startedAt": "2026-10-05T08:20:37.425Z",
-  "lastPolledAt": "2026-10-05T08:21:18.314Z",
+  "startedAt": "2026-10-05T08:43:09.941Z",
+  "lastPolledAt": "2026-10-05T08:43:13.666Z",
   "mode": "polling",
   "instantQrEnabled": true,
-  "manualQrEnabled": false,
-  "lastError": "Conflict: Waiting for other connection to close..."
+  "manualQrEnabled": false
 }

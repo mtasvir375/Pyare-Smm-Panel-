@@ -107,14 +107,27 @@ export const dbClient = {
       axios.post(formatApiUrl('/api/clear-cache')).catch(() => {});
     }
 
-    const merged = { ...data, id };
+    const merged = { ...data, id, updatedAt: new Date().toISOString() };
+
+    // Update local cache immediately if courses
+    if (table === 'courses') {
+      try {
+        const raw = localStorage.getItem("cached_courses");
+        if (raw) {
+          const list = JSON.parse(raw);
+          if (Array.isArray(list)) {
+            const updated = [merged, ...list.filter((c: any) => c.id !== id)];
+            localStorage.setItem("cached_courses", JSON.stringify(updated));
+            localStorage.setItem("cached_courses_time", Date.now().toString());
+          }
+        }
+      } catch (e) {}
+    }
 
     // 0. Direct write to Turso Cloud Database (Guarantees Turso update on ANY domain including custom domain)
     try {
       const { clientTursoSetDoc } = await import('./tursoClient');
-      clientTursoSetDoc(table, id, merged).catch(tErr => {
-        console.warn(`[TURSO-DIRECT-SET-WARN] ${table}/${id}:`, tErr);
-      });
+      await clientTursoSetDoc(table, id, merged);
     } catch (e) {}
 
     // 1. Send to API Gateway (awaited with retry)
@@ -141,7 +154,49 @@ export const dbClient = {
   },
 
   async updateDoc(table: string, id: string, data: any): Promise<void> {
-    await this.setDoc(table, id, data);
+    const merged = { ...data, id, updatedAt: new Date().toISOString() };
+
+    // Update local cache immediately if courses
+    if (table === 'courses') {
+      try {
+        const raw = localStorage.getItem("cached_courses");
+        if (raw) {
+          const list = JSON.parse(raw);
+          if (Array.isArray(list)) {
+            const updated = list.map((c: any) => c.id === id ? { ...c, ...merged } : c);
+            localStorage.setItem("cached_courses", JSON.stringify(updated));
+            localStorage.setItem("cached_courses_time", Date.now().toString());
+          }
+        }
+      } catch (e) {}
+    }
+
+    // 0. Direct update to Turso Cloud Database with full data merging
+    try {
+      const { clientTursoUpdateDoc } = await import('./tursoClient');
+      await clientTursoUpdateDoc(table, id, merged);
+    } catch (e) {}
+
+    // 1. Send to API Gateway
+    try {
+      await axios.post(formatApiUrl('/api/db/update'), { collection: table, id, data: merged }, { timeout: 8000 });
+    } catch (e) {}
+    try {
+      await axios.post(formatApiUrl('/api/db/set'), { collection: table, id, data: merged }, { timeout: 8000 });
+    } catch (e) {}
+
+    // 2. Clear cache
+    if (table === 'courses' || table === 'settings' || table === 'providers') {
+      axios.post(formatApiUrl('/api/clear-cache')).catch(() => {});
+    }
+
+    // 3. Write directly to Firestore SDK
+    try {
+      const docRef = doc(db, table, id);
+      setFirestoreDoc(docRef, merged, { merge: true }).catch((fsErr: any) => {
+        console.warn(`[DB-CLIENT-FS-WRITE-WARN] ${table}/${id}:`, fsErr.message);
+      });
+    } catch (fsErr: any) {}
   },
 
   async addDoc(table: string, data: any): Promise<any> {

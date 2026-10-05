@@ -136,7 +136,10 @@ export default async function handler(req: any, res: any) {
 
     if (!apiUrl.startsWith("http")) apiUrl = "https://" + apiUrl;
 
-    const finalService = String(service || providerServiceId || orderData?.providerServiceId || "4545").trim();
+    const finalService = String(service || providerServiceId || orderData?.providerServiceId || "").trim();
+    if (!finalService) {
+      return res.status(400).json({ success: false, error: "Provider Service ID is missing. Please configure Provider Service ID for this service in Admin panel." });
+    }
     const finalLink = String(link || targetLink || target_link || orderData?.targetLink || "").trim();
     const finalQty = String(quantity || orderData?.quantity || "1000").trim();
     const finalUserId = String(userId || user_id || orderData?.userId || "").trim();

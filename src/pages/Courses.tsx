@@ -318,7 +318,7 @@ export default function Courses() {
       if (selectedCourse.prevent_duplicate_link || selectedCourse.preventDuplicateLink) {
         const isDuplicate = await dbClient.checkDuplicateOrder(user.uid, selectedCourse.id, formattedLink);
         if (isDuplicate) {
-          toast.error("This link is already processing. Please wait.");
+          toast.error("Current link already in work! Please wait for the previous order on this link to finish, or use a different post link.", { duration: 6000 });
           setSubmitting(false);
           return;
         }

@@ -1684,6 +1684,7 @@ export default function Admin() {
       })) : [];
 
       const updatedPayload = {
+        ...editingCourse,
         title: editTitle,
         price: computedPricePerThousand,
         pricePerThousand: computedPricePerThousand,
@@ -1704,12 +1705,23 @@ export default function Admin() {
       // 1. Immediately update local React state for instant UI update
       setCourses(prev => prev.map(c => c.id === editingCourse.id ? { ...c, ...updatedPayload } : c));
 
-      // 2. Save to database
+      // 2. Save to database (Turso + Firestore + Server)
       await dbClient.updateDoc("courses", editingCourse.id, updatedPayload);
 
       // 3. Clear cache and force fresh load from Firestore
       const cacheMod = await import("@/lib/cache");
       cacheMod.clearCache();
+      try {
+        const existingLs = localStorage.getItem("cached_courses");
+        if (existingLs) {
+          const parsed = JSON.parse(existingLs);
+          if (Array.isArray(parsed)) {
+            const updatedList = parsed.map((c: any) => c.id === editingCourse.id ? { ...c, ...updatedPayload } : c);
+            localStorage.setItem("cached_courses", JSON.stringify(updatedList));
+          }
+        }
+      } catch (e) {}
+
       const freshCourses = await dbClient.getCourses(true);
       if (Array.isArray(freshCourses) && freshCourses.length > 0) {
         setCourses(freshCourses);

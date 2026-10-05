@@ -1695,6 +1695,23 @@ export async function startServer() {
   const updateDocSafe = async (col: string, id: string, data: any, token?: string) => {
     updateLocalDoc(col, id, data);
     invalidateCachesForCollection(col, id);
+
+    // Direct write to Turso Database
+    try {
+      const existing = (await getTursoDoc(col, id)) || {};
+      const merged = { ...existing, ...data, id, updatedAt: new Date().toISOString() };
+      setTursoDoc(col, id, merged).catch((err: any) => {
+        console.warn(`[TURSO-UPDATE-WARN] Failed for ${col}/${id}:`, err.message);
+      });
+    } catch (tErr) {}
+
+    if (col === "courses" || col === "services") {
+      const cached = serverCache.courses.get(id);
+      const existingData = cached ? (cached.data || cached) : {};
+      const merged = { ...existingData, ...data, id, updatedAt: new Date().toISOString() };
+      serverCache.courses.set(id, { data: merged, time: Date.now() });
+      savePersistentCache();
+    }
     if (col === "settings" && id === "payment") {
       const existing = serverCache.settings?.data || {};
       const merged = { ...existing, ...data };
