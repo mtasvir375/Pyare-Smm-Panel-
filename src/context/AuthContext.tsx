@@ -217,17 +217,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     window.addEventListener("focus", handleTabReturn);
     document.addEventListener("visibilitychange", handleTabReturn);
 
-    // Background periodic refresh every 30 seconds
-    const interval = setInterval(() => {
-      if (document.visibilityState === "visible") {
-        handleTabReturn();
-      }
-    }, 30000);
-
     return () => {
       window.removeEventListener("focus", handleTabReturn);
       document.removeEventListener("visibilitychange", handleTabReturn);
-      clearInterval(interval);
     };
   }, []);
 

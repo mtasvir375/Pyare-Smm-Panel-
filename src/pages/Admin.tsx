@@ -214,6 +214,7 @@ export default function Admin() {
   const [savingQr, setSavingQr] = useState(false);
   const [qrFile, setQrFile] = useState<File | null>(null);
   const [userSearch, setUserSearch] = useState("");
+  const [orderSearch, setOrderSearch] = useState("");
   const [editingUser, setEditingUser] = useState<any>(null);
   const [newBalance, setNewBalance] = useState("");
   const [selectedScreenshot, setSelectedScreenshot] = useState<string | null>(null);
@@ -1093,7 +1094,7 @@ export default function Admin() {
     setIsSearchingUser(true);
     try {
       const q = userSearch.trim();
-      const res = await axios.post(formatApiUrl("/api/admin/search-user"), { query: q }, { timeout: 5000 });
+      const res = await axios.post(formatApiUrl("/api/admin/search-user"), { query: q }, { timeout: 8000 });
       if (res.data && res.data.success) {
         let users = Array.isArray(res.data.users) ? res.data.users : (res.data.user ? [res.data.user] : []);
         const seenUids = new Set<string>();
@@ -1118,14 +1119,26 @@ export default function Admin() {
           }
         }
       } else {
+        const qLow = userSearch.trim().toLowerCase();
         const fsUsers = await dbClient.getUsersAdmin();
-        setAllUsers(fsUsers);
+        const filtered = qLow ? fsUsers.filter(u => 
+          String(u.email || u.userEmail || "").toLowerCase().includes(qLow) ||
+          String(u.displayName || u.name || "").toLowerCase().includes(qLow) ||
+          String(u.id || u.uid || "").toLowerCase().includes(qLow)
+        ) : fsUsers;
+        setAllUsers(filtered);
       }
     } catch (err: any) {
       console.error("Search error:", err);
       try {
+        const qLow = userSearch.trim().toLowerCase();
         const fsUsers = await dbClient.getUsersAdmin();
-        setAllUsers(fsUsers);
+        const filtered = qLow ? fsUsers.filter(u => 
+          String(u.email || u.userEmail || "").toLowerCase().includes(qLow) ||
+          String(u.displayName || u.name || "").toLowerCase().includes(qLow) ||
+          String(u.id || u.uid || "").toLowerCase().includes(qLow)
+        ) : fsUsers;
+        setAllUsers(filtered);
       } catch (e) {
         toast.error("Failed to search users");
       }
@@ -2264,13 +2277,50 @@ export default function Admin() {
                 </p>
               </div>
 
-              <div className="flex items-center justify-between gap-4">
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                 <h2 className="text-lg font-bold">Latest User Orders (पेंडिंग और सफल ऑर्डर्स)</h2>
+                <div className="relative w-full md:w-72">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
+                  <Input 
+                    placeholder="Search by email, order ID or link..." 
+                    className="pl-9 pr-8 rounded-xl bg-white w-full"
+                    value={orderSearch}
+                    onChange={(e) => setOrderSearch(e.target.value)}
+                  />
+                  {orderSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setOrderSearch("")}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs font-bold"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="space-y-4">
-                {orders && orders.length > 0 ? (
-                  orders.map((order) => (
+                {(() => {
+                  const oLow = orderSearch.trim().toLowerCase();
+                  const displayOrders = oLow ? (orders || []).filter((o: any) => {
+                    const email = String(o.userEmail || o.user_email || o.userId || "").toLowerCase();
+                    const id = String(o.id || "").toLowerCase();
+                    const pId = String(o.providerOrderId || o.provider_order_id || "").toLowerCase();
+                    const link = String(o.targetLink || o.link || "").toLowerCase();
+                    const title = String(o.title || o.serviceTitle || "").toLowerCase();
+                    return email.includes(oLow) || id.includes(oLow) || pId.includes(oLow) || link.includes(oLow) || title.includes(oLow);
+                  }) : orders;
+
+                  if (!displayOrders || displayOrders.length === 0) {
+                    return (
+                      <div className="text-center py-10 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                        <p className="text-sm font-medium text-gray-500">No orders found</p>
+                        <p className="text-xs text-gray-400 mt-1">Try entering a different email address or order ID</p>
+                      </div>
+                    );
+                  }
+
+                  return displayOrders.map((order: any) => (
                     <Card key={order.id} className="border-none shadow-sm overflow-hidden bg-white animate-in fade-in">
                       <CardContent className="p-4 space-y-4">
                         <div className="flex items-start justify-between gap-4">
@@ -2396,10 +2446,8 @@ export default function Admin() {
                         </div>
                       </CardContent>
                     </Card>
-                  ))
-                ) : (
-                  <p className="text-gray-500 italic text-center py-12">No orders found.</p>
-                )}
+                  ));
+                })()}
               </div>
             </>
           )}
@@ -2870,12 +2918,21 @@ export default function Admin() {
               </div>
               <div className="space-y-3">
                 {(() => {
+                  const searchLow = userSearch.trim().toLowerCase();
                   const seenUids = new Set<string>();
                   const seenEmails = new Set<string>();
                   const displayUsers = (allUsers || []).filter((u: any) => {
                     if (!u) return false;
                     const uid = String(u.id || u.uid || "").trim();
                     const email = String(u.email || u.userEmail || "").trim().toLowerCase();
+                    const name = String(u.displayName || u.name || "").trim().toLowerCase();
+
+                    // Search filter
+                    if (searchLow) {
+                      const matches = email.includes(searchLow) || name.includes(searchLow) || uid.toLowerCase().includes(searchLow);
+                      if (!matches) return false;
+                    }
+
                     if (uid && seenUids.has(uid)) return false;
                     if (email && seenEmails.has(email)) return false;
                     if (uid) seenUids.add(uid);
