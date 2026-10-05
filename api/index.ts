@@ -1509,22 +1509,70 @@ export default async function handler(req: any, res: any) {
         return u;
       };
 
-      // 1. First, get/refresh memory users list (with 10-minute cache to protect 100% Firestore reads!)
+      // 1. Get/refresh users list from Turso Database & Firestore REST
       const now = Date.now();
       let usersList: any[] = [];
-      if (memAllUsersCache && (now - memAllUsersCache.time < 10 * 60 * 1000)) {
+      if (memAllUsersCache && (now - memAllUsersCache.time < 60 * 1000)) {
         usersList = memAllUsersCache.data;
       } else {
+        const userMap = new Map<string, any>();
+
+        // A. Fetch from Turso Database (smm_users & smm_documents)
+        try {
+          const tursoUsers = await listTursoDocs("users", 500);
+          if (Array.isArray(tursoUsers)) {
+            for (const u of tursoUsers) {
+              if (u && (u.id || u.uid)) {
+                const enriched = enrichUser(u);
+                userMap.set(enriched.id || enriched.uid, enriched);
+              }
+            }
+          }
+        } catch (tErr: any) {
+          console.warn("[SEARCH-USERS-TURSO-WARN]", tErr.message);
+        }
+
+        // B. Fetch from Firestore REST as fallback/merge
         try {
           const docs = await listRestDocs("users", 300);
-          usersList = docs.map(enrichUser);
-          memAllUsersCache = { data: usersList, time: now };
+          for (const u of docs) {
+            if (u && (u.id || u.uid)) {
+              const enriched = enrichUser(u);
+              const uId = enriched.id || enriched.uid;
+              if (!userMap.has(uId)) {
+                userMap.set(uId, enriched);
+              } else {
+                const ex = userMap.get(uId);
+                userMap.set(uId, { ...ex, ...enriched, email: enriched.email || ex.email });
+              }
+            }
+          }
         } catch (fetchErr: any) {
-          console.warn("[USERS-CACHE-FETCH-WARN]", fetchErr.message);
-          if (memAllUsersCache?.data) {
-            usersList = memAllUsersCache.data;
+          console.warn("[SEARCH-USERS-REST-WARN]", fetchErr.message);
+        }
+
+        // C. Always ensure known registry users are present
+        for (const [kUid, kInfo] of Object.entries(KNOWN_USER_EMAILS)) {
+          if (!userMap.has(kUid)) {
+            userMap.set(kUid, enrichUser({
+              id: kUid,
+              uid: kUid,
+              email: kInfo.email,
+              userEmail: kInfo.email,
+              displayName: kInfo.name || kInfo.email.split("@")[0],
+              role: kInfo.email === "mtasvir375@gmail.com" ? "admin" : "user",
+              balance: 0
+            }));
+          } else {
+            const ex = userMap.get(kUid);
+            ex.email = kInfo.email;
+            ex.userEmail = kInfo.email;
+            if (!ex.displayName || ex.displayName === "User") ex.displayName = kInfo.name;
           }
         }
+
+        usersList = Array.from(userMap.values());
+        memAllUsersCache = { data: usersList, time: now };
       }
 
       // If query is provided, perform instant in-memory search across email, name, and ID
