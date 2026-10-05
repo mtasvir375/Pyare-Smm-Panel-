@@ -890,18 +890,30 @@ export default async function handler(req: any, res: any) {
           console.warn("[INTENT-SAVE-WARN]", dbErr.message);
         }
 
-        // Send real-time notification to Telegram Bot
+        // Send real-time notification to Telegram Bot Channel
         try {
-          const tBotToken = (settings.telegramBotToken || "").trim();
-          const tChatId = (settings.telegramChatId || "").trim();
+          let tBotToken = (settings.telegramBotToken || "").trim();
+          let tChatId = (settings.telegramChatId || "").trim();
+          if (!tBotToken || !tChatId) {
+            try {
+              const tgDoc = await getRestDoc("settings", "telegram_bot");
+              if (tgDoc) {
+                tBotToken = tBotToken || (tgDoc.botToken || "").trim();
+                tChatId = tChatId || (tgDoc.chatId || "").trim();
+              }
+            } catch {}
+          }
+          tBotToken = tBotToken || "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0";
+          tChatId = tChatId || "-1004483507103";
+
           if (tBotToken && tChatId) {
             axios.post(`https://api.telegram.org/bot${tBotToken}/sendMessage`, {
               chat_id: tChatId,
               text: `📱 <b>[New Deposit QR Generated]</b>\n` +
                     `👤 <b>User:</b> ${userEmail || userId}\n` +
                     `💰 <b>Amount:</b> ₹${finalAmount.toFixed(2)}\n` +
-                    `🔢 <b>Order Ref:</b> <code>${orderRef}</code>\n` +
-                    `⏳ <b>Status:</b> Waiting for user to scan & pay... (30m validity)`,
+                    `🔢 <b>Unique 12-Digit Code:</b> <code>${orderRef}</code>\n` +
+                    `⏳ <b>Status:</b> Waiting for user payment... (30m validity)`,
               parse_mode: "HTML"
             }).catch(() => {});
           }

@@ -3951,6 +3951,61 @@ export async function startServer() {
     }
   });
 
+  // 0. Register Telegram Payment Intent Callback for Automatic Instant Wallet Credits
+  registerPaymentIntentCallback(async (intent, utr, rawText) => {
+    console.log(`[PAYMENT-INTENT-AUTO-CREDIT] Intent ${intent.intentId} matched UTR ${utr} for user ${intent.userId} (${intent.userEmail}) for ₹${intent.amount}`);
+    try {
+      const creditedAmount = Number(intent.amount);
+      const userId = intent.userId;
+      const userEmail = intent.userEmail || "not-provided";
+      const cleanUtr = String(utr || "").replace(/\D/g, "").trim();
+
+      // 1. Credit User Balance in Server Cache and DB
+      await adjustUserBalanceSafe(userId, creditedAmount);
+
+      // 2. Mark UTR claimed globally
+      if (cleanUtr) {
+        globalClaimedUtrs.add(cleanUtr);
+      }
+
+      // 3. Save Approved Deposit Record
+      const depositId = `dep_intent_${cleanUtr || Date.now()}_${Date.now()}`;
+      const depositData = {
+        id: depositId,
+        userId,
+        userEmail,
+        amount: creditedAmount,
+        utr: cleanUtr || intent.orderRef,
+        status: "approved",
+        type: "telegram_instant_qr",
+        provider: intent.senderBank || "UPI QR Payment",
+        verifiedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString()
+      };
+      await addDocSafe("deposits", depositData);
+      serverCache.deposits.set(depositId, { data: depositData, time: Date.now() });
+      savePersistentCache();
+
+      // 4. Update in sms_forwarder_pool
+      if (cleanUtr) {
+        try {
+          await updateDocSafe("sms_forwarder_pool", cleanUtr, {
+            status: "claimed",
+            claimedBy: userId,
+            claimedEmail: userEmail,
+            claimedAt: new Date().toISOString()
+          });
+        } catch (e) {}
+      }
+
+      console.log(`[PAYMENT-INTENT-AUTO-CREDIT-SUCCESS] Successfully credited ₹${creditedAmount} to ${userEmail} (${userId})`);
+      return true;
+    } catch (err: any) {
+      console.error("[PAYMENT-INTENT-AUTO-CREDIT-ERR]", err.message);
+      return false;
+    }
+  });
+
   // Concurrency & Duplicate Protection Locks
   const globalUtrLocks = new Set<string>();
   const globalClaimedUtrs = new Set<string>();

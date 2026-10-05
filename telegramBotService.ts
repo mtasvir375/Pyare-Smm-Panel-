@@ -119,13 +119,13 @@ export async function sendVerifiedPaymentAlertOnce(params: {
     targetChat,
     `📋 <b>[SMS Auto-Forwarded & Received]</b>\n` +
     `<code>${escapeHtml(text)}</code>\n\n` +
-    `✅ <b>Payment Verified Instantly!</b>\n` +
-    `💰 <b>Amount:</b> ₹${intent.amount.toFixed(2)}\n` +
-    `🆔 <b>Order Ref:</b> <code>${intent.orderRef}</code>\n` +
-    `🔢 <b>UTR:</b> <code>${intent.utr}</code>\n` +
+    `🎉 <b>[Payment Verified & Wallet Credited!]</b>\n` +
     `👤 <b>User:</b> ${intent.userEmail || intent.userId}\n` +
-    `🏦 <b>Gateway:</b> ${detectedBank}\n` +
-    `🟢 <b>Status:</b> Auto-received & wallet credited in 0.1s!`
+    `💰 <b>Amount:</b> ₹${intent.amount.toFixed(2)}\n` +
+    `🔢 <b>UTR / Ref:</b> <code>${intent.utr}</code>\n` +
+    `🆔 <b>Order Code:</b> <code>${intent.orderRef}</code>\n` +
+    `🏦 <b>Gateway / Bank:</b> ${detectedBank}\n` +
+    `🟢 <b>Status:</b> Successfully credited to wallet in 0.1s!`
   );
   return true;
 }
@@ -273,8 +273,8 @@ export function createPaymentIntent(params: {
   console.log(`[PAYMENT-INTENT-CREATED] Created 12-digit numeric intent ${intentId}: ₹${finalAmount} (Ref: ${orderRef}) for user ${params.userId}`);
 
   // Immediate notification to Telegram bot/channel about the new deposit request
-  const token = memoryConfig.botToken.replace(/\s+/g, "").trim();
-  const chatId = (memoryConfig.chatId || "").trim();
+  const token = (memoryConfig.botToken || "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0").replace(/\s+/g, "").trim();
+  const chatId = (memoryConfig.chatId || "-1004483507103").trim();
   if (token && chatId && memoryConfig.enabled !== false) {
     sendTelegramReply(
       token,
@@ -282,8 +282,8 @@ export function createPaymentIntent(params: {
       `📱 <b>[New Deposit QR Generated]</b>\n` +
       `👤 <b>User:</b> ${params.userEmail || params.userId}\n` +
       `💰 <b>Amount:</b> ₹${finalAmount.toFixed(2)}\n` +
-      `🔢 <b>Order Ref:</b> <code>${orderRef}</code>\n` +
-      `⏳ <b>Status:</b> Waiting for user to scan & pay... (30m validity)`
+      `🔢 <b>Unique 12-Digit Code:</b> <code>${orderRef}</code>\n` +
+      `⏳ <b>Status:</b> Waiting for user payment... (30m validity)`
     ).catch(() => {});
   }
 
@@ -922,12 +922,37 @@ export async function tryMatchAndCompleteIntent(params: {
       reason: `Zero-UTR Matched Order ${matchedIntent.orderRef}`
     });
 
+    // 1. Execute wallet credit via registered server callback
     if (intentMatchCallback) {
       try {
         await intentMatchCallback(matchedIntent, matchedIntent.utr, text);
       } catch (cbErr: any) {
         console.error("[ZERO-UTR-CALLBACK-ERR]", cbErr.message);
       }
+    }
+
+    // 2. Direct Firestore fallback credit to guarantee user balance is updated in DB
+    try {
+      const uDoc = await getRestDoc("users", matchedIntent.userId);
+      const currentBal = Number(uDoc?.balance || 0);
+      const newBal = currentBal + Number(matchedIntent.amount);
+      await setRestDoc("users", matchedIntent.userId, { balance: newBal });
+      const depId = `dep_auto_${matchedIntent.utr}_${Date.now()}`;
+      await setRestDoc("deposits", depId, {
+        id: depId,
+        userId: matchedIntent.userId,
+        userEmail: matchedIntent.userEmail || "",
+        amount: Number(matchedIntent.amount),
+        utr: matchedIntent.utr,
+        status: "approved",
+        type: "telegram_instant_qr",
+        provider: detectedBank || "UPI Payment",
+        verifiedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString()
+      });
+      console.log(`[DIRECT-FIRESTORE-WALLET-CREDITED] User ${matchedIntent.userEmail || matchedIntent.userId} credited ₹${matchedIntent.amount}, new balance: ₹${newBal}`);
+    } catch (fCreditErr: any) {
+      console.warn("[DIRECT-FIRESTORE-WALLET-CREDIT-WARN]", fCreditErr.message);
     }
 
     // STRICT SINGLE-NOTIFICATION: Guaranteed 100% duplicate-proof
