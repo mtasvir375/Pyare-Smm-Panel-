@@ -53,6 +53,11 @@ const KNOWN_PROVIDERS: Record<string, { apiUrl: string; apiKey: string; name: st
     name: "Smm bin (Primary)",
     apiUrl: "https://www.smmbin.com/api/v2",
     apiKey: "f55bb2dfdc035f9c3c9e737bb72922a51d64309f"
+  },
+  "doc_1791186834219_w9421": {
+    name: "The main smm provider 👍",
+    apiUrl: "https://themainsmmprovider.com/api/v2",
+    apiKey: "74d74ed9b9e708536903866ac32e9547fd371476"
   }
 };
 
@@ -291,10 +296,58 @@ export default async function handler(req: any, res: any) {
             sql: `INSERT OR REPLACE INTO smm_documents (collection, id, data, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP);`,
             args: ["orders", finalOrderId, JSON.stringify(newOrderSummary)]
           });
+
+          await client.execute({
+            sql: `INSERT INTO smm_orders (id, user_id, service_id, link, quantity, charge, status, api_order_id, created_at, data)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+                  ON CONFLICT(id) DO UPDATE SET status = excluded.status, api_order_id = excluded.api_order_id, data = excluded.data;`,
+            args: [
+              finalOrderId,
+              finalUserId,
+              String(finalService),
+              finalLink,
+              Number(finalQty),
+              finalPrice,
+              "Completed",
+              finalOId,
+              JSON.stringify(newOrderSummary)
+            ]
+          });
         }
       } catch (dbErr) {
         console.warn("[TURSO-ORDER-SYNC-WARN]", dbErr);
       }
+
+      // Sync Firestore in background
+      try {
+        const fsOrderUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/orders/${finalOrderId}?key=${FIREBASE_API_KEY}`;
+        axios.patch(fsOrderUrl, {
+          fields: {
+            id: { stringValue: finalOrderId },
+            userId: { stringValue: finalUserId },
+            userEmail: { stringValue: userEmail || "" },
+            serviceId: { stringValue: String(finalService) },
+            courseId: { stringValue: String(orderData?.serviceId || finalService) },
+            title: { stringValue: String(orderData?.title || "") },
+            quantity: { integerValue: String(finalQty) },
+            targetLink: { stringValue: finalLink },
+            totalPrice: { doubleValue: finalPrice },
+            status: { stringValue: "Completed" },
+            providerOrderId: { stringValue: finalOId },
+            createdAt: { stringValue: new Date().toISOString() }
+          }
+        }).catch(() => {});
+
+        if (finalUserId) {
+          const fsUserUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/users/${finalUserId}?key=${FIREBASE_API_KEY}&updateMask.fieldPaths=balance&updateMask.fieldPaths=lastOrderedAt`;
+          axios.patch(fsUserUrl, {
+            fields: {
+              balance: { doubleValue: newBal },
+              lastOrderedAt: { stringValue: new Date().toISOString() }
+            }
+          }).catch(() => {});
+        }
+      } catch (fsErr) {}
 
       return res.status(200).json({
         success: true,
