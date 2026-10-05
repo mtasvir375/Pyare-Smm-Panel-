@@ -890,6 +890,23 @@ export default async function handler(req: any, res: any) {
           console.warn("[INTENT-SAVE-WARN]", dbErr.message);
         }
 
+        // Send real-time notification to Telegram Bot
+        try {
+          const tBotToken = (settings.telegramBotToken || "").trim();
+          const tChatId = (settings.telegramChatId || "").trim();
+          if (tBotToken && tChatId) {
+            axios.post(`https://api.telegram.org/bot${tBotToken}/sendMessage`, {
+              chat_id: tChatId,
+              text: `📱 <b>[New Deposit QR Generated]</b>\n` +
+                    `👤 <b>User:</b> ${userEmail || userId}\n` +
+                    `💰 <b>Amount:</b> ₹${finalAmount.toFixed(2)}\n` +
+                    `🔢 <b>Order Ref:</b> <code>${orderRef}</code>\n` +
+                    `⏳ <b>Status:</b> Waiting for user to scan & pay... (30m validity)`,
+              parse_mode: "HTML"
+            }).catch(() => {});
+          }
+        } catch (tErr) {}
+
         return res.status(200).json({
           success: true,
           intentId,

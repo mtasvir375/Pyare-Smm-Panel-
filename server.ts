@@ -3345,7 +3345,7 @@ export async function startServer() {
         reason: `Direct Webhook: Captured ₹${amount} (UTR: ${cleanUtr})`
       });
 
-      const result = addBankAlert({
+      const result = await addBankAlert({
         utr: cleanUtr,
         amount: amount,
         senderBank: parsed.bank,
@@ -3877,10 +3877,10 @@ export async function startServer() {
   });
 
   // 4. Simulate Test Bank SMS (For instant zero-cost testing)
-  app.post(["/api/admin/simulate-sms", "/api/simulate-sms"], (req, res) => {
+  app.post(["/api/admin/simulate-sms", "/api/simulate-sms"], async (req, res) => {
     try {
       const { amount, utr, bank, text } = req.body || {};
-      const sim = simulateBankSms({
+      const sim = await simulateBankSms({
         amount: amount ? Number(amount) : undefined,
         utr: utr ? String(utr).trim() : undefined,
         bank: bank ? String(bank).trim() : undefined,
@@ -3898,7 +3898,7 @@ export async function startServer() {
   });
 
   // 4b. Parse & Ingest Real Bank SMS directly (Live Test & Ingest)
-  app.post(["/api/admin/parse-and-add-sms", "/api/parse-and-add-sms"], (req, res) => {
+  app.post(["/api/admin/parse-and-add-sms", "/api/parse-and-add-sms"], async (req, res) => {
     try {
       const { text, sender } = req.body || {};
       if (!text || typeof text !== "string") {
@@ -3914,7 +3914,7 @@ export async function startServer() {
         });
       }
 
-      const result = addBankAlert({
+      const result = await addBankAlert({
         utr: parsed.utr,
         amount: parsed.amount,
         senderBank: parsed.bank,

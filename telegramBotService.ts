@@ -272,6 +272,21 @@ export function createPaymentIntent(params: {
 
   console.log(`[PAYMENT-INTENT-CREATED] Created 12-digit numeric intent ${intentId}: ₹${finalAmount} (Ref: ${orderRef}) for user ${params.userId}`);
 
+  // Immediate notification to Telegram bot/channel about the new deposit request
+  const token = memoryConfig.botToken.replace(/\s+/g, "").trim();
+  const chatId = (memoryConfig.chatId || "").trim();
+  if (token && chatId && memoryConfig.enabled !== false) {
+    sendTelegramReply(
+      token,
+      chatId,
+      `📱 <b>[New Deposit QR Generated]</b>\n` +
+      `👤 <b>User:</b> ${params.userEmail || params.userId}\n` +
+      `💰 <b>Amount:</b> ₹${finalAmount.toFixed(2)}\n` +
+      `🔢 <b>Order Ref:</b> <code>${orderRef}</code>\n` +
+      `⏳ <b>Status:</b> Waiting for user to scan & pay... (30m validity)`
+    ).catch(() => {});
+  }
+
   return { success: true, intent };
 }
 
@@ -321,8 +336,7 @@ export function findMatchingIntent(params: {
     }
   }
 
-  // 1. STRICT 12-DIGIT CODE MATCH ONLY:
-  // Match ONLY if the 12-digit Order Ref or UTR matches the intent's orderRef or user-provided utr!
+  // 1. STRICT 12-DIGIT CODE MATCH (if orderRef or UTR matches):
   if (candidate12Digits.size > 0) {
     for (const num of candidate12Digits) {
       // First check active pending intents matching orderRef
@@ -343,7 +357,21 @@ export function findMatchingIntent(params: {
     }
   }
 
-  // NOTE: Matching by amount alone without 12-digit code is STRICTLY DISABLED to prevent cross-user payment theft!
+  // 2. SMART AMOUNT MATCHING FOR RECENT ACTIVE INTENTS:
+  // When a user scans the QR code in Google Pay / PhonePe, the bank SMS contains the bank UTR (not the random tr reference).
+  // If there is an active pending intent for this EXACT amount created within the last 30 minutes, match it!
+  if (params.amount && params.amount > 0) {
+    const targetAmt = Number(Number(params.amount).toFixed(2));
+    const pendingWithExactAmount = uncompleted
+      .filter((i) => i.status === "pending" && Number(Number(i.amount).toFixed(2)) === targetAmt && (now - i.createdAt < 30 * 60 * 1000))
+      .sort((a, b) => b.createdAt - a.createdAt); // newest first
+
+    if (pendingWithExactAmount.length > 0) {
+      console.log(`[SMART-AUTO-MATCH] Matched pending intent ${pendingWithExactAmount[0].intentId} for amount ₹${targetAmt} (User: ${pendingWithExactAmount[0].userEmail || pendingWithExactAmount[0].userId}) with Bank UTR ${params.utr || "N/A"}`);
+      return pendingWithExactAmount[0];
+    }
+  }
+
   return null;
 }
 
@@ -575,12 +603,12 @@ export function parseBankSms(rawText: string, senderName?: string): {
 /**
  * Add an alert safely with UTR deduplication
  */
-export function addBankAlert(params: {
+export async function addBankAlert(params: {
   utr: string;
   amount: number;
   senderBank: string;
   rawText: string;
-}): { success: boolean; alert?: BankAlert; duplicate?: boolean } {
+}): Promise<{ success: boolean; alert?: BankAlert; duplicate?: boolean; matched?: boolean; intent?: PaymentIntent }> {
   const cleanUtr = String(params.utr || "").replace(/\D/g, "").trim();
   if (cleanUtr.length !== 12) {
     return { success: false };
@@ -628,17 +656,20 @@ export function addBankAlert(params: {
   }
 
   // Instantly try matching against active pending 12-digit QR payment intents
-  tryMatchAndCompleteIntent({
-    text: params.rawText || "",
-    utr: cleanUtr,
-    amount: newAlert.amount,
-    bank: newAlert.senderBank
-  }).catch((mErr) => {
+  let matchResult: { matched: boolean; intent?: PaymentIntent } = { matched: false };
+  try {
+    matchResult = await tryMatchAndCompleteIntent({
+      text: params.rawText || "",
+      utr: cleanUtr,
+      amount: newAlert.amount,
+      bank: newAlert.senderBank
+    });
+  } catch (mErr: any) {
     console.warn("[AUTO-INTENT-MATCH-WARN]", mErr.message);
-  });
+  }
 
-  console.log(`[TELEGRAM-ALERT-SAVED] UTR: ${cleanUtr} | Amount: ₹${newAlert.amount} | Bank: ${newAlert.senderBank}`);
-  return { success: true, alert: newAlert };
+  console.log(`[TELEGRAM-ALERT-SAVED] UTR: ${cleanUtr} | Amount: ₹${newAlert.amount} | Bank: ${newAlert.senderBank} | Auto-Matched: ${matchResult.matched}`);
+  return { success: true, alert: newAlert, matched: matchResult.matched, intent: matchResult.intent };
 }
 
 /**
@@ -1270,7 +1301,7 @@ export async function processTelegramUpdate(update: any, token: string): Promise
 
   if (finalUtr && finalUtr.length === 12 && finalAmount > 0) {
     partialMessageByChat.delete(chatKey);
-    const result = addBankAlert({
+    const result = await addBankAlert({
       utr: finalUtr,
       amount: finalAmount,
       senderBank: finalBank,
@@ -1284,22 +1315,26 @@ export async function processTelegramUpdate(update: any, token: string): Promise
       parsed: true,
       utr: finalUtr,
       amount: finalAmount,
-      bank: finalBank
+      bank: finalBank,
+      reason: result.matched ? `Auto-matched to ${result.intent?.userEmail || result.intent?.userId}` : "Captured"
     });
 
     if (result.success && result.alert) {
-      console.log(`[TELEGRAM-SMS-SAVED] UTR: ${finalUtr}, Amount: ₹${finalAmount}, Bank: ${finalBank}`);
-      await sendTelegramReply(
-        token,
-        chatId || memoryConfig.chatId,
-        `📋 <b>[SMS Auto-Forwarded & Received]</b>\n` +
-        `<code>${escapeHtml(text)}</code>\n\n` +
-        `✅ <b>Payment Alert Captured on Website!</b>\n` +
-        `💰 <b>Amount:</b> ₹${finalAmount}\n` +
-        `🔢 <b>UTR / Ref:</b> <code>${finalUtr}</code>\n` +
-        `🏦 <b>Bank:</b> ${finalBank}\n` +
-        `🟢 <b>Status:</b> Auto-received from your device & ready for instant wallet credit!`
-      );
+      console.log(`[TELEGRAM-SMS-SAVED] UTR: ${finalUtr}, Amount: ₹${finalAmount}, Bank: ${finalBank}, Auto-Matched: ${result.matched}`);
+      // If NOT auto-matched, send manual capture notice to admin
+      if (!result.matched) {
+        await sendTelegramReply(
+          token,
+          chatId || memoryConfig.chatId,
+          `📋 <b>[SMS Auto-Forwarded & Received]</b>\n` +
+          `<code>${escapeHtml(text)}</code>\n\n` +
+          `✅ <b>Payment Alert Captured on Website!</b>\n` +
+          `💰 <b>Amount:</b> ₹${finalAmount}\n` +
+          `🔢 <b>UTR / Ref:</b> <code>${finalUtr}</code>\n` +
+          `🏦 <b>Bank:</b> ${finalBank}\n` +
+          `🟢 <b>Status:</b> Auto-received from your device & ready for instant wallet credit!`
+        );
+      }
       return { success: true, alert: result.alert, parsed };
     } else if (result.duplicate) {
       console.log(`[TELEGRAM-SMS-DUPLICATE] UTR: ${finalUtr} already exists.`);
@@ -1674,12 +1709,12 @@ export function getTelegramStatus() {
 /**
  * Simulate an incoming bank SMS (for testing without real money)
  */
-export function simulateBankSms(params?: {
+export async function simulateBankSms(params?: {
   amount?: number;
   utr?: string;
   bank?: string;
   text?: string;
-}): { success: boolean; alert: BankAlert } {
+}): Promise<{ success: boolean; alert: BankAlert }> {
   const amount = params?.amount && params.amount > 0 ? params.amount : Math.floor(Math.random() * 400) + 100;
   const utr = params?.utr && params.utr.length === 12
     ? params.utr
@@ -1689,7 +1724,7 @@ export function simulateBankSms(params?: {
   const dateStr = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" });
   const text = params?.text || `Dear SBI UPI User, A/C ..4102 credited by Rs.${amount}.00 on ${dateStr} transfer from Payer Ref No ${utr} -SBI`;
 
-  const res = addBankAlert({
+  const res = await addBankAlert({
     utr,
     amount,
     senderBank: bank,
