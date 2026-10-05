@@ -1,6 +1,7 @@
 import axios from "axios";
 import { getLocalDoc, setLocalDoc, updateLocalDoc, listLocalDocs, addLocalDoc, deleteLocalDoc, getLocalSqliteDb, queryLocalDocs } from "./localDb";
 import { getTursoDoc, setTursoDoc, listTursoDocs, deleteTursoDoc, getTursoClient } from "./turso";
+import { getBankAlerts } from "../telegramBotService";
 
 // Environment & Configuration
 const FIREBASE_PROJECT_ID = "gen-lang-client-0629912823";
@@ -1023,10 +1024,24 @@ export default async function handler(req: any, res: any) {
       if (intent.status !== "completed" && intent.userId && intent.orderRef) {
         try {
           // Targeted 1-doc lookup by unique 12-digit orderRef
-          let match: any = await getRestDoc("bank_alerts", intent.orderRef);
+          let match: any = await getRestDoc("bank_alerts", intent.orderRef).catch(() => null);
           if (!match || match.isUsed === true || match.status === "claimed") {
-            // Also check memory alert if not in bank_alerts
             match = null;
+          }
+          if (!match) {
+            try {
+              const allAlerts = getBankAlerts();
+              const found = allAlerts.find((a: any) =>
+                !a.isUsed && (
+                  a.utr === intent.orderRef ||
+                  (a.rawText && a.rawText.includes(intent.orderRef)) ||
+                  (Number(Number(a.amount).toFixed(2)) === Number(Number(intent.amount).toFixed(2)))
+                )
+              );
+              if (found) {
+                match = found;
+              }
+            } catch (e) {}
           }
 
           if (match && intent.orderRef) {
