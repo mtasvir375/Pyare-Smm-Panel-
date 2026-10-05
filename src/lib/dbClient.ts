@@ -528,9 +528,9 @@ export const dbClient = {
       const uid = String(u.id || u.uid || "").trim();
       const email = String(u.email || u.userEmail || "").trim().toLowerCase();
       if (uid && seenUids.has(uid)) continue;
-      if (email && seenEmails.has(email)) continue;
+      if (email && email.length > 3 && seenEmails.has(email)) continue;
       if (uid) seenUids.add(uid);
-      if (email) seenEmails.add(email);
+      if (email && email.length > 3) seenEmails.add(email);
       deduped.push(u);
     }
 

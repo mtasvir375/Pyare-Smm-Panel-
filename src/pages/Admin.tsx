@@ -2924,19 +2924,28 @@ export default function Admin() {
                   const displayUsers = (allUsers || []).filter((u: any) => {
                     if (!u) return false;
                     const uid = String(u.id || u.uid || "").trim();
-                    const email = String(u.email || u.userEmail || "").trim().toLowerCase();
-                    const name = String(u.displayName || u.name || "").trim().toLowerCase();
+                    const known = KNOWN_ADMIN_USER_EMAILS[uid];
+                    const email = String(
+                      u.email || 
+                      u.userEmail || 
+                      known?.email ||
+                      (Array.isArray(u.latestOrders) && u.latestOrders[0]?.userEmail) || 
+                      (Array.isArray(u.latestDeposits) && u.latestDeposits[0]?.userEmail) || 
+                      ""
+                    ).trim().toLowerCase();
+                    const name = String(u.displayName || u.name || known?.name || "").trim().toLowerCase();
 
                     // Search filter
                     if (searchLow) {
-                      const matches = email.includes(searchLow) || name.includes(searchLow) || uid.toLowerCase().includes(searchLow);
+                      const matches = (email && email.includes(searchLow)) || (name && name.includes(searchLow)) || (uid && uid.toLowerCase().includes(searchLow));
                       if (!matches) return false;
                     }
 
                     if (uid && seenUids.has(uid)) return false;
-                    if (email && seenEmails.has(email)) return false;
+                    if (email && email.length > 3 && seenEmails.has(email)) return false;
+                    
                     if (uid) seenUids.add(uid);
-                    if (email) seenEmails.add(email);
+                    if (email && email.length > 3) seenEmails.add(email);
                     return true;
                   });
 
