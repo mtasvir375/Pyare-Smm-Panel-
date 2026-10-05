@@ -1121,32 +1121,40 @@ export default async function handler(req: any, res: any) {
               userEmailRegistry.set(intent.userId, intentEmailToPersist);
             }
 
-            // Persist updated balance, latestDeposits, completed intent, and deposit record
+            const userPayload = { 
+              ...uDoc, 
+              email: intentEmailToPersist,
+              userEmail: intentEmailToPersist,
+              displayName: intentNameToPersist,
+              balance: newBal, 
+              latestDeposits: updatedLatestDeposits, 
+              updatedAt: new Date().toISOString() 
+            };
+            const depositPayload = {
+              ...newDepositSummary,
+              userId: intent.userId,
+              userEmail: intent.userEmail || "",
+              type: "deposit"
+            };
+            const alertPayload = {
+              ...match,
+              isUsed: true,
+              status: "claimed",
+              usedBy: intent.userId,
+              usedAt: new Date().toISOString(),
+              notified: true
+            };
+
+            // Persist updated balance, latestDeposits, completed intent, and deposit record in BOTH Firestore and Turso
             await Promise.all([
-              setRestDoc("users", intent.userId, { 
-                ...uDoc, 
-                email: intentEmailToPersist,
-                userEmail: intentEmailToPersist,
-                displayName: intentNameToPersist,
-                balance: newBal, 
-                latestDeposits: updatedLatestDeposits, 
-                updatedAt: new Date().toISOString() 
-              }),
-              setRestDoc("deposits", depId, {
-                ...newDepositSummary,
-                userId: intent.userId,
-                userEmail: intent.userEmail || "",
-                type: "deposit"
-              }),
-              setRestDoc("payment_intents", intent.intentId, completedIntentData),
-              setRestDoc("bank_alerts", matchUtr, {
-                ...match,
-                isUsed: true,
-                status: "claimed",
-                usedBy: intent.userId,
-                usedAt: new Date().toISOString(),
-                notified: true
-              })
+              setRestDoc("users", intent.userId, userPayload).catch(() => {}),
+              setTursoDoc("users", intent.userId, userPayload).catch(() => {}),
+              setRestDoc("deposits", depId, depositPayload).catch(() => {}),
+              setTursoDoc("deposits", depId, depositPayload).catch(() => {}),
+              setRestDoc("payment_intents", intent.intentId, completedIntentData).catch(() => {}),
+              setTursoDoc("payment_intents", intent.intentId, completedIntentData).catch(() => {}),
+              setRestDoc("bank_alerts", matchUtr, alertPayload).catch(() => {}),
+              setTursoDoc("bank_alerts", matchUtr, alertPayload).catch(() => {})
             ]);
 
             intent.status = "completed";
