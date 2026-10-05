@@ -196,7 +196,51 @@ export async function initTursoTables(client: Client): Promise<void> {
     );
   `);
 
+  // 8. Bot Distributed Polling Lease Table
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS smm_bot_lease (
+      id TEXT PRIMARY KEY,
+      leader_id TEXT NOT NULL,
+      heartbeat INTEGER NOT NULL
+    );
+  `);
+
   console.log("[TURSO] All database tables verified / created successfully.");
+}
+
+/**
+ * Acquire or refresh distributed polling lease via atomic SQL
+ */
+export async function acquireTursoPollingLease(instanceId: string): Promise<boolean> {
+  const client = getTursoClient();
+  if (!client) return true;
+  const now = Date.now();
+  const leaseTimeoutMs = 12000;
+
+  try {
+    const res = await client.execute({
+      sql: `UPDATE smm_bot_lease 
+            SET leader_id = ?, heartbeat = ? 
+            WHERE id = 'telegram_polling' AND (leader_id = ? OR heartbeat < ?)`,
+      args: [instanceId, now, instanceId, now - leaseTimeoutMs]
+    });
+
+    if (res.rowsAffected && res.rowsAffected > 0) {
+      return true;
+    }
+
+    try {
+      await client.execute({
+        sql: `INSERT INTO smm_bot_lease (id, leader_id, heartbeat) VALUES ('telegram_polling', ?, ?)`,
+        args: [instanceId, now]
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  } catch (err: any) {
+    return true;
+  }
 }
 
 // Test credentials and connection

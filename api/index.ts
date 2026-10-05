@@ -884,7 +884,9 @@ export default async function handler(req: any, res: any) {
         try {
           await Promise.all([
             setRestDoc("payment_intents", intentId, intentData),
-            setRestDoc("payment_intents", orderRef, intentData)
+            setRestDoc("payment_intents", orderRef, intentData),
+            setTursoDoc("payment_intents", intentId, intentData).catch(() => {}),
+            setTursoDoc("payment_intents", orderRef, intentData).catch(() => {})
           ]);
         } catch (dbErr: any) {
           console.warn("[INTENT-SAVE-WARN]", dbErr.message);
@@ -981,7 +983,13 @@ export default async function handler(req: any, res: any) {
 
       let intent = memObj?.data;
       if (!intent || intent.status === "pending") {
-        intent = await getRestDoc("payment_intents", strId);
+        try {
+          const tursoDoc = await getTursoDoc("payment_intents", strId);
+          if (tursoDoc) intent = tursoDoc;
+        } catch {}
+        if (!intent || intent.status === "pending") {
+          intent = await getRestDoc("payment_intents", strId);
+        }
         if (intent) {
           memIntents.set(strId, { data: intent, time: now });
           if (intent.orderRef) memIntents.set(intent.orderRef, { data: intent, time: now });

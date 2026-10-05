@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import axios from "axios";
 import { setRestDoc, getRestDoc, getRestCollection } from "./api/_firestoreRest";
-import { setTursoDoc, getTursoDoc, listTursoDocs } from "./server/tursoDb";
+import { setTursoDoc, getTursoDoc, listTursoDocs, acquireTursoPollingLease } from "./server/tursoDb";
 
 export interface BankAlert {
   id: string;
@@ -134,9 +134,9 @@ export async function sendVerifiedPaymentAlertOnce(params: {
 const INSTANCE_ID = `inst_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 let isLeader = false;
 export async function checkOrAcquirePollingLock(): Promise<boolean> {
-  // Completely in-memory leader lock - 0 Firestore reads/writes!
-  isLeader = true;
-  return true;
+  const hasLease = await acquireTursoPollingLease(INSTANCE_ID);
+  isLeader = hasLease;
+  return hasLease;
 }
 
 let memoryConfig: TelegramBotConfig = {
