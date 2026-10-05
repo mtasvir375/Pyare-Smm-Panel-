@@ -388,7 +388,7 @@ export function findMatchingIntent(params: {
   if (params.amount && params.amount > 0) {
     const targetAmt = Number(Number(params.amount).toFixed(2));
     const pendingWithExactAmount = uncompleted
-      .filter((i) => i.status === "pending" && Number(Number(i.amount).toFixed(2)) === targetAmt && (now - i.createdAt < 30 * 60 * 1000))
+      .filter((i) => i.status === "pending" && Number(Number(i.amount).toFixed(2)) === targetAmt && (now - i.createdAt < 60 * 60 * 1000))
       .sort((a, b) => b.createdAt - a.createdAt); // newest first
 
     if (pendingWithExactAmount.length > 0) {
@@ -962,7 +962,17 @@ export async function tryMatchAndCompleteIntent(params: {
     matchedIntent.utr = (detectedUtr && detectedUtr.length === 12) ? detectedUtr : (other12 || matchedIntent.orderRef);
     matchedIntent.senderBank = detectedBank;
     savePaymentIntents();
-    setRestDoc("payment_intents", matchedIntent.intentId, matchedIntent).catch(() => {});
+
+    try {
+      await Promise.all([
+        setRestDoc("payment_intents", matchedIntent.intentId, matchedIntent),
+        setRestDoc("payment_intents", matchedIntent.orderRef, matchedIntent),
+        setTursoDoc("payment_intents", matchedIntent.intentId, matchedIntent).catch(() => {}),
+        setTursoDoc("payment_intents", matchedIntent.orderRef, matchedIntent).catch(() => {})
+      ]);
+    } catch (saveErr: any) {
+      console.warn("[INTENT-COMPLETE-SAVE-WARN]", saveErr.message);
+    }
 
     // Mark corresponding bank alert as used in memoryAlerts & persist
     const targetAlert = memoryAlerts.find(
@@ -987,37 +997,43 @@ export async function tryMatchAndCompleteIntent(params: {
       reason: `Zero-UTR Matched Order ${matchedIntent.orderRef}`
     });
 
-    // 1. Execute wallet credit via registered server callback
-    if (intentMatchCallback) {
-      try {
-        await intentMatchCallback(matchedIntent, matchedIntent.utr, text);
-      } catch (cbErr: any) {
-        console.error("[ZERO-UTR-CALLBACK-ERR]", cbErr.message);
-      }
-    }
+    // STRICT SINGLE WALLET CREDIT: Execute credit exactly ONCE
+    if (!(matchedIntent as any).walletCredited) {
+      (matchedIntent as any).walletCredited = true;
+      (matchedIntent as any).credited = true;
+      savePaymentIntents();
 
-    // 2. Direct Firestore fallback credit to guarantee user balance is updated in DB
-    try {
-      const uDoc = await getRestDoc("users", matchedIntent.userId);
-      const currentBal = Number(uDoc?.balance || 0);
-      const newBal = currentBal + Number(matchedIntent.amount);
-      await setRestDoc("users", matchedIntent.userId, { balance: newBal });
-      const depId = `dep_auto_${matchedIntent.utr}_${Date.now()}`;
-      await setRestDoc("deposits", depId, {
-        id: depId,
-        userId: matchedIntent.userId,
-        userEmail: matchedIntent.userEmail || "",
-        amount: Number(matchedIntent.amount),
-        utr: matchedIntent.utr,
-        status: "approved",
-        type: "telegram_instant_qr",
-        provider: detectedBank || "UPI Payment",
-        verifiedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString()
-      });
-      console.log(`[DIRECT-FIRESTORE-WALLET-CREDITED] User ${matchedIntent.userEmail || matchedIntent.userId} credited ₹${matchedIntent.amount}, new balance: ₹${newBal}`);
-    } catch (fCreditErr: any) {
-      console.warn("[DIRECT-FIRESTORE-WALLET-CREDIT-WARN]", fCreditErr.message);
+      if (intentMatchCallback) {
+        try {
+          await intentMatchCallback(matchedIntent, matchedIntent.utr, text);
+        } catch (cbErr: any) {
+          console.error("[ZERO-UTR-CALLBACK-ERR]", cbErr.message);
+        }
+      } else {
+        // Direct Firestore credit ONLY if no server callback is registered
+        try {
+          const uDoc = await getRestDoc("users", matchedIntent.userId);
+          const currentBal = Number(uDoc?.balance || 0);
+          const newBal = currentBal + Number(matchedIntent.amount);
+          await setRestDoc("users", matchedIntent.userId, { balance: newBal });
+          const depId = `dep_auto_${matchedIntent.utr}_${Date.now()}`;
+          await setRestDoc("deposits", depId, {
+            id: depId,
+            userId: matchedIntent.userId,
+            userEmail: matchedIntent.userEmail || "",
+            amount: Number(matchedIntent.amount),
+            utr: matchedIntent.utr,
+            status: "approved",
+            type: "telegram_instant_qr",
+            provider: detectedBank || "UPI Payment",
+            verifiedAt: new Date().toISOString(),
+            createdAt: new Date().toISOString()
+          });
+          console.log(`[DIRECT-FIRESTORE-WALLET-CREDITED] User ${matchedIntent.userEmail || matchedIntent.userId} credited ₹${matchedIntent.amount}, new balance: ₹${newBal}`);
+        } catch (fCreditErr: any) {
+          console.warn("[DIRECT-FIRESTORE-WALLET-CREDIT-WARN]", fCreditErr.message);
+        }
+      }
     }
 
     // STRICT SINGLE-NOTIFICATION: Guaranteed 100% duplicate-proof
@@ -1078,13 +1094,21 @@ export async function reconcilePendingIntentsWithAlerts(): Promise<number> {
   );
 
   for (const intent of uncompleted) {
+    if (intent.status === "completed") continue;
+    const targetAmt = Number(Number(intent.amount).toFixed(2));
+
     const matchedAlert = memoryAlerts.find((alert) => {
       if (alert.isUsed) return false;
-      // Strict 12-digit code match only:
+      // 1. Strict 12-digit code match:
       if (alert.utr === intent.orderRef) return true;
       if ((alert as any).orderRef === intent.orderRef) return true;
       if (alert.rawText && alert.rawText.includes(intent.orderRef)) return true;
       if (intent.utr && alert.utr === intent.utr) return true;
+
+      // 2. Amount match for intents created within 60 minutes:
+      if (Number(Number(alert.amount).toFixed(2)) === targetAmt && (now - intent.createdAt < 60 * 60 * 1000)) {
+        return true;
+      }
       return false;
     });
 
