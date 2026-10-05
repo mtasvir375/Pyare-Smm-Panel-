@@ -6,8 +6,8 @@
   "enabled": true,
   "lastUpdateId": 33028723,
   "botUsername": "BbbSmart_bot",
-  "startedAt": "2026-10-05T14:49:59.098Z",
-  "lastPolledAt": "2026-10-05T14:50:13.800Z",
+  "startedAt": "2026-10-05T17:35:40.994Z",
+  "lastPolledAt": "2026-10-05T17:35:55.425Z",
   "mode": "polling",
   "instantQrEnabled": true,
   "manualQrEnabled": false

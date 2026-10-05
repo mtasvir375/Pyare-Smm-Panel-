@@ -669,6 +669,19 @@
       "verifiedAt": "2026-10-05T14:50:11.055Z",
       "createdAt": "2026-10-05T14:50:11.055Z",
       "updatedAt": "2026-10-05T14:50:11.056Z"
+    },
+    "dep_auto_778899001122_1791221752375": {
+      "id": "dep_auto_778899001122_1791221752375",
+      "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "userEmail": "mtasvir375@gmail.com",
+      "amount": 300,
+      "utr": "778899001122",
+      "status": "approved",
+      "type": "auto_gateway_verify",
+      "provider": "sms_forwarder",
+      "verifiedAt": "2026-10-05T17:35:52.375Z",
+      "createdAt": "2026-10-05T17:35:52.375Z",
+      "updatedAt": "2026-10-05T17:35:52.375Z"
     }
   },
   "courses": {
@@ -1169,6 +1182,19 @@
       "description": "Auto Verified Deposit (UTR: 556677889900)",
       "createdAt": "2026-10-05T14:50:11.437Z",
       "updatedAt": "2026-10-05T14:50:11.437Z"
+    },
+    "txn_1791221752723_hwwa2": {
+      "id": "txn_1791221752723_hwwa2",
+      "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "amount": 300,
+      "type": "deposit",
+      "method": "sms_forwarder",
+      "status": "success",
+      "utr": "778899001122",
+      "timestamp": "2026-10-05T17:35:52.723Z",
+      "description": "Auto Verified Deposit (UTR: 778899001122)",
+      "createdAt": "2026-10-05T17:35:52.723Z",
+      "updatedAt": "2026-10-05T17:35:52.723Z"
     }
   },
   "sms_forwarder_pool": {
@@ -1269,6 +1295,19 @@
       "claimedBy": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
       "claimedEmail": "mtasvir375@gmail.com",
       "claimedAt": "2026-10-05T14:50:10.487Z"
+    },
+    "778899001122": {
+      "id": "778899001122",
+      "sender": "UPI Payment",
+      "rawSms": "Received ₹300 from Test User UTR:778899001122",
+      "timestamp": "2026-10-05T17:35:49.614Z",
+      "utr": "778899001122",
+      "status": "claimed",
+      "amount": 300,
+      "updatedAt": "2026-10-05T17:35:51.991Z",
+      "claimedBy": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "claimedEmail": "mtasvir375@gmail.com",
+      "claimedAt": "2026-10-05T17:35:51.991Z"
     }
   },
   "payment_intents": {

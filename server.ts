@@ -2942,29 +2942,27 @@ export async function startServer() {
         }
       }
 
-      // 2. Fetch fresh from Firestore if not in rest fallback or if force requested or if map is small
-      if (!useRestFallback) {
-        try {
-          // A: Always query pending deposits from Firestore so admin never misses unapproved requests
-          const pendingSnap = await fdb.collection("deposits").where("status", "==", "pending").limit(50).get();
-          pendingSnap.forEach(doc => {
-            const data = { id: doc.id, ...doc.data() };
-            depositMap.set(doc.id, data);
-            serverCache.deposits.set(doc.id, { data, time: Date.now() });
+      // 2. Fetch fresh from Turso database (smm_deposits)
+      try {
+        const client = getTursoClient();
+        if (client) {
+          const res = await client.execute({
+            sql: `SELECT * FROM smm_deposits ORDER BY created_at DESC LIMIT ?;`,
+            args: [limitCount]
           });
-
-          // B: Query most recent deposits
-          const recentSnap = await fdb.collection("deposits").orderBy("createdAt", "desc").limit(limitCount).get();
-          recentSnap.forEach(doc => {
-            const data = { id: doc.id, ...doc.data() };
-            depositMap.set(doc.id, data);
-            serverCache.deposits.set(doc.id, { data, time: Date.now() });
-          });
-
+          for (const row of res.rows) {
+            try {
+              const parsed = typeof row.data === "string" ? JSON.parse(row.data) : (row.data || {});
+              const dId = String(row.id || "");
+              const data = { id: dId, userId: String(row.user_id || ""), amount: Number(row.amount || 0), status: String(row.status || ""), utr: String(row.transaction_id || ""), ...parsed };
+              depositMap.set(dId, data);
+              serverCache.deposits.set(dId, { data, time: Date.now() });
+            } catch (e) {}
+          }
           savePersistentCache();
-        } catch (e: any) {
-          console.warn("[ADMIN-ALL-DEPOSITS-FIRESTORE-ERR]", e.message);
         }
+      } catch (e: any) {
+        console.warn("[ADMIN-ALL-DEPOSITS-TURSO-ERR]", e.message);
       }
 
       // 3. If still empty, use REST fallback
@@ -3072,32 +3070,22 @@ export async function startServer() {
         }
       }
 
-      // 3. From Firestore
+      // 3. From Turso database (smm_deposits)
       try {
-        if (!useRestFallback) {
-          if (targetUid) {
-            const snap = await fdb.collection("deposits").where("userId", "==", targetUid).limit(50).get();
-            snap.forEach(doc => {
-              depositMap.set(doc.id, { id: doc.id, ...doc.data() });
-            });
+        const client = getTursoClient();
+        if (client) {
+          const res = await client.execute({
+            sql: `SELECT * FROM smm_deposits WHERE user_id = ? ORDER BY created_at DESC LIMIT 50;`,
+            args: [targetUid]
+          });
+          for (const row of res.rows) {
+            try {
+              const parsed = typeof row.data === "string" ? JSON.parse(row.data) : (row.data || {});
+              const dId = String(row.id || "");
+              const item = { id: dId, userId: String(row.user_id || ""), amount: Number(row.amount || 0), status: String(row.status || ""), utr: String(row.transaction_id || ""), ...parsed };
+              depositMap.set(dId, item);
+            } catch (e) {}
           }
-        } else {
-          try {
-            const targetProject = getTargetProject();
-            const url = `https://firestore.googleapis.com/v1/projects/${targetProject}/databases/${dbId}/documents/deposits?key=${apiKey}&pageSize=50`;
-            const resRest = await axios.get(url, { timeout: 10000 });
-            if (resRest.data && resRest.data.documents) {
-              resRest.data.documents.forEach((doc: any) => {
-                const id = doc.name.split("/").pop();
-                const item = { id, ...unwrapRestFields(doc.fields || {}) };
-                const uUid = String(item.userId || item.user_id || "").trim();
-                const uEmail = String(item.userEmail || item.user_email || "").trim().toLowerCase();
-                if ((targetUid && uUid === targetUid) || (targetEmail && uEmail && uEmail === targetEmail)) {
-                  depositMap.set(id, item);
-                }
-              });
-            }
-          } catch (rErr) {}
         }
       } catch (e) {}
 
@@ -4240,23 +4228,25 @@ export async function startServer() {
         }
       });
 
-      // Also query Firestore approved deposits if accessible
-      if (!useRestFallback && adminSdkSucceeded) {
-        try {
-          const depSnaps = await fdb.collection("deposits").where("status", "==", "approved").get();
-          depSnaps.forEach(doc => {
-            const d = doc.data();
-            const uId = d.userId || d.user_id;
-            if (uId) {
-              const amt = Number(d.amount || 0);
-              if (!serverCache.deposits.has(doc.id)) {
-                userApprovedMap.set(uId, (userApprovedMap.get(uId) || 0) + amt);
+      // Also query Turso approved deposits
+      try {
+        const client = getTursoClient();
+        if (client) {
+          const res = await client.execute(`SELECT * FROM smm_deposits WHERE status = 'approved' OR status = 'completed';`);
+          for (const row of res.rows) {
+            const uId = String(row.user_id || "");
+            const amt = Number(row.amount || 0);
+            if (uId && amt > 0) {
+              if (!userApprovedMap.has(uId)) {
+                userApprovedMap.set(uId, amt);
+              } else {
+                userApprovedMap.set(uId, Math.max(userApprovedMap.get(uId)! , amt));
               }
             }
-          });
-        } catch (e: any) {
-          console.warn("[RESTORE-BALANCES] Error fetching deposits from DB:", e.message);
+          }
         }
+      } catch (e: any) {
+        console.warn("[RESTORE-BALANCES] Error fetching deposits from Turso:", e.message);
       }
 
       // 2. Calculate orders
@@ -5005,17 +4995,23 @@ export async function startServer() {
       );
     }
 
-    // Secondary check against database if not found in cache
-    if (!isAlreadyVerified && !useRestFallback) {
+    // Secondary check against Turso database if not found in cache
+    if (!isAlreadyVerified) {
       try {
-        const snap = await fdb.collection("deposits").where("utr", "==", cleanUtr).limit(1).get();
-        if (!snap.empty) {
-          const docData: any = snap.docs[0].data();
-          if (docData.status === "approved" || docData.status === "completed") {
-            isAlreadyVerified = true;
+        const client = getTursoClient();
+        if (client) {
+          const res = await client.execute({
+            sql: `SELECT * FROM smm_deposits WHERE transaction_id = ? LIMIT 1;`,
+            args: [cleanUtr]
+          });
+          if (res.rows.length > 0) {
+            const row = res.rows[0];
+            if (row.status === "approved" || row.status === "completed") {
+              isAlreadyVerified = true;
+            }
           }
         }
-      } catch (fErr) {}
+      } catch (e) {}
     }
 
     if (isAlreadyVerified) {
