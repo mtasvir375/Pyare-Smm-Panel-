@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import axios from "axios";
-import { setRestDoc, getRestDoc } from "./api/_firestoreRest";
+import { setRestDoc, getRestDoc, getRestCollection } from "./api/_firestoreRest";
 
 export interface BankAlert {
   id: string;
@@ -869,6 +869,26 @@ export async function tryMatchAndCompleteIntent(params: {
     }
   }
 
+  // Fallback: Query remote pending payment intents from Firestore created in last 60m
+  if (!matchedIntent && detectedAmount > 0) {
+    try {
+      const remoteList = await getRestCollection("payment_intents");
+      const targetAmt = Number(Number(detectedAmount).toFixed(2));
+      const recentPending = remoteList.filter(
+        (i: any) => i && i.status === "pending" && Number(Number(i.amount).toFixed(2)) === targetAmt && (Date.now() - (i.createdAt || 0) < 60 * 60 * 1000)
+      );
+      if (recentPending.length > 0) {
+        recentPending.sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
+        const chosen = recentPending[0];
+        memoryIntents.set(chosen.intentId, chosen);
+        matchedIntent = chosen;
+        console.log(`[FIRESTORE-REMOTE-MATCH] Matched pending intent ${chosen.intentId} for amount ₹${targetAmt} (User: ${chosen.userEmail || chosen.userId})`);
+      }
+    } catch (rErr: any) {
+      console.warn("[FIRESTORE-REMOTE-QUERY-WARN]", rErr.message);
+    }
+  }
+
   if (matchedIntent && matchedIntent.status !== "completed") {
     console.log(`[ZERO-UTR-MATCH] Matched Order: ${matchedIntent.orderRef}, Amount: ₹${matchedIntent.amount} for user: ${matchedIntent.userId}`);
     matchedIntent.status = "completed";
@@ -1145,6 +1165,26 @@ export async function processTelegramUpdate(update: any, token: string): Promise
           break;
         }
       } catch {}
+    }
+  }
+
+  // Fallback: Query remote pending payment intents from Firestore created in last 60m
+  if (!matchedIntent && detectedAmount > 0) {
+    try {
+      const remoteList = await getRestCollection("payment_intents");
+      const targetAmt = Number(Number(detectedAmount).toFixed(2));
+      const recentPending = remoteList.filter(
+        (i: any) => i && i.status === "pending" && Number(Number(i.amount).toFixed(2)) === targetAmt && (Date.now() - (i.createdAt || 0) < 60 * 60 * 1000)
+      );
+      if (recentPending.length > 0) {
+        recentPending.sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
+        const chosen = recentPending[0];
+        memoryIntents.set(chosen.intentId, chosen);
+        matchedIntent = chosen;
+        console.log(`[FIRESTORE-REMOTE-MATCH] Matched pending intent ${chosen.intentId} for amount ₹${targetAmt} (User: ${chosen.userEmail || chosen.userId})`);
+      }
+    } catch (rErr: any) {
+      console.warn("[FIRESTORE-REMOTE-QUERY-WARN]", rErr.message);
     }
   }
 

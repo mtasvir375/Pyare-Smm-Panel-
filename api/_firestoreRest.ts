@@ -83,6 +83,22 @@ export async function getRestDoc(collection: string, docId: string): Promise<any
   }
 }
 
+export async function getRestCollection(collection: string): Promise<any[]> {
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}?key=${FIREBASE_API_KEY}&pageSize=100`;
+    const res = await axios.get(url, { timeout: 8000 });
+    if (res.data?.documents && Array.isArray(res.data.documents)) {
+      return res.data.documents.map((d: any) => {
+        const id = d.name ? d.name.split("/").pop() : "";
+        return { ...unwrapFirestoreFields(d.fields), id };
+      });
+    }
+    return [];
+  } catch (err: any) {
+    return [];
+  }
+}
+
 export async function setRestDoc(collection: string, docId: string, data: any): Promise<any> {
   try {
     const fields = wrapFirestoreFields({ ...data, id: docId });
