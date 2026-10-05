@@ -513,7 +513,99 @@
       "id": "ord_1791189684007_0laoz"
     }
   },
-  "deposits": {},
+  "deposits": {
+    "dep_intent_368135474925_1791204463475": {
+      "id": "dep_intent_368135474925_1791204463475",
+      "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "userEmail": "mtasvir375@gmail.com",
+      "amount": 10,
+      "utr": "368135474925",
+      "status": "approved",
+      "type": "telegram_instant_qr",
+      "provider": "UPI Payment",
+      "verifiedAt": "2026-10-05T12:47:43.475Z",
+      "createdAt": "2026-10-05T12:47:43.475Z",
+      "updatedAt": "2026-10-05T12:47:43.475Z"
+    },
+    "dep_intent_368135474931_1791204480497": {
+      "id": "dep_intent_368135474931_1791204480497",
+      "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "userEmail": "mtasvir375@gmail.com",
+      "amount": 10,
+      "utr": "368135474931",
+      "status": "approved",
+      "type": "telegram_instant_qr",
+      "provider": "UPI Payment",
+      "verifiedAt": "2026-10-05T12:48:00.497Z",
+      "createdAt": "2026-10-05T12:48:00.497Z",
+      "updatedAt": "2026-10-05T12:48:00.497Z"
+    },
+    "dep_intent_182411381698_1791205684665": {
+      "id": "dep_intent_182411381698_1791205684665",
+      "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "userEmail": "mtasvir375@gmail.com",
+      "amount": 1,
+      "utr": "182411381698",
+      "status": "approved",
+      "type": "telegram_instant_qr",
+      "provider": "UPI Payment",
+      "verifiedAt": "2026-10-05T13:08:04.665Z",
+      "createdAt": "2026-10-05T13:08:04.665Z",
+      "updatedAt": "2026-10-05T13:08:04.665Z"
+    },
+    "dep_intent_413439508351_1791205735744": {
+      "id": "dep_intent_413439508351_1791205735744",
+      "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "userEmail": "mtasvir375@gmail.com",
+      "amount": 1.2,
+      "utr": "413439508351",
+      "status": "approved",
+      "type": "telegram_instant_qr",
+      "provider": "UPI Payment",
+      "verifiedAt": "2026-10-05T13:08:55.744Z",
+      "createdAt": "2026-10-05T13:08:55.744Z",
+      "updatedAt": "2026-10-05T13:08:55.744Z"
+    },
+    "dep_intent_501655742925_1791205917562": {
+      "id": "dep_intent_501655742925_1791205917562",
+      "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "userEmail": "mtasvir375@gmail.com",
+      "amount": 2.5,
+      "utr": "501655742925",
+      "status": "approved",
+      "type": "telegram_instant_qr",
+      "provider": "UPI Payment",
+      "verifiedAt": "2026-10-05T13:11:57.562Z",
+      "createdAt": "2026-10-05T13:11:57.562Z",
+      "updatedAt": "2026-10-05T13:11:57.562Z"
+    },
+    "dep_intent_669488366520_1791206060299": {
+      "id": "dep_intent_669488366520_1791206060299",
+      "userId": "evVy5BL2BQXHZT2v7xcmTM1zRJe2",
+      "userEmail": "tachunique621@gmail.com",
+      "amount": 5,
+      "utr": "669488366520",
+      "status": "approved",
+      "type": "telegram_instant_qr",
+      "provider": "UPI Payment",
+      "verifiedAt": "2026-10-05T13:14:20.299Z",
+      "createdAt": "2026-10-05T13:14:20.299Z",
+      "updatedAt": "2026-10-05T13:14:20.299Z"
+    },
+    "dep_intent_307069762203_1791206186869": {
+      "id": "dep_intent_307069762203_1791206186869",
+      "userId": "evVy5BL2BQXHZT2v7xcmTM1zRJe2",
+      "userEmail": "tachunique621@gmail.com",
+      "amount": 2,
+      "utr": "307069762203",
+      "status": "approved",
+      "type": "telegram_instant_qr",
+      "provider": "UPI Payment",
+      "verifiedAt": "2026-10-05T13:16:26.869Z",
+      "createdAt": "2026-10-05T13:16:26.869Z",
+      "updatedAt": "2026-10-05T13:16:26.869Z"
+    }
+  },
   "courses": {
     "test_course_verify_1": {
       "id": "test_course_verify_1",
@@ -922,11 +1014,150 @@
     "payment": {
       "id": "payment",
       "qrAutoEnabled": false,
-      "manualQrEnabled": true,
+      "manualQrEnabled": false,
       "instantQrEnabled": true,
-      "selectedTheme": "amber",
-      "updatedAt": "2026-10-03T21:00:00.000Z"
+      "selectedTheme": "violet",
+      "updatedAt": "2026-10-05T09:16:04.633Z",
+      "paymentQrUrl": "",
+      "upiId": "mdsaudalam621@okicici",
+      "merchantName": "Pyare SMM Panel",
+      "providerApiUrl": "https://www.smmbin.com/api/v2",
+      "providerApiKey": "f55bb2dfdc035f9c3c9e737bb72922a51d64309f",
+      "backendApiUrl": "",
+      "whatsappLink": "https://whatsapp.com/channel/0029Vb7zsyi6RGJFemxpzy0b",
+      "whatsappChatNumber": "7859002927",
+      "guideVideoUrl": "",
+      "selectedFestivalTheme": "none",
+      "razorpayEnabled": false,
+      "razorpayKeyId": "",
+      "razorpayKeySecret": "",
+      "phonepeEnabled": false,
+      "phonepeMerchantId": "",
+      "phonepeSaltKey": "",
+      "phonepeSaltIndex": "1",
+      "phonepeEnv": "sandbox",
+      "paytmEnabled": false,
+      "paytmMid": "",
+      "paytmMerchantKey": "",
+      "paytmEnv": "sandbox",
+      "customGateway1Enabled": false,
+      "customGateway1Name": "",
+      "customGateway1Key": "",
+      "customGateway1Secret": "",
+      "customGateway1Url": "",
+      "customGateway2Enabled": false,
+      "customGateway2Name": "",
+      "customGateway2Key": "",
+      "customGateway2Secret": "",
+      "customGateway2Url": "",
+      "qrAutoProvider": "smmqr",
+      "qrAutoApiKey": "",
+      "qrAutoToken": "",
+      "qrAutoUrl": "",
+      "smsForwarderEnabled": true,
+      "smsForwarderSecret": ""
+    },
+    "telegram_bot": {
+      "upiId": "mdsaudalam621@okicici",
+      "payeeName": "Pyare SMM Panel",
+      "chatId": "-10***",
+      "id": "telegram_bot",
+      "updatedAt": "2026-10-05T13:19:46.164Z"
     }
   },
-  "transactions": {}
+  "transactions": {},
+  "sms_forwarder_pool": {
+    "368135474925": {
+      "status": "claimed",
+      "claimedBy": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "claimedEmail": "mtasvir375@gmail.com",
+      "claimedAt": "2026-10-05T12:47:43.478Z",
+      "id": "368135474925",
+      "updatedAt": "2026-10-05T12:47:43.478Z"
+    },
+    "368135474931": {
+      "status": "claimed",
+      "claimedBy": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "claimedEmail": "mtasvir375@gmail.com",
+      "claimedAt": "2026-10-05T12:48:00.499Z",
+      "id": "368135474931",
+      "updatedAt": "2026-10-05T12:48:00.499Z"
+    },
+    "182411381698": {
+      "status": "claimed",
+      "claimedBy": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "claimedEmail": "mtasvir375@gmail.com",
+      "claimedAt": "2026-10-05T13:08:04.668Z",
+      "id": "182411381698",
+      "updatedAt": "2026-10-05T13:08:04.669Z"
+    },
+    "413439508351": {
+      "status": "claimed",
+      "claimedBy": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "claimedEmail": "mtasvir375@gmail.com",
+      "claimedAt": "2026-10-05T13:08:55.746Z",
+      "id": "413439508351",
+      "updatedAt": "2026-10-05T13:08:55.746Z"
+    },
+    "501655742925": {
+      "status": "claimed",
+      "claimedBy": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "claimedEmail": "mtasvir375@gmail.com",
+      "claimedAt": "2026-10-05T13:11:57.565Z",
+      "id": "501655742925",
+      "updatedAt": "2026-10-05T13:11:57.565Z"
+    },
+    "669488366520": {
+      "status": "claimed",
+      "claimedBy": "evVy5BL2BQXHZT2v7xcmTM1zRJe2",
+      "claimedEmail": "tachunique621@gmail.com",
+      "claimedAt": "2026-10-05T13:14:20.301Z",
+      "id": "669488366520",
+      "updatedAt": "2026-10-05T13:14:20.301Z"
+    },
+    "307069762203": {
+      "status": "claimed",
+      "claimedBy": "evVy5BL2BQXHZT2v7xcmTM1zRJe2",
+      "claimedEmail": "tachunique621@gmail.com",
+      "claimedAt": "2026-10-05T13:16:26.871Z",
+      "id": "307069762203",
+      "updatedAt": "2026-10-05T13:16:26.871Z"
+    }
+  },
+  "payment_intents": {
+    "pi_1791206385732_rpol1": {
+      "intentId": "pi_1791206385732_rpol1",
+      "orderRef": "860807645238",
+      "baseAmount": 5,
+      "amount": 5,
+      "userId": "test_user_123",
+      "userEmail": "test@gmail.com",
+      "upiId": "mdsaudalam621@okicici",
+      "payeeName": "Pyare SMM Panel",
+      "upiLink": "upi://pay?pa=mdsaudalam621%40okicici&pn=Pyare%20SMM%20Panel&am=5.00&tr=860807645238&tn=860807645238&cu=INR",
+      "status": "pending",
+      "createdAt": 1791206385732,
+      "expiresAt": 1791208185732,
+      "notified": false,
+      "id": "pi_1791206385732_rpol1",
+      "updatedAt": "2026-10-05T13:19:45.732Z"
+    },
+    "860807645238": {
+      "intentId": "pi_1791206385732_rpol1",
+      "orderRef": "860807645238",
+      "baseAmount": 5,
+      "amount": 5,
+      "userId": "test_user_123",
+      "userEmail": "test@gmail.com",
+      "upiId": "mdsaudalam621@okicici",
+      "payeeName": "Pyare SMM Panel",
+      "upiLink": "upi://pay?pa=mdsaudalam621%40okicici&pn=Pyare%20SMM%20Panel&am=5.00&tr=860807645238&tn=860807645238&cu=INR",
+      "status": "pending",
+      "createdAt": 1791206385732,
+      "expiresAt": 1791208185732,
+      "notified": false,
+      "id": "860807645238",
+      "updatedAt": "2026-10-05T13:19:45.733Z"
+    }
+  }
 }

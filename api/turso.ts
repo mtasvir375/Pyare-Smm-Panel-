@@ -1,4 +1,4 @@
-import { createClient, Client } from "@libsql/client/web";
+import { createClient, Client } from "@libsql/client";
 
 export const DEFAULT_TURSO_URL = "libsql://pyare-smm-panel-pyaresmmpanel.aws-ap-south-1.turso.io";
 export const DEFAULT_TURSO_TOKEN = "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTEwNjQ0NzgsImlkIjoiMDFhMTAzYzEtNzYwMS03NDk5LTljYWMtYzdkMDExOWU5M2ZkIiwia2lkIjoiYVFCV3BPanpQSVA2czQzcGlrZ29pbkJtVlNodDZOTmh0YndUejBpaDRGOCIsInJpZCI6IjM0MTg2ZDIxLTgwYTUtNDU1YS1hOWQ3LWJhNGQzZTJlNTIzYSJ9.MXelOKfVsMZZoYfKiflhegiqqXQD5-0HN_faUU4z7WtQdjiQQTWXpU-i8jF1DiQrRpFUUV5wol-7dikl8pW5Dw";
@@ -33,11 +33,11 @@ export function initTursoClient(url?: string, authToken?: string): Client | null
   }
 }
 
-export function getTursoClient(): Client {
+export function getTursoClient(): Client | null {
   if (!tursoClient) {
     initTursoClient();
   }
-  return tursoClient!;
+  return tursoClient;
 }
 
 export async function initTursoSchema(client?: Client): Promise<boolean> {

@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
+import { doc, setDoc, onSnapshot } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 import {
   Zap,
   CheckCircle2,
@@ -157,6 +159,8 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
     const initIntent = async () => {
       setLoading(true);
       setError(null);
+      let intentObj: PaymentIntentResponse | null = null;
+
       try {
         const res = await axios.post("/api/payments/create-intent", {
           amount,
@@ -165,11 +169,7 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
         }, { timeout: 8000 });
 
         if (res.data?.success && isMounted) {
-          setIntent(res.data);
-          const rem = Math.max(0, Math.floor((res.data.expiresAt - Date.now()) / 1000));
-          setSecondsRemaining(rem > 0 ? rem : 1800);
-          setLoading(false);
-          return;
+          intentObj = res.data;
         }
       } catch (err: any) {
         console.warn("[PAYMENT-INTENT-INIT]", err.message);
@@ -177,7 +177,7 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
 
       // Seamless fallback: If backend intent endpoint is cold-starting or offline,
       // generate zero-collision QR directly using cached/default settings so customer is NEVER blocked!
-      if (isMounted) {
+      if (!intentObj && isMounted) {
         try {
           const { getCachedSettings } = await import("@/lib/cache");
           const settings = await getCachedSettings();
@@ -188,7 +188,8 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
           const orderRef = `${part1}${part2}`;
           const now = Date.now();
           const upiLink = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(payeeName)}&am=${amount.toFixed(2)}&tr=${orderRef}&tn=${orderRef}&cu=INR`;
-          setIntent({
+          
+          intentObj = {
             intentId: `pi_${now}_${Math.random().toString(36).substring(2, 7)}`,
             orderRef,
             baseAmount: amount,
@@ -197,13 +198,48 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
             payeeName,
             upiLink,
             expiresAt: now + 30 * 60 * 1000
-          });
-          setSecondsRemaining(1800);
+          };
         } catch (fbErr: any) {
           setError("Failed to initialize payment QR. Please try again.");
-        } finally {
           setLoading(false);
+          return;
         }
+      }
+
+      if (intentObj && isMounted) {
+        setIntent(intentObj);
+        const rem = Math.max(0, Math.floor((intentObj.expiresAt - Date.now()) / 1000));
+        setSecondsRemaining(rem > 0 ? rem : 1800);
+        setLoading(false);
+
+        // Always ensure intent is persisted directly into Firestore so backend bot can match it from ANY domain!
+        const firestoreData = {
+          ...intentObj,
+          userId: String(userId),
+          userEmail: userEmail ? String(userEmail) : "",
+          status: "pending",
+          createdAt: Date.now()
+        };
+
+        try {
+          setDoc(doc(db, "payment_intents", intentObj.intentId), firestoreData, { merge: true }).catch(() => {});
+          setDoc(doc(db, "payment_intents", intentObj.orderRef), firestoreData, { merge: true }).catch(() => {});
+        } catch (fErr) {}
+
+        // Send Telegram Bot Notification
+        try {
+          const tBotToken = "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0";
+          const tChatId = "-1004483507103";
+          axios.post(`https://api.telegram.org/bot${tBotToken}/sendMessage`, {
+            chat_id: tChatId,
+            text: `📱 <b>[New Deposit QR Generated]</b>\n` +
+                  `👤 <b>User:</b> ${userEmail || userId}\n` +
+                  `💰 <b>Amount:</b> ₹${intentObj.amount.toFixed(2)}\n` +
+                  `🔢 <b>Unique 12-Digit Code:</b> <code>${intentObj.orderRef}</code>\n` +
+                  `⏳ <b>Status:</b> Waiting for user payment... (30m validity)`,
+            parse_mode: "HTML"
+          }).catch(() => {});
+        } catch (tgErr) {}
       }
     };
 
@@ -216,7 +252,40 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
     };
   }, [amount, userId, userEmail]);
 
-  // 2. Countdown Timer
+  // 2. Real-time Firestore Listener on payment intent (Instant 50ms verification without polling delay!)
+  useEffect(() => {
+    if (!intent || isSuccess) return;
+
+    const handleCompletedIntent = (data: any) => {
+      if (data && data.status === "completed" && !isSuccess) {
+        const finalAmt = data.creditedAmount || data.amount || intent.amount;
+        const finalUtr = data.utr || intent.orderRef;
+        setIsSuccess(true);
+        setCompletedData({
+          amount: finalAmt,
+          utr: finalUtr,
+          newBalance: data.newBalance
+        });
+        persistApprovedDepositLocally(finalAmt, finalUtr, intent.orderRef);
+        toast.success(`🎉 Payment Verified! ₹${finalAmt} credited to your wallet!`);
+      }
+    };
+
+    const unsubIntent1 = onSnapshot(doc(db, "payment_intents", intent.intentId), (snap) => {
+      if (snap.exists()) handleCompletedIntent(snap.data());
+    }, () => {});
+
+    const unsubIntent2 = onSnapshot(doc(db, "payment_intents", intent.orderRef), (snap) => {
+      if (snap.exists()) handleCompletedIntent(snap.data());
+    }, () => {});
+
+    return () => {
+      unsubIntent1();
+      unsubIntent2();
+    };
+  }, [intent, isSuccess]);
+
+  // 3. Countdown Timer
   useEffect(() => {
     if (!intent || isSuccess) return;
 
@@ -267,7 +336,7 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
     }
   };
 
-  // 3. Gentle Polling Loop to check verification status without asking UTR (15s interval, strictly pauses if tab hidden)
+  // 4. Gentle Polling Loop (backup for browsers with strict websockets)
   useEffect(() => {
     if (!intent || isSuccess) return;
 
