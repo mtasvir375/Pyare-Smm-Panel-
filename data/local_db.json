@@ -604,6 +604,71 @@
       "verifiedAt": "2026-10-05T13:16:26.869Z",
       "createdAt": "2026-10-05T13:16:26.869Z",
       "updatedAt": "2026-10-05T13:16:26.869Z"
+    },
+    "dep_intent_264302992173_1791207055677": {
+      "id": "dep_intent_264302992173_1791207055677",
+      "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "userEmail": "mtasvir375@gmail.com",
+      "amount": 1.31,
+      "utr": "264302992173",
+      "status": "approved",
+      "type": "telegram_instant_qr",
+      "provider": "UPI Payment",
+      "verifiedAt": "2026-10-05T13:30:55.677Z",
+      "createdAt": "2026-10-05T13:30:55.678Z",
+      "updatedAt": "2026-10-05T13:30:55.678Z"
+    },
+    "dep_intent_242576950549_1791207158451": {
+      "id": "dep_intent_242576950549_1791207158451",
+      "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "userEmail": "mtasvir375@gmail.com",
+      "amount": 10,
+      "utr": "242576950549",
+      "status": "approved",
+      "type": "telegram_instant_qr",
+      "provider": "UPI Payment",
+      "verifiedAt": "2026-10-05T13:32:38.451Z",
+      "createdAt": "2026-10-05T13:32:38.451Z",
+      "updatedAt": "2026-10-05T13:32:38.451Z"
+    },
+    "dep_auto_998877665544_1791211673787": {
+      "id": "dep_auto_998877665544_1791211673787",
+      "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "userEmail": "mtasvir375@gmail.com",
+      "amount": 100,
+      "utr": "998877665544",
+      "status": "approved",
+      "type": "auto_gateway_verify",
+      "provider": "UPI Payment",
+      "verifiedAt": "2026-10-05T14:47:53.787Z",
+      "createdAt": "2026-10-05T14:47:53.787Z",
+      "updatedAt": "2026-10-05T14:47:53.787Z"
+    },
+    "dep_auto_112233445566_1791211713731": {
+      "id": "dep_auto_112233445566_1791211713731",
+      "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "userEmail": "mtasvir375@gmail.com",
+      "amount": 150,
+      "utr": "112233445566",
+      "status": "approved",
+      "type": "auto_gateway_verify",
+      "provider": "sms_forwarder",
+      "verifiedAt": "2026-10-05T14:48:33.731Z",
+      "createdAt": "2026-10-05T14:48:33.731Z",
+      "updatedAt": "2026-10-05T14:48:33.731Z"
+    },
+    "dep_auto_556677889900_1791211811055": {
+      "id": "dep_auto_556677889900_1791211811055",
+      "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "userEmail": "mtasvir375@gmail.com",
+      "amount": 200,
+      "utr": "556677889900",
+      "status": "approved",
+      "type": "auto_gateway_verify",
+      "provider": "sms_forwarder",
+      "verifiedAt": "2026-10-05T14:50:11.055Z",
+      "createdAt": "2026-10-05T14:50:11.055Z",
+      "updatedAt": "2026-10-05T14:50:11.056Z"
     }
   },
   "courses": {
@@ -1065,7 +1130,47 @@
       "updatedAt": "2026-10-05T13:19:46.164Z"
     }
   },
-  "transactions": {},
+  "transactions": {
+    "txn_1791211673789_9m06o": {
+      "id": "txn_1791211673789_9m06o",
+      "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "amount": 100,
+      "type": "deposit",
+      "method": "UPI Payment",
+      "status": "success",
+      "utr": "998877665544",
+      "timestamp": "2026-10-05T14:47:53.789Z",
+      "description": "Auto Verified Deposit (UTR: 998877665544)",
+      "createdAt": "2026-10-05T14:47:53.789Z",
+      "updatedAt": "2026-10-05T14:47:53.789Z"
+    },
+    "txn_1791211713733_46k6s": {
+      "id": "txn_1791211713733_46k6s",
+      "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "amount": 150,
+      "type": "deposit",
+      "method": "sms_forwarder",
+      "status": "success",
+      "utr": "112233445566",
+      "timestamp": "2026-10-05T14:48:33.733Z",
+      "description": "Auto Verified Deposit (UTR: 112233445566)",
+      "createdAt": "2026-10-05T14:48:33.733Z",
+      "updatedAt": "2026-10-05T14:48:33.733Z"
+    },
+    "txn_1791211811437_4zs4a": {
+      "id": "txn_1791211811437_4zs4a",
+      "userId": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "amount": 200,
+      "type": "deposit",
+      "method": "sms_forwarder",
+      "status": "success",
+      "utr": "556677889900",
+      "timestamp": "2026-10-05T14:50:11.437Z",
+      "description": "Auto Verified Deposit (UTR: 556677889900)",
+      "createdAt": "2026-10-05T14:50:11.437Z",
+      "updatedAt": "2026-10-05T14:50:11.437Z"
+    }
+  },
   "sms_forwarder_pool": {
     "368135474925": {
       "status": "claimed",
@@ -1122,6 +1227,48 @@
       "claimedAt": "2026-10-05T13:16:26.871Z",
       "id": "307069762203",
       "updatedAt": "2026-10-05T13:16:26.871Z"
+    },
+    "264302992173": {
+      "status": "claimed",
+      "claimedBy": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "claimedEmail": "mtasvir375@gmail.com",
+      "claimedAt": "2026-10-05T13:30:55.681Z",
+      "id": "264302992173",
+      "updatedAt": "2026-10-05T13:30:55.681Z"
+    },
+    "242576950549": {
+      "status": "claimed",
+      "claimedBy": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "claimedEmail": "mtasvir375@gmail.com",
+      "claimedAt": "2026-10-05T13:32:38.453Z",
+      "id": "242576950549",
+      "updatedAt": "2026-10-05T13:32:38.453Z"
+    },
+    "112233445566": {
+      "timestamp": "2026-10-05T14:48:31.100Z",
+      "status": "claimed",
+      "amount": 150,
+      "utr": "112233445566",
+      "sender": "UPI Payment",
+      "rawSms": "Received ₹150 from Test User UTR:112233445566",
+      "id": "112233445566",
+      "updatedAt": "2026-10-05T14:48:33.571Z",
+      "claimedBy": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "claimedEmail": "mtasvir375@gmail.com",
+      "claimedAt": "2026-10-05T14:48:33.570Z"
+    },
+    "556677889900": {
+      "rawSms": "Received ₹200 from Test User UTR:556677889900",
+      "utr": "556677889900",
+      "status": "claimed",
+      "amount": 200,
+      "timestamp": "2026-10-05T14:50:08.430Z",
+      "sender": "UPI Payment",
+      "id": "556677889900",
+      "updatedAt": "2026-10-05T14:50:10.488Z",
+      "claimedBy": "c4w6bjFk9leTy9SR2ijM0YyJVfx1",
+      "claimedEmail": "mtasvir375@gmail.com",
+      "claimedAt": "2026-10-05T14:50:10.487Z"
     }
   },
   "payment_intents": {
@@ -1159,5 +1306,6 @@
       "id": "860807645238",
       "updatedAt": "2026-10-05T13:19:45.733Z"
     }
-  }
+  },
+  "pending_user_utrs": {}
 }

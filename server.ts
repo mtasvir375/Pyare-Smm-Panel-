@@ -1036,6 +1036,11 @@ export async function startServer() {
       } catch (e) {}
     }
 
+    // Persist to Turso database (smm_users and smm_documents)
+    try {
+      await setTursoDoc("users", user_id, updatedData);
+    } catch (e) {}
+
     return { success: true, newBalance };
   };
 
@@ -5307,6 +5312,9 @@ export async function startServer() {
     };
 
     await addDocSafe("deposits", depositData);
+    try {
+      await setTursoDoc("deposits", depositId, depositData);
+    } catch (e) {}
     serverCache.deposits.set(depositId, { data: depositData, time: Date.now() });
     savePersistentCache();
 
