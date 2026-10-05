@@ -402,46 +402,57 @@ export default function Courses() {
       console.log(`[ORDER] Submitting order to backend API: ${targetApiUrl}`);
 
       try {
-        const res = await axios.post(targetApiUrl, orderPayload, { headers, timeout: 35000 });
-        resData = res.data;
+        let res: any = null;
+        try {
+          res = await axios.post(targetApiUrl, orderPayload, { headers, timeout: 35000 });
+        } catch (initialErr: any) {
+          // If initial request failed with server error or redirect, attempt retry with absolute URL
+          console.warn("[ORDER] Primary post attempt failed, retrying with fallback...", initialErr?.message);
+          let retryUrl = targetApiUrl;
+          if (typeof window !== "undefined") {
+            const origin = window.location.origin;
+            if (!retryUrl.startsWith("http")) {
+              retryUrl = `${origin}${retryUrl.startsWith("/") ? retryUrl : `/${retryUrl}`}`;
+            }
+          }
+          res = await axios.post(retryUrl, orderPayload, { headers, timeout: 35000 });
+        }
+        resData = res?.data;
       } catch (apiErr: any) {
-        // If primary backend or provider gave a specific rejection (e.g. current link already in work, insufficient balance), show it directly
         const primaryData = apiErr.response?.data;
-        if (primaryData && (primaryData.error || primaryData.message) && typeof primaryData !== "string") {
-          const cleanErrStr = typeof primaryData.error === "string" ? primaryData.error : (primaryData.message || JSON.stringify(primaryData.error));
+        const status = apiErr.response?.status;
+        let cleanErrStr = "Failed to place order with provider. Please try again or check your link.";
+
+        // If the backend returned a specific 400 validation error (e.g. invalid link or user balance)
+        if (status === 400 && primaryData) {
+          const rawErr = primaryData.error || primaryData.message;
+          if (rawErr && typeof rawErr !== "string") {
+            cleanErrStr = typeof rawErr === "object" ? (rawErr.message || JSON.stringify(rawErr)) : String(rawErr);
+          } else if (typeof rawErr === "string") {
+            cleanErrStr = rawErr;
+          }
           if (primaryData.currentBalance !== undefined && updateUserProfileLocal) {
             updateUserProfileLocal({ balance: primaryData.currentBalance });
           }
           throw new Error(cleanErrStr);
         }
 
-        console.warn("[ORDER] Primary API call failed, attempting fallback backend...", apiErr.message);
+        console.warn("[ORDER] API call encountered error:", apiErr.message, primaryData);
         
-        // Fallback to alternate Cloud Run endpoint if custom domain or first endpoint failed
-        const altBackendUrl = targetApiUrl.includes("ais-pre")
-          ? "https://ais-dev-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app/api/proxy-provider"
-          : "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app/api/proxy-provider";
-
-        try {
-          const resFallback = await axios.post(altBackendUrl, orderPayload, { headers, timeout: 35000 });
-          resData = resFallback.data;
-        } catch (fallbackErr: any) {
-          console.error("[ORDER] API proxy call failed:", apiErr.message, apiErr.response?.data);
-          const respData = apiErr.response?.data || fallbackErr.response?.data;
-          if (respData && typeof respData.currentBalance === "number" && updateUserProfileLocal) {
-            updateUserProfileLocal({ balance: respData.currentBalance });
-          }
-          let cleanErrStr = "Failed to place order. Please check your link or try again.";
-          if (respData) {
-            if (typeof respData.error === "string") cleanErrStr = respData.error;
-            else if (typeof respData.message === "string") cleanErrStr = respData.message;
-            else if (typeof respData === "string") cleanErrStr = respData;
-            else if (respData.error && typeof respData.error === "object") cleanErrStr = respData.error.message || JSON.stringify(respData.error);
-          } else if (apiErr.message) {
-            cleanErrStr = apiErr.message;
-          }
-          throw new Error(cleanErrStr);
+        if (primaryData) {
+          if (typeof primaryData.error === "string") cleanErrStr = primaryData.error;
+          else if (typeof primaryData.message === "string" && !primaryData.message.includes("A server error has occurred")) cleanErrStr = primaryData.message;
+          else if (typeof primaryData === "string" && !primaryData.includes("A server error has occurred")) cleanErrStr = primaryData;
+          else if (primaryData.error && typeof primaryData.error === "object") cleanErrStr = primaryData.error.message || JSON.stringify(primaryData.error);
+        } else if (apiErr.message) {
+          cleanErrStr = apiErr.message;
         }
+
+        if (primaryData?.currentBalance !== undefined && updateUserProfileLocal) {
+          updateUserProfileLocal({ balance: primaryData.currentBalance });
+        }
+
+        throw new Error(cleanErrStr);
       }
 
       if (!resData || resData.success !== true || !resData.providerOrderId || String(resData.providerOrderId).trim() === "PENDING" || String(resData.providerOrderId).trim() === "" || String(resData.providerOrderId).trim() === "PENDING_DISPATCH") {
@@ -573,20 +584,22 @@ export default function Courses() {
         transmissionError = String(rawError);
       }
       if (transmissionError.includes("[object Object]")) {
-        transmissionError = "Failed to connect to provider. Please check provider settings or link format.";
+        transmissionError = "Failed to place order. Please check your link format or try another service.";
       }
       
       const lowerErr = transmissionError.toLowerCase();
       if (lowerErr.includes("current link already in work") || lowerErr.includes("link already in work") || lowerErr.includes("link is already in work") || lowerErr.includes("link is already in progress")) {
-        transmissionError = "Current link already in work";
-      } else if (lowerErr.includes("provider panel has low balance") || lowerErr.includes("provider low balance")) {
-        transmissionError = "Provider panel has low balance. Please contact support.";
+        transmissionError = "Current link already in work! Please wait for the previous order on this link to finish, or use a different post link.";
+      } else if (lowerErr.includes("provider panel has low balance") || lowerErr.includes("provider low balance") || lowerErr.includes("not enough balance on your account")) {
+        transmissionError = "Provider panel has low balance. Please contact admin to recharge SMM panel.";
+      } else if (lowerErr.includes("insufficient balance")) {
+        transmissionError = "Insufficient balance! Please add funds to your wallet.";
       }
 
       console.warn("Order transmission rejected/failed:", transmissionError);
 
       // Toast exact message to user without any confusing prefix
-      toast.error(transmissionError);
+      toast.error(transmissionError, { duration: 6000 });
     }
 
     setSubmitting(false);

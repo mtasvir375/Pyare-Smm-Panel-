@@ -109,6 +109,14 @@ export const dbClient = {
 
     const merged = { ...data, id };
 
+    // 0. Direct write to Turso Cloud Database (Guarantees Turso update on ANY domain including custom domain)
+    try {
+      const { clientTursoSetDoc } = await import('./tursoClient');
+      clientTursoSetDoc(table, id, merged).catch(tErr => {
+        console.warn(`[TURSO-DIRECT-SET-WARN] ${table}/${id}:`, tErr);
+      });
+    } catch (e) {}
+
     // 1. Send to API Gateway (awaited with retry)
     try {
       await axios.post(formatApiUrl('/api/db/set'), { collection: table, id, data: merged }, { timeout: 8000 });
@@ -144,7 +152,7 @@ export const dbClient = {
     const autoId = data?.id || (prefix + Date.now() + "_" + Math.random().toString(36).substring(2, 7));
     const merged = { ...data, id: autoId };
 
-    // Write to API & Firestore
+    // Write to Turso, API & Firestore
     await this.setDoc(table, autoId, merged);
     return merged;
   },
@@ -157,6 +165,12 @@ export const dbClient = {
     if (table === 'courses' || table === 'settings' || table === 'providers') {
       axios.post(formatApiUrl('/api/clear-cache')).catch(() => {});
     }
+    // Direct delete from Turso Cloud Database
+    try {
+      const { clientTursoDeleteDoc } = await import('./tursoClient');
+      clientTursoDeleteDoc(table, id).catch(() => {});
+    } catch (e) {}
+
     axios.post(formatApiUrl('/api/db/delete'), { collection: table, id }).catch(() => {});
     try {
       const docRef = doc(db, table, id);

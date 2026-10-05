@@ -695,7 +695,16 @@ export default function Admin() {
         providerApiKey: pKey
       };
 
-      const response = await axios.post(formatApiUrl('/api/test-provider'), payload, { timeout: 15000 });
+      let response: any = null;
+      try {
+        response = await axios.post(formatApiUrl('/api/test-provider'), payload, { timeout: 15000 });
+      } catch (firstErr: any) {
+        let retryUrl = formatApiUrl('/api/test-provider');
+        if (typeof window !== "undefined" && !retryUrl.startsWith("http")) {
+          retryUrl = `${window.location.origin}${retryUrl.startsWith("/") ? retryUrl : `/${retryUrl}`}`;
+        }
+        response = await axios.post(retryUrl, payload, { timeout: 15000 });
+      }
       const resData = response?.data;
 
       if (resData?.success) {
@@ -709,11 +718,12 @@ export default function Admin() {
       const errData = error.response?.data;
       let errorMessage = "Connection failed";
       if (errData) {
-        if (typeof errData === "string") errorMessage = errData;
+        if (typeof errData === "string" && !errData.includes("A server error has occurred")) errorMessage = errData;
         else if (typeof errData.error === "string") errorMessage = errData.error;
-        else if (typeof errData.message === "string") errorMessage = errData.message;
+        else if (typeof errData.message === "string" && !errData.message.includes("A server error has occurred")) errorMessage = errData.message;
         else if (errData.error && typeof errData.error === "object") errorMessage = errData.error.message || JSON.stringify(errData.error);
-        else if (typeof errData === "object") errorMessage = JSON.stringify(errData);
+        else if (typeof errData === "object" && !errData.message) errorMessage = JSON.stringify(errData);
+        else errorMessage = "Provider server temporarily unavailable. Please retry.";
       } else if (error.message) {
         errorMessage = error.message;
       }

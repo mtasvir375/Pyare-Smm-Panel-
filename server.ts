@@ -5976,23 +5976,21 @@ export async function startServer() {
   const processingOrders = new Set<string>();
 
   // CONCURRENCY LOCK PER USER TO PREVENT DOUBLE-SPEND ATTACKS ACROSS MULTIPLE DEVICES (E.G. WEBSITE + MOBILE APP)
-  const userOrderMutex = new Map<string, Promise<any>>();
+  const activeUserOrders = new Set<string>();
   async function withUserOrderLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
     if (!userId) return await fn();
-    const currentLock = userOrderMutex.get(userId) || Promise.resolve();
-    let release: () => void;
-    const nextLock = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    userOrderMutex.set(userId, currentLock.then(() => nextLock));
+    if (activeUserOrders.has(userId)) {
+      let waited = 0;
+      while (activeUserOrders.has(userId) && waited < 4000) {
+        await new Promise(r => setTimeout(r, 200));
+        waited += 200;
+      }
+    }
+    activeUserOrders.add(userId);
     try {
-      await currentLock;
       return await fn();
     } finally {
-      release!();
-      if (userOrderMutex.get(userId) === nextLock) {
-        userOrderMutex.delete(userId);
-      }
+      activeUserOrders.delete(userId);
     }
   }
 
@@ -6329,6 +6327,27 @@ export async function startServer() {
           } catch (pErr) {}
         }
 
+        if (!pData) {
+          try {
+            const client = getTursoClient();
+            if (client) {
+              const pRes = await client.execute({
+                sql: `SELECT * FROM smm_providers WHERE id = ? LIMIT 1;`,
+                args: [c.providerId]
+              });
+              if (pRes.rows.length > 0) {
+                const r: any = pRes.rows[0];
+                pData = {
+                  id: r.id,
+                  name: r.name,
+                  apiUrl: r.api_url || r.apiUrl,
+                  apiKey: r.api_key || r.apiKey
+                };
+              }
+            }
+          } catch (tErr) {}
+        }
+
         if (pData) {
           providerName = pData.name || c.providerId;
           const resolvedUrl = (pData.api_url || pData.apiUrl || pData.providerApiUrl || pData.url || "").trim();
@@ -6356,10 +6375,10 @@ export async function startServer() {
           pUrl = "https://themainsmmprovider.com/api/v2";
           pKey = "a10c05a0cacf6ed5c83b55e374e690495b727586";
           providerName = "The main smm provider ♥️♥️";
-        } else if (checkStr.includes("smm bin") || checkStr.includes("smmbin") || c.providerId === "z9lfdj7ByNCeGNO6WbGZ" || c.providerId === "GbtZDOMSvSrBPgeRy6aU") {
-          pUrl = "https://smmbin.com/api/v2";
+        } else if (checkStr.includes("smm bin") || checkStr.includes("smmbin") || c.providerId === "z9lfdj7ByNCeGNO6WbGZ" || c.providerId === "GbtZDOMSvSrBPgeRy6aU" || c.providerId === "doc_1791067476261_cjt5c") {
+          pUrl = "https://www.smmbin.com/api/v2";
           pKey = "f55bb2dfdc035f9c3c9e737bb72922a51d64309f";
-          providerName = "Smm bin";
+          providerName = "Smm bin (Primary)";
         } else if (checkStr.includes("mainsmmpanel") || checkStr.includes("main smm panel") || c.providerId === "1RmzJhc5ZeyOCU23uZMy") {
           pUrl = "https://mainsmmpanel.in/api/v2";
           pKey = "5a2749e1fdafdf50cd81f2137f9b5806";
@@ -6577,22 +6596,39 @@ export async function startServer() {
         quantity: quantity
       });
 
-      const fallbackProviders = [
-        { url: pUrl, key: pKey, name: providerName },
-        { url: "https://smmbin.com/api/v2", key: "f55bb2dfdc035f9c3c9e737bb72922a51d64309f", name: "Smm bin" },
-        { url: "https://wholesalesmmstore.com/api/v2", key: "e88f2599c82bf15a44b759e61f63673ceae954b8", name: "Wholesale Smm Store" },
-        { url: "https://themainsmmprovider.com/api/v2", key: "a10c05a0cacf6ed5c83b55e374e690495b727586", name: "The main smm provider" }
-      ];
+      // Configure providers to attempt. Primary provider first.
+      const candidateProviders: Array<{ url: string; key: string; name: string }> = [];
+
+      // 1. Primary provider
+      if (pUrl && pKey) {
+        candidateProviders.push({ url: pUrl, key: pKey, name: providerName });
+        // If smmbin, also try canonical domain
+        if (pUrl.includes("smmbin.com")) {
+          const altUrl = pUrl.includes("www.") ? pUrl.replace("www.", "") : pUrl.replace("://", "://www.");
+          candidateProviders.push({ url: altUrl, key: pKey, name: "Smm bin (Alt)" });
+        }
+      }
+
+      // 2. Default active SMM Bin if primary was missing or different
+      if (!pUrl.includes("smmbin.com")) {
+        candidateProviders.push({
+          url: "https://www.smmbin.com/api/v2",
+          key: "f55bb2dfdc035f9c3c9e737bb72922a51d64309f",
+          name: "Smm bin (Primary)"
+        });
+      }
 
       // Deduplicate by URL
-      const uniqueProviders = Array.from(new Map(fallbackProviders.map(p => [p.url, p])).values());
+      const uniqueProviders = Array.from(new Map(candidateProviders.map(p => [p.url, p])).values());
 
       let finalResData: any = null;
       let finalProviderName = providerName;
       let successfulProviderUrl = "";
+      let primaryProviderError = "";
 
-      for (const prov of uniqueProviders) {
-        console.log(`[TRANSMIT-FAILOVER] Trying provider "${prov.name}" (${prov.url}) for order ${orderId}`);
+      for (let pIdx = 0; pIdx < uniqueProviders.length; pIdx++) {
+        const prov = uniqueProviders[pIdx];
+        console.log(`[TRANSMIT] Trying provider "${prov.name}" (${prov.url}) for order ${orderId} (Service: ${resolvedProviderServiceId})`);
         const params = new URLSearchParams();
         params.append("key", prov.key);
         params.append("action", "add");
@@ -6640,15 +6676,26 @@ export async function startServer() {
               provSuccess = true;
               finalProviderName = prov.name;
               successfulProviderUrl = prov.url;
-              console.log(`[TRANSMIT-FAILOVER] Success with provider "${prov.name}"! Order ID: ${oId}`);
+              console.log(`[TRANSMIT-SUCCESS] Provider "${prov.name}" accepted order! Provider Order ID: ${oId}`);
               break;
             } else {
               const errTxt = resD?.error || resD?.message || JSON.stringify(resD);
-              console.warn(`[TRANSMIT-FAILOVER] Provider "${prov.name}" returned error: ${errTxt}`);
-              break; // Try next failover provider
+              console.warn(`[TRANSMIT-REJECT] Provider "${prov.name}" returned error: ${errTxt}`);
+              if (!primaryProviderError) {
+                primaryProviderError = errTxt;
+              }
+              // If the provider gave a definitive validation error for this link or balance:
+              const lower = String(errTxt || "").toLowerCase();
+              if (lower.includes("already in work") || lower.includes("already in progress") || lower.includes("not enough balance") || lower.includes("link") || lower.includes("quantity") || lower.includes("min") || lower.includes("max")) {
+                // The issue is with this link or provider balance; do not spam other providers
+                break;
+              }
             }
           } catch (axiosErr: any) {
-            console.warn(`[TRANSMIT-FAILOVER] Provider "${prov.name}" attempt ${attempts} failed: ${axiosErr.message}`);
+            console.warn(`[TRANSMIT-FAIL] Provider "${prov.name}" attempt ${attempts} network error: ${axiosErr.message}`);
+            if (!primaryProviderError) {
+              primaryProviderError = axiosErr.response?.data?.error || axiosErr.response?.data?.message || axiosErr.message;
+            }
           }
         }
 
@@ -6656,24 +6703,37 @@ export async function startServer() {
           finalResData = provData;
           break;
         }
+
+        // If the error was a link-in-work or insufficient balance error on primary, stop failover
+        const lowerFirst = String(primaryProviderError || "").toLowerCase();
+        if (lowerFirst.includes("already in work") || lowerFirst.includes("already in progress") || lowerFirst.includes("not enough balance")) {
+          break;
+        }
       }
 
       if (!finalResData) {
-        // All failover providers failed
-        const failReason = "SMM Provider panel returned server error (500) or rejected the order across all backup providers. Please check Service ID and link format in Admin.";
-        console.error(`[TRANSMIT] All providers failed for order ${orderId}`);
+        let cleanReason = primaryProviderError || "Provider did not accept the order.";
+        const lowerReason = cleanReason.toLowerCase();
+        if (lowerReason.includes("current link already in work") || lowerReason.includes("already in work") || lowerReason.includes("already in progress")) {
+          cleanReason = "Current link already in work! Please wait for the previous order on this link to finish, or use a different post link.";
+        } else if (lowerReason.includes("not enough balance") || lowerReason.includes("low balance")) {
+          cleanReason = "Provider panel has low balance. Please notify admin to recharge.";
+        } else if (lowerReason.includes("incorrect api key") || lowerReason.includes("user disabled")) {
+          cleanReason = "Provider API key configuration error. Please update provider settings in Admin.";
+        }
+        console.error(`[TRANSMIT] Order ${orderId} rejected: ${cleanReason}`);
         
         if (!skipStoreCompleted) {
           await updateDocSafe("orders", orderId, {
             status: "Failed",
             needsProviderTransmission: false,
             providerTransmissionStatus: "failed",
-            error: failReason,
+            error: cleanReason,
             updatedAt: new Date().toISOString()
           });
         }
         await refundIfDeducted(userId, orderId, orderAmount);
-        return { success: false, error: failReason, statusCode: 400 };
+        return { success: false, error: cleanReason, statusCode: 400 };
       }
 
       let resData = finalResData;

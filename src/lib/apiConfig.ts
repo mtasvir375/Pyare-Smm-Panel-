@@ -15,8 +15,22 @@ export const getApiBaseUrl = (): string => {
     }
   } catch (e) {}
 
-  // 2. Default to same origin / relative path for all domains (works seamlessly on Vercel, Node, Cloud Run, custom domains)
-  return "";
+  // 2. If running on default Google Studio host or local development, use same origin
+  const hostname = window.location.hostname || "";
+  const isDefaultHost = 
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname.endsWith(".run.app") ||
+    hostname.includes("ais-dev-") ||
+    hostname.includes("ais-pre-");
+
+  if (isDefaultHost) {
+    return "";
+  }
+
+  // 3. On custom domain (e.g. pyaresmmpanel.in, vercel, mobile app):
+  // Automatically connect to the live Cloud Run backend for provider orders, bank webhooks, & Turso sync
+  return STABLE_CLOUD_RUN_BACKEND;
 };
 
 export const formatApiUrl = (endpoint: string): string => {
