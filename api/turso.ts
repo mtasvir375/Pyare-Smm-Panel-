@@ -228,6 +228,36 @@ export async function setTursoDoc(collection: string, id: string, data: any): Pr
           dataJson
         ]
       });
+    } else if (collection === "deposits") {
+      await client.execute({
+        sql: `INSERT INTO smm_deposits (id, user_id, amount, status, transaction_id, data, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(id) DO UPDATE SET
+                status = excluded.status,
+                data = excluded.data;`,
+        args: [
+          id,
+          data.userId || data.user_id || "",
+          Number(data.amount || 0),
+          data.status || "pending",
+          data.utr || data.transaction_id || id,
+          dataJson,
+          data.createdAt || now
+        ]
+      });
+
+      if ((data.status === "approved" || data.status === "completed") && (data.userId || data.user_id)) {
+        const uId = data.userId || data.user_id;
+        const depAmt = Number(data.amount || 0);
+        if (depAmt > 0) {
+          try {
+            await client.execute({
+              sql: `UPDATE smm_users SET balance = balance + ?, updated_at = ? WHERE id = ?;`,
+              args: [depAmt, now, uId]
+            });
+          } catch (e) {}
+        }
+      }
     } else if (collection === "users") {
       await client.execute({
         sql: `INSERT INTO smm_users (id, email, role, balance, data, updated_at)
