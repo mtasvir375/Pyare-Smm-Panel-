@@ -20,8 +20,16 @@ export const getApiBaseUrl = (): string => {
     }
   } catch (e) {}
 
-  // 2. Default to same-origin relative URLs (/api/...)
-  // This allows Vercel serverless functions (/api/proxy-provider.ts) and Express (server.ts) to work natively
+  // 2. On Custom Domains (e.g. pyaresmmpanel.online, smmpanel.online),
+  // automatically route all /api endpoints directly to the live Cloud Run backend!
+  const host = window.location.hostname;
+  const isCloudRun = host.endsWith(".run.app");
+  const isLocalhost = host === "localhost" || host === "127.0.0.1";
+
+  if (!isCloudRun && !isLocalhost) {
+    return STABLE_CLOUD_RUN_BACKEND;
+  }
+
   return "";
 };
 
