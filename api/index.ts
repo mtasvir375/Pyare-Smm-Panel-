@@ -120,24 +120,7 @@ async function getRestDoc(collection: string, docId: string, fresh = false): Pro
     }
   } catch (e) {}
 
-  if (!fresh && collection !== "settings" && collection !== "courses" && collection !== "providers") {
-    const local = getLocalDoc(collection, docId);
-    if (local) return local;
-  }
-  try {
-    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}?key=${FIREBASE_API_KEY}`;
-    const res = await axios.get(url, { timeout: 8000 });
-    const fetched = res.data ? unwrapFirestoreFields(res.data.fields) : null;
-    if (fetched) {
-      setLocalDoc(collection, docId, fetched);
-      await setTursoDoc(collection, docId, fetched).catch(() => {});
-      return fetched;
-    }
-    return null;
-  } catch (err: any) {
-    if (err.response && err.response.status === 404) return null;
-    return getLocalDoc(collection, docId) || null;
-  }
+  return getLocalDoc(collection, docId) || null;
 }
 
 async function setRestDoc(collection: string, docId: string, data: any): Promise<any> {
@@ -146,18 +129,13 @@ async function setRestDoc(collection: string, docId: string, data: any): Promise
   await setTursoDoc(collection, docId, merged).catch(err => {
     console.warn(`[TURSO-SET-ERR] ${collection}/${docId}:`, err.message);
   });
-  try {
-    const fields = wrapFirestoreFields(merged);
-    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}?key=${FIREBASE_API_KEY}`;
-    await axios.patch(url, { fields }, { timeout: 10000 }).catch(() => {});
-  } catch (e) {}
   return merged;
 }
 
 async function listRestDocs(collection: string, pageSize = 100, fresh = false): Promise<any[]> {
   try {
     const tursoList = await listTursoDocs(collection, pageSize);
-    if (tursoList && Array.isArray(tursoList) && tursoList.length > 0) {
+    if (tursoList && Array.isArray(tursoList)) {
       tursoList.forEach(item => {
         if (item && item.id) setLocalDoc(collection, item.id, item);
       });
@@ -165,34 +143,12 @@ async function listRestDocs(collection: string, pageSize = 100, fresh = false): 
     }
   } catch (e) {}
 
-  const fetchedDocs: any[] = [];
-  try {
-    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}?pageSize=${pageSize}&key=${FIREBASE_API_KEY}`;
-    const res = await axios.get(url, { timeout: 8000 });
-    if (res.data && Array.isArray(res.data.documents)) {
-      res.data.documents.forEach((doc: any) => {
-        const id = doc.name.split("/").pop();
-        const data = unwrapFirestoreFields(doc.fields || {});
-        const merged = { id, ...data };
-        setLocalDoc(collection, id, merged);
-        fetchedDocs.push(merged);
-      });
-      if (fetchedDocs.length > 0) {
-        return fetchedDocs;
-      }
-    }
-  } catch (listErr: any) {}
-
   return listLocalDocs(collection, pageSize);
 }
 
 async function deleteRestDoc(collection: string, docId: string): Promise<boolean> {
   deleteLocalDoc(collection, docId);
   await deleteTursoDoc(collection, docId).catch(() => {});
-  try {
-    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}?key=${FIREBASE_API_KEY}`;
-    await axios.delete(url, { timeout: 4000 }).catch(() => {});
-  } catch (e) {}
   return true;
 }
 
