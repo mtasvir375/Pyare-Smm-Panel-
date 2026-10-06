@@ -20,18 +20,8 @@ export const getApiBaseUrl = (): string => {
     }
   } catch (e) {}
 
-  // 2. Auto-detect custom domain and automatically fallback to the stable Cloud Run backend!
-  // This guarantees that any custom domain mapped as static hosting will seamlessly route API calls to the Cloud Run server.
-  try {
-    const hostname = window.location.hostname;
-    const isCustomDomain = !hostname.includes("run.app") && !hostname.includes("localhost") && !hostname.includes("127.0.0.1");
-    if (isCustomDomain) {
-      return STABLE_CLOUD_RUN_BACKEND;
-    }
-  } catch (e) {}
-
-  // 3. Default to same-origin relative URLs (/api/...)
-  // This allows Vercel serverless functions (/api/proxy-provider.ts) and Express (server.ts) to work natively
+  // 2. Default to same-origin relative URLs (/api/...)
+  // This allows Vercel serverless functions (/api/proxy-provider.ts) and Express (server.ts) to work natively same-origin
   return "";
 };
 
