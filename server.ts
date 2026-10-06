@@ -981,15 +981,30 @@ export async function startServer() {
     let currentBalance = 0;
     let existingUserData: any = null;
 
-    // 1. ALWAYS fetch authoritative fresh user document from Firestore first (prevents stale balance calculations)
+    // 1a. Query authoritative fresh user document from Turso Database first
     try {
-      const userRef = await getDocREST("users", user_id, token);
-      if (userRef && userRef.exists) {
-        existingUserData = userRef.data();
+      const tursoUser = await getTursoDoc("users", user_id);
+      if (tursoUser && Object.keys(tursoUser).length > 0) {
+        existingUserData = tursoUser;
         currentBalance = Number(existingUserData.balance ?? existingUserData.walletBalance ?? existingUserData.wallet_balance ?? 0);
+        console.log(`[BALANCE-SAFE-TURSO] Loaded fresh balance for ${user_id} from Turso: ₹${currentBalance}`);
       }
-    } catch (fetchErr: any) {
-      console.warn(`[BALANCE-SAFE] Fresh fetch error for ${user_id}, using fallback:`, fetchErr.message);
+    } catch (tursoErr: any) {
+      console.warn(`[BALANCE-SAFE-TURSO-ERR] Failed to load fresh balance from Turso:`, tursoErr.message);
+    }
+
+    // 1b. Fallback to Firestore REST only if Turso was empty or failed
+    if (!existingUserData) {
+      try {
+        const userRef = await getDocREST("users", user_id, token);
+        if (userRef && userRef.exists) {
+          existingUserData = userRef.data();
+          currentBalance = Number(existingUserData.balance ?? existingUserData.walletBalance ?? existingUserData.wallet_balance ?? 0);
+          console.log(`[BALANCE-SAFE-FIRESTORE] Loaded fresh balance for ${user_id} from Firestore: ₹${currentBalance}`);
+        }
+      } catch (fetchErr: any) {
+        console.warn(`[BALANCE-SAFE] Fresh fetch error for ${user_id}, using fallback:`, fetchErr.message);
+      }
     }
 
     // Fallback only if direct Firestore fetch failed
