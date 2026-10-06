@@ -540,6 +540,29 @@ export async function tursoGetDoc(collection: string, id: string): Promise<any |
   if (!client) return null;
 
   try {
+    if (collection === "users") {
+      const res = await client.execute({
+        sql: `SELECT id, email, role, balance, data FROM smm_users WHERE id = ? LIMIT 1;`,
+        args: [id]
+      });
+      if (res.rows.length > 0) {
+        const row = res.rows[0];
+        let data: any = {};
+        if (typeof row.data === "string") {
+          try { data = JSON.parse(row.data); } catch (e) {}
+        }
+        return {
+          ...data,
+          id: row.id,
+          uid: row.id,
+          email: row.email || data.email || "",
+          role: row.role || data.role || "student",
+          balance: Number(row.balance !== undefined ? row.balance : data.balance || 0),
+          updatedAt: row.updated_at || data.updatedAt
+        };
+      }
+    }
+
     const res = await client.execute({
       sql: `SELECT data FROM smm_documents WHERE collection = ? AND id = ? LIMIT 1;`,
       args: [collection, id]
@@ -579,10 +602,28 @@ export async function tursoListDocs(collection: string, limit: number = 200): Pr
           sql: `SELECT id, email, role, balance, data FROM smm_users LIMIT ?;`,
           args: [limit]
         });
-        const existingIds = new Set(docs.map((d: any) => d.id || d.uid));
+        const userMap = new Map();
+        for (const row of uRes.rows) {
+          userMap.set(String(row.id), row);
+        }
+
+        // For existing docs, overwrite with real column values
+        docs.forEach(d => {
+          const uid = d.id || d.uid;
+          if (uid && userMap.has(uid)) {
+            const row = userMap.get(uid);
+            d.balance = Number(row.balance !== undefined ? row.balance : d.balance || 0);
+            d.role = row.role || d.role || "student";
+            d.email = row.email || d.email || "";
+            d.userEmail = row.email || d.email || "";
+          }
+        });
+
+        // Add any missing users
         for (const row of uRes.rows) {
           const uId = String(row.id || "");
-          if (uId && !existingIds.has(uId)) {
+          const exists = docs.some(d => (d.id || d.uid) === uId);
+          if (uId && !exists) {
             let parsed: any = {};
             if (typeof row.data === "string") {
               try { parsed = JSON.parse(row.data); } catch (e) {}
@@ -591,12 +632,11 @@ export async function tursoListDocs(collection: string, limit: number = 200): Pr
               ...parsed,
               id: uId,
               uid: uId,
-              email: row.email || parsed.email,
-              userEmail: row.email || parsed.email,
-              role: row.role || parsed.role || "user",
-              balance: Number(row.balance ?? parsed.balance ?? 0)
+              email: row.email || parsed.email || "",
+              userEmail: row.email || parsed.email || "",
+              role: row.role || parsed.role || "student",
+              balance: Number(row.balance !== undefined ? row.balance : parsed.balance || 0)
             });
-            existingIds.add(uId);
           }
         }
       } catch (uErr) {}
