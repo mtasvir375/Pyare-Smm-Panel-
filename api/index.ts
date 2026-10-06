@@ -111,12 +111,48 @@ for (const [uid, info] of Object.entries(KNOWN_USER_EMAILS)) {
   userEmailRegistry.set(uid, info.email);
 }
 
+async function fetchFirestoreRestDoc(collection: string, docId: string): Promise<any | null> {
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}/${encodeURIComponent(docId)}?key=${FIREBASE_API_KEY}`;
+    const res = await axios.get(url, { timeout: 5000 });
+    if (res.data && res.data.fields) {
+      return { id: docId, ...unwrapFirestoreFields(res.data.fields) };
+    }
+  } catch (err) {}
+  return null;
+}
+
+async function fetchFirestoreRestCollection(collection: string): Promise<any[]> {
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIREBASE_DATABASE_ID}/documents/${collection}?key=${FIREBASE_API_KEY}&pageSize=200`;
+    const res = await axios.get(url, { timeout: 6000 });
+    if (res.data && res.data.documents && Array.isArray(res.data.documents)) {
+      return res.data.documents.map((d: any) => {
+        const id = d.name ? d.name.split("/").pop() : "";
+        return { ...unwrapFirestoreFields(d.fields), id };
+      });
+    }
+  } catch (err) {}
+  return [];
+}
+
 async function getRestDoc(collection: string, docId: string, fresh = false): Promise<any> {
   try {
     const tursoDoc = await getTursoDoc(collection, docId);
-    if (tursoDoc) {
+    if (tursoDoc && Object.keys(tursoDoc).length > 0) {
       setLocalDoc(collection, docId, tursoDoc);
       return tursoDoc;
+    }
+  } catch (e) {}
+
+  // 1. Firestore REST Fallback (Pull missing document from Firestore)
+  try {
+    const fsDoc = await fetchFirestoreRestDoc(collection, docId);
+    if (fsDoc && Object.keys(fsDoc).length > 0) {
+      // Direct auto-sync to Turso to preserve database synchronization and save future Firestore reads!
+      await setTursoDoc(collection, docId, fsDoc).catch(() => {});
+      setLocalDoc(collection, docId, fsDoc);
+      return fsDoc;
     }
   } catch (e) {}
 
@@ -135,11 +171,26 @@ async function setRestDoc(collection: string, docId: string, data: any): Promise
 async function listRestDocs(collection: string, pageSize = 100, fresh = false): Promise<any[]> {
   try {
     const tursoList = await listTursoDocs(collection, pageSize);
-    if (tursoList && Array.isArray(tursoList)) {
+    if (tursoList && Array.isArray(tursoList) && tursoList.length > 0) {
       tursoList.forEach(item => {
         if (item && item.id) setLocalDoc(collection, item.id, item);
       });
       return tursoList;
+    }
+  } catch (e) {}
+
+  // 1. Firestore REST Fallback (Pull missing collection lists from Firestore)
+  try {
+    const fsList = await fetchFirestoreRestCollection(collection);
+    if (fsList && Array.isArray(fsList) && fsList.length > 0) {
+      // Direct auto-sync of list to Turso Database to populate it on-the-fly!
+      for (const item of fsList) {
+        if (item && item.id) {
+          setLocalDoc(collection, item.id, item);
+          await setTursoDoc(collection, item.id, item).catch(() => {});
+        }
+      }
+      return fsList.slice(0, pageSize);
     }
   } catch (e) {}
 

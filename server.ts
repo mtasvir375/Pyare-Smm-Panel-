@@ -1489,6 +1489,12 @@ export async function startServer() {
     // Cache the successful read result
     if (result.exists) {
       const data = result.data();
+      
+      // Auto-sync back to Turso Database to populate missing items and prevent future Firestore reads
+      try {
+        setTursoDoc(collect, id, data).catch(() => {});
+      } catch (e) {}
+
       try {
         setLocalDoc(collect, id, data);
       } catch (e) {}
@@ -1620,7 +1626,18 @@ export async function startServer() {
       console.warn(`[LIST-SAFE-REST] Failed for ${collect}: ${restErr.message}`);
     }
 
-    return { docs: Array.from(docMap.values()) };
+    const docList = Array.from(docMap.values());
+    if (docList.length > 0) {
+      // Direct auto-sync back to Turso Database to populate lists
+      docList.forEach((item: any) => {
+        const d = typeof item.data === "function" ? item.data() : (item.data || item);
+        if (d && item.id) {
+          setTursoDoc(collect, item.id, d).catch(() => {});
+        }
+      });
+    }
+
+    return { docs: docList };
   };
 
   const syncProvidersToSettings = async (token?: string) => {
