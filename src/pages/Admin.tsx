@@ -413,7 +413,7 @@ export default function Admin() {
         if (order.providerOrderId || order.provider_order_id) {
           try {
             // Use the optimized sync endpoint
-            const response = await axios.post("/api/sync-order-status", {
+            const response = await axios.post(formatApiUrl("/api/sync-order-status"), {
               orderId: order.id
             });
 
@@ -647,7 +647,7 @@ export default function Admin() {
         skipStoreCompleted: false
       };
 
-      const response = await axios.post("/api/proxy-provider", payload, { timeout: 35000 });
+      const response = await axios.post(formatApiUrl("/api/proxy-provider"), payload, { timeout: 35000 });
       if (response.data && (response.data.success || response.data.providerOrderId)) {
         const pOrderId = String(response.data.providerOrderId || "SENT");
         toast.success(`Successfully sent to provider! Provider Order ID: #${pOrderId}`, { id: `tx_${order.id}` });
@@ -873,7 +873,7 @@ export default function Admin() {
       let fetchedPending: any[] = [];
 
       try {
-        const res = await axios.get("/api/sms-forwarder/logs");
+        const res = await axios.get(formatApiUrl("/api/sms-forwarder/logs"));
         if (res.data && res.data.success) {
           fetchedLogs = res.data.logs || [];
           fetchedAvailable = res.data.available || [];
@@ -961,7 +961,7 @@ export default function Admin() {
       let resolved = false;
 
       try {
-        const res = await axios.post("/api/sms-forwarder/manual-resolve", {
+        const res = await axios.post(formatApiUrl("/api/sms-forwarder/manual-resolve"), {
           utr: utrToUse,
           amount: amtToUse,
           userEmail: emailToUse
@@ -984,7 +984,7 @@ export default function Admin() {
             matchedUserId = targetInState.id;
           } else {
             try {
-              const res = await axios.post("/api/admin/search-user", { query: emailToUse });
+              const res = await axios.post(formatApiUrl("/api/admin/search-user"), { query: emailToUse });
               const found = res.data?.users?.[0];
               if (found) matchedUserId = found.id;
             } catch (e) {}
@@ -1042,7 +1042,7 @@ export default function Admin() {
     }
     setTestingSms(true);
     try {
-      const res = await axios.post("/api/sms-forwarder/test-parse", {
+      const res = await axios.post(formatApiUrl("/api/sms-forwarder/test-parse"), {
         smsText: textToTest,
         simulate: smsTestSimulate
       });
@@ -1066,7 +1066,7 @@ export default function Admin() {
   const handleClearSmsLogs = async () => {
     if (!window.confirm("Are you sure you want to clear SMS Forwarder logs?")) return;
     try {
-      await axios.post("/api/sms-forwarder/clear-logs");
+      await axios.post(formatApiUrl("/api/sms-forwarder/clear-logs"));
       setSmsLogs([]);
       toast.success("SMS Logs cleared");
     } catch (err: any) {
@@ -1221,7 +1221,7 @@ export default function Admin() {
       let responseBody: any = null;
 
       try {
-        const response = await axios.post(`/api/proxy-provider`, {
+        const response = await axios.post(formatApiUrl("/api/proxy-provider"), {
           orderId: order.id,
           serviceId: order.serviceId || order.service_id,
           courseId: order.serviceId || order.service_id,
@@ -1408,7 +1408,7 @@ export default function Admin() {
   const handleRestoreAllBalances = async () => {
     try {
       setIsRestoringBalances(true);
-      const res = await axios.post("/api/admin/restore-all-balances");
+      const res = await axios.post(formatApiUrl("/api/admin/restore-all-balances"));
       if (res.data && res.data.success) {
         if (res.data.count > 0) {
           toast.success(`बैलेंस सफलतापूर्वक रिकवर हो गया! ${res.data.count} यूजर्स के वॉलेट में बैलेंस रीस्टोर किया गया।`);
