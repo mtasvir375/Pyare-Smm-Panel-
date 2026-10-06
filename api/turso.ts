@@ -24,7 +24,6 @@ export function initTursoClient(url?: string, authToken?: string): Client | null
       url: cleanUrl,
       authToken: cleanToken
     });
-    initTursoSchema(tursoClient).catch(() => {});
     return tursoClient;
   } catch (err: any) {
     console.error("[TURSO] Error initializing libSQL client:", err?.message || err);

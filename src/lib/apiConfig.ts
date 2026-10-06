@@ -20,7 +20,13 @@ export const getApiBaseUrl = (): string => {
     }
   } catch (e) {}
 
-  // 2. Default to same-origin relative URLs (/api/...)
+  // 2. Automatically fallback to live Cloud Run backend Express server for custom domains
+  const host = window.location.hostname;
+  if (host.includes("pyaresmmpanel.online") || host.includes("smmpanel.online")) {
+    return "https://ais-pre-n2umeaxvo6qnc7chsbm27z-523409699457.asia-southeast1.run.app";
+  }
+
+  // 3. Default to same-origin relative URLs (/api/...)
   // This allows Vercel serverless functions (/api/proxy-provider.ts) and Express (server.ts) to work natively same-origin
   return "";
 };
