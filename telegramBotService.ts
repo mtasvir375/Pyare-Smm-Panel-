@@ -70,9 +70,11 @@ export interface TelegramBotConfig {
   webhookUrl?: string;
 }
 
-const ALERTS_FILE = path.join(process.cwd(), "bank_alerts.json");
-const CONFIG_FILE = path.join(process.cwd(), "telegram_bot_config.json");
-const INTENTS_FILE = path.join(process.cwd(), "payment_intents.json");
+const isVercel = !!process.env.VERCEL;
+const baseDir = isVercel ? "/tmp" : process.cwd();
+const ALERTS_FILE = path.join(baseDir, "bank_alerts.json");
+const CONFIG_FILE = path.join(baseDir, "telegram_bot_config.json");
+const INTENTS_FILE = path.join(baseDir, "payment_intents.json");
 
 // In-memory cache for ultra-fast zero-latency matching
 let memoryAlerts: BankAlert[] = [];

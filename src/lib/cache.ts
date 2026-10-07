@@ -115,7 +115,24 @@ export const getCachedCourses = async (forceRefresh = false) => {
     console.warn("[CACHE] API /api/courses call failed:", apiErr);
   }
 
-  // 2. Direct Firestore SDK fallback
+  // 2. Direct Turso Database fallback (Always connects directly from client browser)
+  try {
+    const { clientTursoGetDocs } = await import("./tursoClient");
+    const tursoList = await clientTursoGetDocs("courses", 200);
+    if (Array.isArray(tursoList) && tursoList.length > 0) {
+      cachedCourses = sortServicesList(mapServiceList(tursoList));
+      lastCoursesFetch = now;
+      try {
+        localStorage.setItem("cached_courses_time", now.toString());
+        localStorage.setItem("cached_courses", JSON.stringify(cachedCourses));
+      } catch(e) {}
+      return cachedCourses;
+    }
+  } catch (tursoErr) {
+    console.warn("[CACHE] Direct Turso courses query error:", tursoErr);
+  }
+
+  // 3. Direct Firestore SDK fallback
   try {
     const { collection, getDocs } = await import("firebase/firestore");
     const { db } = await import("@/lib/firebase");
@@ -134,7 +151,7 @@ export const getCachedCourses = async (forceRefresh = false) => {
     }
   } catch (fsErr) {}
 
-  // 3. Fallback to existing localStorage safety net (NEVER RETURN EMPTY IF LOCALSTORAGE HAS DATA)
+  // 4. Fallback to existing localStorage safety net (NEVER RETURN EMPTY IF LOCALSTORAGE HAS DATA)
   try {
     const lsData = localStorage.getItem("cached_courses");
     if (lsData) {
@@ -213,7 +230,34 @@ export const getCachedSettings = async (forceRefresh = false) => {
     console.warn("[CACHE] API /api/settings call failed:", apiErr);
   }
 
-  // 2. Direct Firestore fallback (ensures theme and settings persist even during serverless cold starts)
+  // 2. Direct Turso Database fallback
+  try {
+    const { clientTursoGetDoc } = await import("./tursoClient");
+    const tursoSettings = await clientTursoGetDoc("settings", "payment");
+    if (tursoSettings && typeof tursoSettings === "object" && Object.keys(tursoSettings).length > 0) {
+      const settingsData = {
+        ...DEFAULT_SETTINGS,
+        ...tursoSettings,
+        upiId: (tursoSettings.upiId && String(tursoSettings.upiId).trim()) ? String(tursoSettings.upiId).trim() : DEFAULT_SETTINGS.upiId,
+        merchantName: tursoSettings.merchantName !== undefined ? tursoSettings.merchantName : DEFAULT_SETTINGS.merchantName,
+        selectedTheme: (tursoSettings.selectedTheme === "charcoal" || !tursoSettings.selectedTheme) ? "amber" : tursoSettings.selectedTheme,
+        selectedFestivalTheme: tursoSettings.selectedFestivalTheme || "none",
+      };
+      cachedSettings = settingsData;
+      lastSettingsFetch = now;
+      try {
+        localStorage.setItem("cached_settings_time", now.toString());
+        localStorage.setItem("cached_settings", JSON.stringify(cachedSettings));
+        if (settingsData.selectedTheme) {
+          localStorage.setItem("cached_theme", settingsData.selectedTheme);
+          document.documentElement.setAttribute("data-theme", settingsData.selectedTheme);
+        }
+      } catch(e) {}
+      return cachedSettings;
+    }
+  } catch (tursoErr) {}
+
+  // 3. Direct Firestore fallback (ensures theme and settings persist even during serverless cold starts)
   try {
     const { doc, getDoc } = await import("firebase/firestore");
     const { db } = await import("@/lib/firebase");
@@ -310,7 +354,22 @@ export const getCachedProviders = async (forceRefresh = false) => {
     console.warn("[CACHE] Failed to load providers from /api/providers:", apiErr);
   }
 
-  // 2. Direct Firestore SDK fallback
+  // 2. Direct Turso Database fallback
+  try {
+    const { clientTursoGetDocs } = await import("./tursoClient");
+    const tursoProviders = await clientTursoGetDocs("providers", 100);
+    if (Array.isArray(tursoProviders) && tursoProviders.length > 0) {
+      cachedProviders = tursoProviders;
+      lastProvidersFetch = now;
+      try {
+        localStorage.setItem("cached_providers_time", now.toString());
+        localStorage.setItem("cached_providers", JSON.stringify(cachedProviders));
+      } catch(e) {}
+      return cachedProviders;
+    }
+  } catch (tursoErr) {}
+
+  // 3. Direct Firestore SDK fallback
   try {
     const { collection, getDocs } = await import("firebase/firestore");
     const { db } = await import("@/lib/firebase");

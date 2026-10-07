@@ -710,6 +710,9 @@ export default function Admin() {
 
       if (resData?.success) {
         toast.success(`Connected! Balance: ${resData.balance} ${resData.currency || 'INR'}`);
+        if (providerId) {
+          setProviders(prev => prev.map(p => p.id === providerId ? { ...p, balance: Number(resData.balance) } : p));
+        }
       } else {
         const rawErr = resData?.error || "Connection failed";
         const cleanErr = typeof rawErr === "object" ? (rawErr.message || JSON.stringify(rawErr)) : String(rawErr);

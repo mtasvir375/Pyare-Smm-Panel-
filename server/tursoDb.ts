@@ -1,4 +1,4 @@
-import { createClient, Client } from "@libsql/client";
+import { createClient, Client } from "@libsql/client/web";
 import fs from "fs";
 import path from "path";
 
