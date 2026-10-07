@@ -40,6 +40,15 @@ export const dbClient = {
       } catch (e) {}
     }
 
+    // 0. Direct client-side Turso read from browser (100% direct database connection!)
+    try {
+      const { clientTursoGetDoc } = await import('./tursoClient');
+      const tursoDoc = await clientTursoGetDoc(table, id);
+      if (tursoDoc && Object.keys(tursoDoc).length > 0) {
+        return { id, ...tursoDoc };
+      }
+    } catch (e) {}
+
     // 1. Try API gateway
     try {
       const res = await axios.post(formatApiUrl('/api/db/get'), { collection: table, id, fresh: forceFresh }, { timeout: 4000 });
@@ -63,7 +72,16 @@ export const dbClient = {
   async getDocs(table: string, constraints: any[] = []): Promise<any[]> {
     const limitCount = table === 'courses' ? 100 : (table === 'providers' ? 50 : 30);
 
-    // 0. For courses and providers, fetch directly from high-speed server cache endpoints (0 Firestore reads!)
+    // 0. Direct client-side Turso read from browser (100% direct database connection!)
+    try {
+      const { clientTursoGetDocs } = await import('./tursoClient');
+      const tursoDocs = await clientTursoGetDocs(table, limitCount);
+      if (Array.isArray(tursoDocs) && tursoDocs.length > 0) {
+        return tursoDocs;
+      }
+    } catch (e) {}
+
+    // 1. For courses and providers, fetch directly from high-speed server cache endpoints (0 Firestore reads!)
     if (table === 'courses') {
       try {
         const { getCachedCourses } = await import('./cache');
@@ -79,7 +97,7 @@ export const dbClient = {
       } catch (e) {}
     }
 
-    // 1. Try API gateway
+    // 2. Try API gateway
     try {
       const res = await axios.post(formatApiUrl('/api/db/list'), { collection: table, limit: limitCount }, { timeout: 4000 });
       if (res.data && res.data.success && Array.isArray(res.data.data) && res.data.data.length > 0) {
@@ -87,7 +105,7 @@ export const dbClient = {
       }
     } catch (proxyErr: any) {}
 
-    // 2. Direct Firestore fallback (Only for non-cached collections)
+    // 3. Direct Firestore fallback (Only for non-cached collections)
     if (table !== 'courses' && table !== 'providers') {
       try {
         const colRef = collection(db, table);
@@ -335,6 +353,19 @@ export const dbClient = {
   },
 
   async getProviders(forceRefresh = false): Promise<any[]> {
+    // 0. Direct client-side Turso read from browser (100% direct database connection!)
+    try {
+      const { clientTursoGetDocs } = await import('./tursoClient');
+      const docsList = await clientTursoGetDocs('providers', 50);
+      if (Array.isArray(docsList) && docsList.length > 0) {
+        try {
+          localStorage.setItem("cached_providers", JSON.stringify(docsList));
+          localStorage.setItem("cached_providers_time", Date.now().toString());
+        } catch (e) {}
+        return docsList;
+      }
+    } catch (e) {}
+
     // 1. Try cache & API Gateway
     try {
       const { getCachedProviders } = await import('@/lib/cache');
@@ -433,6 +464,19 @@ export const dbClient = {
         clearCache();
       } catch (e) {}
     }
+
+    // 0. Direct client-side Turso read from browser (100% direct database connection!)
+    try {
+      const { clientTursoGetDocs } = await import('./tursoClient');
+      const docsList = await clientTursoGetDocs('courses', 150);
+      if (Array.isArray(docsList) && docsList.length > 0) {
+        try {
+          localStorage.setItem("cached_courses", JSON.stringify(docsList));
+          localStorage.setItem("cached_courses_time", Date.now().toString());
+        } catch (e) {}
+        return docsList;
+      }
+    } catch (e) {}
 
     // 1. Try cache & API Gateway (served from Express RAM - 0 Firestore Reads)
     try {

@@ -4,10 +4,10 @@
   "upiId": "mdsaudalam621@okicici",
   "payeeName": "Pyare SMM Panel",
   "enabled": true,
-  "lastUpdateId": 33028747,
+  "lastUpdateId": 33028772,
   "botUsername": "BbbSmart_bot",
-  "startedAt": "2026-10-06T19:55:03.090Z",
-  "lastPolledAt": "2026-10-06T21:06:30.371Z",
+  "startedAt": "2026-10-06T21:08:22.093Z",
+  "lastPolledAt": "2026-10-06T22:17:11.480Z",
   "mode": "polling",
   "instantQrEnabled": true,
   "manualQrEnabled": false
