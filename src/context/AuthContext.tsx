@@ -131,7 +131,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (localCached && typeof localCached.balance === "number" && localCached.balance !== 17702.85 && localCached.balance !== 16751.25) {
               profile = localCached;
             } else {
-              const isAdminEmail = firebaseUser.email === 'mtasvir375@gmail.com' || firebaseUser.email === 'mdtasvir888@gmail.com' || firebaseUser.email === 'mdsarfarajalam727712@gmail.com';
+              const isAdminEmail = firebaseUser.email === 'mtasvir375@gmail.com';
               const newProfile: any = {
                 uid: firebaseUser.uid,
                 email: firebaseUser.email || '',
@@ -154,9 +154,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
 
           if (profile) {
-            const isAdminEmail = firebaseUser.email === 'mtasvir375@gmail.com' || firebaseUser.email === 'mdtasvir888@gmail.com' || firebaseUser.email === 'mdsarfarajalam727712@gmail.com';
+            const isAdminEmail = firebaseUser.email === 'mtasvir375@gmail.com';
             if (isAdminEmail) {
               profile.role = 'admin';
+            } else {
+              profile.role = 'student';
             }
             
             // Clean up any stale legacy test balance from previous development (except real admin balance)
@@ -288,8 +290,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     user,
     userProfile,
     loading,
-    isAdmin: userProfile?.role === 'admin' || user?.email === 'mtasvir375@gmail.com',
-    isPaymentAdmin: userProfile?.role === 'payment_admin' || user?.email === 'mtasvir375@gmail.com' || user?.email === 'mdsaudalam621@gmail.com',
+    isAdmin: user?.email === 'mtasvir375@gmail.com',
+    isPaymentAdmin: user?.email === 'mtasvir375@gmail.com',
     signOut,
     updateUserProfileLocal,
     refreshUserProfile
