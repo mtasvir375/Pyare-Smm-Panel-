@@ -475,11 +475,13 @@ export const TelegramBotTab: React.FC = () => {
         })
       ]);
 
-      // Ensure Telegram webhook is deleted so getUpdates polling runs with 0 conflicts
+      // Ensure Telegram webhook points directly to custom domain endpoint for instant automatic payment delivery
       const activeToken = cleanToken || "";
       if (activeToken) {
         try {
-          await axios.post(`https://api.telegram.org/bot${activeToken}/deleteWebhook`, {
+          await axios.post(`https://api.telegram.org/bot${activeToken}/setWebhook`, {
+            url: "https://www.pyaresmmpanel.online/api/telegram-webhook",
+            allowed_updates: ["message", "channel_post", "edited_message", "edited_channel_post", "business_message"],
             drop_pending_updates: false
           }, { timeout: 8000 });
         } catch (e) {}
@@ -559,18 +561,20 @@ export const TelegramBotTab: React.FC = () => {
 
     if (tokenToUse) {
       try {
-        await axios.post(`https://api.telegram.org/bot${tokenToUse}/deleteWebhook`, {
+        await axios.post(`https://api.telegram.org/bot${tokenToUse}/setWebhook`, {
+          url: "https://www.pyaresmmpanel.online/api/telegram-webhook",
+          allowed_updates: ["message", "channel_post", "edited_message", "edited_channel_post", "business_message"],
           drop_pending_updates: false
         }, { timeout: 8000 });
       } catch (tgErr: any) {
-        console.warn("[DIRECT-DELETE-WEBHOOK-FAIL]", tgErr);
+        console.warn("[DIRECT-SET-WEBHOOK-FAIL]", tgErr);
       }
     }
 
-    // 3. Restart polling
+    // 3. Restart / save webhook status
     try {
       await handleConfigAction("start");
-      toast.success("Webhook conflict deleted! Telegram bot is now actively listening to SMS.");
+      toast.success("✅ Telegram Webhook successfully connected to pyaresmmpanel.online! Automatic payment verification is active.");
     } catch (e) {}
 
     await fetchConfig();

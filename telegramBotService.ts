@@ -1544,26 +1544,44 @@ export async function startTelegramPolling(): Promise<{ success: boolean; messag
     return { success: false, message: msg };
   }
 
-  // If webhook mode is active, preserve webhook and do not delete it!
+  // Check if active webhook is configured on Telegram for custom domain
+  try {
+    const whRes = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`);
+    const whData: any = await whRes.json().catch(() => ({}));
+    if (whData?.ok && whData?.result?.url && whData.result.url.includes("pyaresmmpanel.online")) {
+      console.log(`[TELEGRAM-SERVICE] Active custom domain webhook detected (${whData.result.url}). Preserving webhook.`);
+      saveTelegramConfig({ mode: "webhook", webhookUrl: whData.result.url, enabled: true });
+      return { success: true, message: `Webhook is active for ${whData.result.url}. Telegram pushes updates directly.` };
+    }
+  } catch (e) {}
+
+  // If webhook mode is active in config, preserve webhook and do not delete it!
   if (memoryConfig.mode === "webhook" && memoryConfig.webhookUrl) {
     console.log(`[TELEGRAM-SERVICE] Active webhook preserved for custom domain: ${memoryConfig.webhookUrl}`);
     return { success: true, message: `Webhook is active for ${memoryConfig.webhookUrl}. Telegram pushes updates directly.` };
   }
 
-  // Clear any active webhook so Telegram getUpdates works cleanly
+  // Always maintain the custom domain webhook for pyaresmmpanel.online
+  const customWebhookUrl = "https://www.pyaresmmpanel.online/api/telegram-webhook";
   try {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), 8000);
-    await fetch(`https://api.telegram.org/bot${token}/deleteWebhook`, {
+    await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Connection": "close" },
-      body: JSON.stringify({ drop_pending_updates: false }),
+      body: JSON.stringify({
+        url: customWebhookUrl,
+        allowed_updates: ["message", "channel_post", "edited_message", "edited_channel_post", "business_message"],
+        drop_pending_updates: false
+      }),
       signal: controller.signal
     });
     clearTimeout(t);
-    console.log("[TELEGRAM-SERVICE] Telegram webhook cleared successfully for polling.");
+    saveTelegramConfig({ mode: "webhook", webhookUrl: customWebhookUrl, enabled: true });
+    console.log(`[TELEGRAM-SERVICE] Telegram webhook successfully connected to ${customWebhookUrl}`);
+    return { success: true, message: `Webhook is active for ${customWebhookUrl}. Telegram pushes updates directly.` };
   } catch (delErr: any) {
-    console.warn("[TELEGRAM-SERVICE] deleteWebhook notice:", delErr.message);
+    console.warn("[TELEGRAM-SERVICE] setWebhook notice:", delErr.message);
   }
 
   isPolling = true;

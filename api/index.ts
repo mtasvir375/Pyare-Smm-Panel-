@@ -1133,6 +1133,13 @@ export default async function handler(req: any, res: any) {
       }
 
       if (intent.status === "completed") {
+        let userBalance: number | undefined;
+        if (intent.userId) {
+          try {
+            const u = (await getTursoDoc("users", intent.userId)) || (await getRestDoc("users", intent.userId));
+            userBalance = Number(u?.balance !== undefined ? u.balance : (u?.walletBalance || 0));
+          } catch (e) {}
+        }
         memIntents.set(strId, { data: intent, time: now });
         return res.status(200).json({
           success: true,
@@ -1142,18 +1149,25 @@ export default async function handler(req: any, res: any) {
           amount: intent.amount,
           creditedAmount: intent.creditedAmount || intent.amount,
           utr: intent.utr || intent.orderRef,
-          completedAt: intent.completedAt || Date.now()
+          completedAt: intent.completedAt || Date.now(),
+          newBalance: userBalance
         });
       }
 
-      // Auto-reconcile against targeted orderRef alert (1 single doc read)
+      // Auto-reconcile against targeted orderRef alert (Turso and Firestore)
       if (intent.status !== "completed" && intent.userId && intent.orderRef) {
         try {
-          // Targeted 1-doc lookup by unique 12-digit orderRef
-          let match: any = await getRestDoc("bank_alerts", intent.orderRef).catch(() => null);
+          // Targeted lookup by unique 12-digit orderRef (Check Turso first, then Firestore)
+          let match: any = await getTursoDoc("bank_alerts", intent.orderRef).catch(() => null);
+          if (!match) match = await getTursoDoc("sms_forwarder_pool", intent.orderRef).catch(() => null);
+          if (!match) match = await getRestDoc("bank_alerts", intent.orderRef).catch(() => null);
+          if (!match) match = await getRestDoc("sms_forwarder_pool", intent.orderRef).catch(() => null);
+
           if (!match || match.isUsed === true || match.status === "claimed") {
             match = null;
           }
+
+          // Fallback: Check all bank alerts in memory / Turso for amount match
           if (!match) {
             try {
               const allAlerts = getBankAlerts();
@@ -1168,6 +1182,30 @@ export default async function handler(req: any, res: any) {
                 match = found;
               }
             } catch (e) {}
+          }
+
+          // Fallback 2: Check Turso smm_documents bank_alerts for matching amount
+          if (!match) {
+            try {
+              const tursoClient = getTursoClient();
+              if (tursoClient) {
+                const bRes = await tursoClient.execute({
+                  sql: `SELECT id, data FROM smm_documents WHERE collection = 'bank_alerts' ORDER BY updated_at DESC LIMIT 50;`
+                });
+                for (const row of bRes.rows) {
+                  let bData: any = {};
+                  try { bData = typeof row.data === "string" ? JSON.parse(row.data) : row.data; } catch (e) {}
+                  if (bData && !bData.isUsed && bData.status !== "claimed") {
+                    const isRef = bData.utr === intent.orderRef || (bData.rawText && bData.rawText.includes(intent.orderRef));
+                    const isAmt = Math.abs(Number(bData.amount || 0) - Number(intent.amount || 0)) <= 0.05;
+                    if (isRef || isAmt) {
+                      match = bData;
+                      break;
+                    }
+                  }
+                }
+              }
+            } catch (tAlertErr) {}
           }
 
           if (match && intent.orderRef) {
@@ -1192,11 +1230,11 @@ export default async function handler(req: any, res: any) {
               claimedAt: new Date().toISOString()
             });
 
-            // Fetch current user balance
+            // Fetch current user balance from Turso first, then Firestore
             let currentBal = 0;
             let uDoc: any = null;
             try {
-              uDoc = await getRestDoc("users", intent.userId);
+              uDoc = (await getTursoDoc("users", intent.userId)) || (await getRestDoc("users", intent.userId));
               currentBal = Number(uDoc?.balance ?? uDoc?.walletBalance ?? 0);
             } catch (e) {}
 
@@ -1234,6 +1272,7 @@ export default async function handler(req: any, res: any) {
               completedAt: Date.now(),
               utr: matchUtr,
               creditedAmount: creditAmt,
+              newBalance: newBal,
               notified: true
             };
 
@@ -1249,6 +1288,8 @@ export default async function handler(req: any, res: any) {
 
             const userPayload = { 
               ...uDoc, 
+              id: intent.userId,
+              uid: intent.userId,
               email: intentEmailToPersist,
               userEmail: intentEmailToPersist,
               displayName: intentNameToPersist,
@@ -1283,13 +1324,18 @@ export default async function handler(req: any, res: any) {
               setTursoDoc("bank_alerts", matchUtr, alertPayload).catch(() => {})
             ]);
 
-            // Direct SQL execution on smm_users table in Turso to guarantee balance column is never stale
+            // Direct SQL UPSERT on smm_users table in Turso to guarantee balance column is never stale
             try {
               const tursoClient = getTursoClient();
               if (tursoClient) {
                 await tursoClient.execute({
-                  sql: `UPDATE smm_users SET balance = ?, data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;`,
-                  args: [newBal, JSON.stringify(userPayload), intent.userId]
+                  sql: `INSERT INTO smm_users (id, email, role, balance, data, updated_at)
+                        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                        ON CONFLICT(id) DO UPDATE SET
+                          balance = excluded.balance,
+                          data = excluded.data,
+                          updated_at = excluded.updated_at;`,
+                  args: [intent.userId, intentEmailToPersist || "", userPayload.role || "student", newBal, JSON.stringify(userPayload)]
                 });
                 await tursoClient.execute({
                   sql: `INSERT INTO smm_deposits (id, user_id, amount, status, transaction_id, data, created_at)
@@ -1564,13 +1610,18 @@ export default async function handler(req: any, res: any) {
           setRestDoc("claimed_payments", cleanUtr, claimedRecord).catch(() => {})
         ]);
 
-        // Direct SQL update on smm_users table in Turso to guarantee balance column is never stale
+        // Direct SQL UPSERT on smm_users table in Turso to guarantee balance column is never stale
         try {
           const tursoClient = getTursoClient();
           if (tursoClient) {
             await tursoClient.execute({
-              sql: `UPDATE smm_users SET balance = ?, data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;`,
-              args: [newBalance, JSON.stringify(updatedUserDoc), userId]
+              sql: `INSERT INTO smm_users (id, email, role, balance, data, updated_at)
+                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(id) DO UPDATE SET
+                      balance = excluded.balance,
+                      data = excluded.data,
+                      updated_at = excluded.updated_at;`,
+              args: [userId, instantEmailToPersist || "", updatedUserDoc.role || "student", newBalance, JSON.stringify(updatedUserDoc)]
             });
             await tursoClient.execute({
               sql: `INSERT INTO smm_deposits (id, user_id, amount, status, transaction_id, data, created_at)

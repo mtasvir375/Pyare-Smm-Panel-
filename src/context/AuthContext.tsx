@@ -41,9 +41,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const refreshUserProfile = async () => {
     if (user) {
       try {
-        const profile = await dbClient.getUserProfile(user.uid);
+        let profile = await dbClient.getUserProfile(user.uid);
+        if (!profile && user.email) {
+          try {
+            const { clientTursoGetDoc } = await import("@/lib/tursoClient");
+            const byEmail = await clientTursoGetDoc("users", user.email);
+            if (byEmail) {
+              profile = { ...byEmail, uid: user.uid };
+            }
+          } catch (e) {}
+        }
         if (profile) {
-          setUserProfile(profile);
+          setUserProfile((prev) => {
+            // Protect against race condition where recently credited balance is higher than a slightly delayed response
+            if (prev && typeof prev.balance === "number" && typeof profile.balance === "number") {
+              if (prev.balance > profile.balance) {
+                return { ...profile, balance: prev.balance };
+              }
+            }
+            return profile;
+          });
           try {
             localStorage.setItem(`user_profile_${user.uid}`, JSON.stringify(profile));
           } catch (e) {}
@@ -96,6 +113,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
           // Fetch authoritative user profile from backend/database
           let profile = await dbClient.getUserProfile(firebaseUser.uid);
+
+          // Fallback: If not found by uid, check if user exists by email in Turso database!
+          if (!profile && firebaseUser.email) {
+            try {
+              const { clientTursoGetDoc } = await import("@/lib/tursoClient");
+              const byEmail = await clientTursoGetDoc("users", firebaseUser.email);
+              if (byEmail) {
+                profile = { ...byEmail, uid: firebaseUser.uid, email: firebaseUser.email };
+                dbClient.createUserProfile(firebaseUser.uid, profile).catch(() => {});
+              }
+            } catch (emErr) {}
+          }
           
           if (!profile) {
             // If we have a local cached profile, use it temporarily

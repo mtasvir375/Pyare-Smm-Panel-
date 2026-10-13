@@ -7574,11 +7574,12 @@ export async function startServer() {
       } catch (e: any) {
         console.error("[SQLITE-INIT-ERR]", e.message);
       }
-      // Auto-start Telegram bot polling on startup if enabled
+      // Auto-start Telegram bot webhook for custom domain (pyaresmmpanel.online) on startup
       try {
         initTelegramBotService();
-        startTelegramPolling().then((res) => {
-          console.log("[TELEGRAM-BOOT-AUTOSTART]", res.message);
+        const customDomainWebhook = "https://www.pyaresmmpanel.online/api/telegram-webhook";
+        setTelegramWebhook(customDomainWebhook).then((res) => {
+          console.log("[TELEGRAM-BOOT-WEBHOOK]", res.message);
         }).catch((e) => {
           console.warn("[TELEGRAM-BOOT-WARN]", e.message);
         });

@@ -226,6 +226,14 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
           setDoc(doc(db, "payment_intents", intentObj.orderRef), firestoreData, { merge: true }).catch(() => {});
         } catch (fErr) {}
 
+        // Also save directly into Turso smm_documents so bot matches it instantly on custom domain
+        try {
+          import("@/lib/tursoClient").then(({ clientTursoSetDoc }) => {
+            clientTursoSetDoc("payment_intents", intentObj.intentId, firestoreData).catch(() => {});
+            clientTursoSetDoc("payment_intents", intentObj.orderRef, firestoreData).catch(() => {});
+          }).catch(() => {});
+        } catch (tErr) {}
+
         // Send Telegram Bot Notification
         try {
           const tBotToken = "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0";
@@ -343,7 +351,7 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
     pollIntervalRef.current = setInterval(() => {
       if (typeof document !== "undefined" && (document.hidden || document.visibilityState === "hidden")) return;
       verifyStatus(false);
-    }, 15000);
+    }, 4000);
 
     return () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);

@@ -185,6 +185,62 @@ export async function clientTursoGetDoc(collection: string, id: string): Promise
   if (!client || !collection || !id) return null;
 
   try {
+    if (collection === "users") {
+      // 1. Direct query from smm_users table for authoritative live balance
+      try {
+        const uRes = await client.execute({
+          sql: `SELECT id, email, role, balance, data, updated_at FROM smm_users WHERE id = ? LIMIT 1;`,
+          args: [id]
+        });
+        if (uRes.rows.length > 0) {
+          const row = uRes.rows[0];
+          let data: any = {};
+          if (typeof row.data === "string") {
+            try { data = JSON.parse(row.data); } catch (e) {}
+          } else if (row.data && typeof row.data === "object") {
+            data = row.data;
+          }
+          return {
+            ...data,
+            id: row.id,
+            uid: row.id,
+            email: row.email || data.email || "",
+            role: row.role || data.role || "student",
+            balance: Number(row.balance !== undefined ? row.balance : (data.balance || 0)),
+            updatedAt: row.updated_at || data.updatedAt
+          };
+        }
+      } catch (uErr) {}
+
+      // 1B. If id looks like email or fallback by email in smm_users
+      if (id.includes("@")) {
+        try {
+          const emailRes = await client.execute({
+            sql: `SELECT id, email, role, balance, data, updated_at FROM smm_users WHERE email = ? LIMIT 1;`,
+            args: [id]
+          });
+          if (emailRes.rows.length > 0) {
+            const row = emailRes.rows[0];
+            let data: any = {};
+            if (typeof row.data === "string") {
+              try { data = JSON.parse(row.data); } catch (e) {}
+            } else if (row.data && typeof row.data === "object") {
+              data = row.data;
+            }
+            return {
+              ...data,
+              id: row.id,
+              uid: row.id,
+              email: row.email || data.email || "",
+              role: row.role || data.role || "student",
+              balance: Number(row.balance !== undefined ? row.balance : (data.balance || 0)),
+              updatedAt: row.updated_at || data.updatedAt
+            };
+          }
+        } catch (emErr) {}
+      }
+    }
+
     const res = await client.execute({
       sql: `SELECT data FROM smm_documents WHERE collection = ? AND id = ? LIMIT 1;`,
       args: [collection, id]
