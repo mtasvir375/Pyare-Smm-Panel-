@@ -665,12 +665,23 @@ export async function addBankAlert(params: {
   }
   saveBankAlerts(memoryAlerts);
 
-  // Sync to Firestore collections in background so website sees it under any domain / environment
+  // Sync to Firestore and Turso collections in background so website sees it under any domain / environment
   try {
     setRestDoc("bank_alerts", cleanUtr, newAlert).catch((err: any) => {
       console.warn("[FIRESTORE-REST-ALERT-SYNC-WARN]", err.message);
     });
+    setTursoDoc("bank_alerts", cleanUtr, newAlert).catch((err: any) => {
+      console.warn("[TURSO-ALERT-SYNC-WARN]", err?.message);
+    });
     setRestDoc("sms_forwarder_pool", cleanUtr, {
+      utr: cleanUtr,
+      amount: newAlert.amount,
+      sender: newAlert.senderBank,
+      rawSms: newAlert.rawText,
+      timestamp: newAlert.timestamp,
+      status: "available"
+    }).catch(() => {});
+    setTursoDoc("sms_forwarder_pool", cleanUtr, {
       utr: cleanUtr,
       amount: newAlert.amount,
       sender: newAlert.senderBank,
@@ -1531,6 +1542,12 @@ export async function startTelegramPolling(): Promise<{ success: boolean; messag
     const msg = netErr.message || "Failed to reach Telegram API";
     saveTelegramConfig({ lastError: msg });
     return { success: false, message: msg };
+  }
+
+  // If webhook mode is active, preserve webhook and do not delete it!
+  if (memoryConfig.mode === "webhook" && memoryConfig.webhookUrl) {
+    console.log(`[TELEGRAM-SERVICE] Active webhook preserved for custom domain: ${memoryConfig.webhookUrl}`);
+    return { success: true, message: `Webhook is active for ${memoryConfig.webhookUrl}. Telegram pushes updates directly.` };
   }
 
   // Clear any active webhook so Telegram getUpdates works cleanly

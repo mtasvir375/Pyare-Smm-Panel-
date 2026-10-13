@@ -12,6 +12,8 @@
     { "source": "/__/auth/:path*", "destination": "https://gen-lang-client-0629912823.firebaseapp.com/__/auth/:path*" },
     { "source": "/api/test-provider", "destination": "/api/test-provider" },
     { "source": "/api/proxy-provider", "destination": "/api/proxy-provider" },
+    { "source": "/api/telegram-webhook", "destination": "/api/telegram-webhook" },
+    { "source": "/api/sms-forwarder", "destination": "/api/sms-forwarder" },
     { "source": "/api/(.*)", "destination": "/api?endpoint=$1" },
     { "source": "/((?!api/|__).*)", "destination": "/index.html" }
   ]

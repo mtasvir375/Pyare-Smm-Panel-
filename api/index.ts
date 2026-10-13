@@ -835,7 +835,125 @@ export default async function handler(req: any, res: any) {
         };
 
         await setRestDoc("settings", "telegram_bot", updated);
+        await setTursoDoc("settings", "telegram_bot", updated).catch(() => {});
+
+        // Auto-configure Webhook on Telegram if requested or token provided
+        const tokToUse = updated.botToken || "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0";
+        if (body.action === "set_webhook" || (body.botToken && body.botToken.length >= 35)) {
+          const webhookUrl = body.webhookUrl || "https://www.pyaresmmpanel.online/api/telegram-webhook";
+          try {
+            await axios.post(`https://api.telegram.org/bot${tokToUse}/setWebhook`, {
+              url: webhookUrl,
+              allowed_updates: ["message", "channel_post", "edited_message", "business_message"],
+              drop_pending_updates: false
+            }, { timeout: 8000 });
+          } catch (e) {}
+        }
+
         return res.status(200).json({ success: true, message: "Telegram configuration saved." });
+      }
+    }
+
+    // 6.5 Telegram Webhook: /api/telegram-webhook or /api/admin/telegram-webhook
+    if (pathname === "/api/telegram-webhook" || pathname === "/api/admin/telegram-webhook") {
+      if (req.method === "GET") {
+        return res.status(200).json({ ok: true, status: "Telegram webhook endpoint active on Pyare SMM Panel" });
+      }
+      try {
+        const { processTelegramUpdate } = await import("../telegramBotService");
+        let token = "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0";
+        try {
+          const tgDoc = await getRestDoc("settings", "telegram_bot");
+          if (tgDoc?.botToken) token = tgDoc.botToken;
+        } catch (e) {}
+
+        const result = await processTelegramUpdate(body, token);
+
+        if (result.success && result.alert) {
+          const cleanUtr = result.alert.utr;
+          const amount = Number(result.alert.amount || 0);
+          const senderBank = result.alert.senderBank || "UPI Payment";
+
+          const client = getTursoClient();
+          if (client && cleanUtr && amount > 0) {
+            const nowIso = new Date().toISOString();
+            const alertData = JSON.stringify({
+              ...result.alert,
+              utr: cleanUtr,
+              amount,
+              senderBank,
+              isUsed: false,
+              status: "available",
+              updatedAt: nowIso
+            });
+
+            await client.execute({
+              sql: `INSERT INTO smm_documents (collection, id, data, updated_at)
+                    VALUES ('bank_alerts', ?, ?, ?)
+                    ON CONFLICT(collection, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at;`,
+              args: [cleanUtr, alertData, nowIso]
+            }).catch(() => {});
+
+            await client.execute({
+              sql: `INSERT INTO smm_documents (collection, id, data, updated_at)
+                    VALUES ('sms_forwarder_pool', ?, ?, ?)
+                    ON CONFLICT(collection, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at;`,
+              args: [cleanUtr, alertData, nowIso]
+            }).catch(() => {});
+          }
+        }
+
+        return res.status(200).json({ ok: true });
+      } catch (err: any) {
+        console.error("[TELEGRAM-WEBHOOK-ERR]", err.message);
+        return res.status(200).json({ ok: true });
+      }
+    }
+
+    // 6.6 SMS Forwarder Webhook: /api/sms-forwarder or /api/sms-webhook or /api/forwarder
+    if (pathname === "/api/sms-forwarder" || pathname === "/api/sms-webhook" || pathname === "/api/forwarder") {
+      try {
+        let rawText = "";
+        if (typeof body === "string") {
+          rawText = body;
+        } else if (typeof body === "object") {
+          rawText = body.text || body.message || body.body || body.content || body.sms || body.msg || body.data || body.sms_body || body.smsContent || "";
+        }
+        if (!rawText && req.query) {
+          rawText = req.query.text || req.query.message || req.query.body || req.query.content || req.query.sms || "";
+        }
+
+        const sender = body.from || body.sender || body.number || "SMS Forwarder App";
+        if (rawText) {
+          const { parseBankSms } = await import("../telegramBotService");
+          const parsed = parseBankSms(rawText, sender);
+          if (parsed.isValid && parsed.utr && parsed.amount > 0) {
+            const cleanUtr = parsed.utr;
+            const nowIso = new Date().toISOString();
+            const alertObj = {
+              id: `alert_${cleanUtr}_${Date.now()}`,
+              utr: cleanUtr,
+              amount: parsed.amount,
+              senderBank: parsed.bank,
+              rawText,
+              timestamp: nowIso,
+              isUsed: false,
+              status: "available"
+            };
+
+            await Promise.all([
+              setTursoDoc("bank_alerts", cleanUtr, alertObj).catch(() => {}),
+              setRestDoc("bank_alerts", cleanUtr, alertObj).catch(() => {}),
+              setTursoDoc("sms_forwarder_pool", cleanUtr, alertObj).catch(() => {}),
+              setRestDoc("sms_forwarder_pool", cleanUtr, alertObj).catch(() => {})
+            ]);
+
+            return res.status(200).json({ success: true, message: "SMS recorded to Turso", utr: cleanUtr, amount: parsed.amount });
+          }
+        }
+        return res.status(200).json({ success: true, message: "Received" });
+      } catch (smsErr: any) {
+        return res.status(200).json({ success: false, error: smsErr.message });
       }
     }
 
@@ -1165,6 +1283,22 @@ export default async function handler(req: any, res: any) {
               setTursoDoc("bank_alerts", matchUtr, alertPayload).catch(() => {})
             ]);
 
+            // Direct SQL execution on smm_users table in Turso to guarantee balance column is never stale
+            try {
+              const tursoClient = getTursoClient();
+              if (tursoClient) {
+                await tursoClient.execute({
+                  sql: `UPDATE smm_users SET balance = ?, data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;`,
+                  args: [newBal, JSON.stringify(userPayload), intent.userId]
+                });
+                await tursoClient.execute({
+                  sql: `INSERT INTO smm_deposits (id, user_id, amount, status, transaction_id, data, created_at)
+                        VALUES (?, ?, ?, 'approved', ?, ?, CURRENT_TIMESTAMP);`,
+                  args: [depId, intent.userId, creditAmt, matchUtr, JSON.stringify(newDepositSummary)]
+                }).catch(() => {});
+              }
+            } catch (tursoSqlErr) {}
+
             intent.status = "completed";
             intent.utr = matchUtr;
             intent.completedAt = Date.now();
@@ -1256,8 +1390,11 @@ export default async function handler(req: any, res: any) {
           return res.status(400).json({ success: false, error: "Please enter a valid 12-digit UPI / UTR Reference Number." });
         }
 
-        // Permanent distributed lock double-check
-        const doubleClaim = await getRestDoc("claimed_payments", cleanUtr).catch(() => null);
+        // Permanent distributed lock double-check (Turso + Firestore)
+        let doubleClaim = await getTursoDoc("claimed_payments", cleanUtr).catch(() => null);
+        if (!doubleClaim) {
+          doubleClaim = await getRestDoc("claimed_payments", cleanUtr).catch(() => null);
+        }
         if (doubleClaim && doubleClaim.credited) {
           return res.status(400).json({
             success: false,
@@ -1265,9 +1402,57 @@ export default async function handler(req: any, res: any) {
           });
         }
 
-        let alertDoc = await getRestDoc("bank_alerts", cleanUtr);
+        // 1. Try to find alert in Turso first (Fastest & most authoritative)
+        let alertDoc = await getTursoDoc("bank_alerts", cleanUtr).catch(() => null);
         if (!alertDoc) {
-          alertDoc = await getRestDoc("sms_forwarder_pool", cleanUtr);
+          alertDoc = await getTursoDoc("sms_forwarder_pool", cleanUtr).catch(() => null);
+        }
+
+        // 2. Fallback to Firestore
+        if (!alertDoc) {
+          alertDoc = await getRestDoc("bank_alerts", cleanUtr).catch(() => null);
+        }
+        if (!alertDoc) {
+          alertDoc = await getRestDoc("sms_forwarder_pool", cleanUtr).catch(() => null);
+        }
+
+        // 3. Fallback: LIVE TELEGRAM BOT QUERY (Direct fallback for custom domain)
+        if (!alertDoc) {
+          try {
+            const tgDoc = await getRestDoc("settings", "telegram_bot").catch(() => null);
+            const botTok = String(tgDoc?.botToken || "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0").trim();
+            if (botTok) {
+              const tgRes = await axios.get(`https://api.telegram.org/bot${botTok}/getUpdates?limit=50&timeout=2`, { timeout: 4000 }).catch(() => null);
+              if (tgRes?.data?.ok && Array.isArray(tgRes.data.result)) {
+                for (const u of tgRes.data.result) {
+                  const m = u.message || u.channel_post || u.edited_message;
+                  const txt = String(m?.text || m?.caption || "");
+                  if (txt && txt.includes(cleanUtr)) {
+                    const { parseBankSms } = await import("../telegramBotService");
+                    const parsed = parseBankSms(txt);
+                    const foundAmt = parsed.amount > 0 ? parsed.amount : Number(reqAmount || 0);
+                    if (foundAmt > 0) {
+                      alertDoc = {
+                        id: `alert_${cleanUtr}_${Date.now()}`,
+                        utr: cleanUtr,
+                        amount: foundAmt,
+                        senderBank: parsed.bank || "UPI Payment",
+                        rawText: txt,
+                        timestamp: new Date().toISOString(),
+                        isUsed: false,
+                        status: "available"
+                      };
+                      await Promise.all([
+                        setTursoDoc("bank_alerts", cleanUtr, alertDoc).catch(() => {}),
+                        setRestDoc("bank_alerts", cleanUtr, alertDoc).catch(() => {})
+                      ]);
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+          } catch (tgFallbackErr) {}
         }
 
         if (!alertDoc) {
@@ -1296,10 +1481,15 @@ export default async function handler(req: any, res: any) {
         const creditAmount = Number(alertDoc.amount || reqAmount || 0);
         let newBalance = creditAmount;
         let uDoc: any = null;
+
+        // Fetch current user from Turso first
         try {
-          uDoc = await getRestDoc("users", userId);
+          uDoc = await getTursoDoc("users", userId);
+          if (!uDoc) {
+            uDoc = await getRestDoc("users", userId);
+          }
           const currentBal = Number(uDoc?.balance ?? uDoc?.walletBalance ?? 0);
-          newBalance = currentBal + creditAmount;
+          newBalance = Number((currentBal + creditAmount).toFixed(2));
         } catch (e) {}
 
         const nowIso = new Date().toISOString();
@@ -1326,40 +1516,88 @@ export default async function handler(req: any, res: any) {
           userEmailRegistry.set(userId, instantEmailToPersist);
         }
 
+        const updatedUserDoc = {
+          ...uDoc,
+          email: instantEmailToPersist,
+          userEmail: instantEmailToPersist,
+          displayName: instantNameToPersist,
+          balance: newBalance,
+          latestDeposits: updatedLatestDeposits,
+          updatedAt: nowIso
+        };
+
+        const updatedDepositDoc = {
+          ...newDepositSummary,
+          userId,
+          userEmail: userEmail || "",
+          type: "deposit"
+        };
+
+        const updatedAlertDoc = {
+          ...alertDoc,
+          isUsed: true,
+          status: "claimed",
+          usedBy: userId,
+          usedByEmail: userEmail || "",
+          claimedBy: userId,
+          claimedAt: nowIso
+        };
+
+        const claimedRecord = {
+          orderRef: alertDoc.orderRef || cleanUtr,
+          utr: cleanUtr,
+          userId,
+          amount: creditAmount,
+          credited: true,
+          claimedAt: nowIso
+        };
+
+        // Persist to BOTH Turso and Firestore
         await Promise.all([
-          setRestDoc("users", userId, { 
-            ...uDoc, 
-            email: instantEmailToPersist,
-            userEmail: instantEmailToPersist,
-            displayName: instantNameToPersist,
-            balance: newBalance, 
-            latestDeposits: updatedLatestDeposits, 
-            updatedAt: nowIso 
-          }),
-          setRestDoc("deposits", depId, {
-            ...newDepositSummary,
-            userId,
-            userEmail: userEmail || "",
-            type: "deposit"
-          }),
-          setRestDoc("bank_alerts", cleanUtr, {
-            ...alertDoc,
-            isUsed: true,
-            status: "claimed",
-            usedBy: userId,
-            usedByEmail: userEmail || "",
-            claimedBy: userId,
-            claimedAt: nowIso
-          }),
-          setRestDoc("claimed_payments", cleanUtr, {
-            orderRef: alertDoc.orderRef || cleanUtr,
-            utr: cleanUtr,
-            userId,
-            amount: creditAmount,
-            credited: true,
-            claimedAt: nowIso
-          })
+          setTursoDoc("users", userId, updatedUserDoc).catch(() => {}),
+          setRestDoc("users", userId, updatedUserDoc).catch(() => {}),
+          setTursoDoc("deposits", depId, updatedDepositDoc).catch(() => {}),
+          setRestDoc("deposits", depId, updatedDepositDoc).catch(() => {}),
+          setTursoDoc("bank_alerts", cleanUtr, updatedAlertDoc).catch(() => {}),
+          setRestDoc("bank_alerts", cleanUtr, updatedAlertDoc).catch(() => {}),
+          setTursoDoc("claimed_payments", cleanUtr, claimedRecord).catch(() => {}),
+          setRestDoc("claimed_payments", cleanUtr, claimedRecord).catch(() => {})
         ]);
+
+        // Direct SQL update on smm_users table in Turso to guarantee balance column is never stale
+        try {
+          const tursoClient = getTursoClient();
+          if (tursoClient) {
+            await tursoClient.execute({
+              sql: `UPDATE smm_users SET balance = ?, data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;`,
+              args: [newBalance, JSON.stringify(updatedUserDoc), userId]
+            });
+            await tursoClient.execute({
+              sql: `INSERT INTO smm_deposits (id, user_id, amount, status, transaction_id, data, created_at)
+                    VALUES (?, ?, ?, 'approved', ?, ?, CURRENT_TIMESTAMP);`,
+              args: [depId, userId, creditAmount, cleanUtr, JSON.stringify(newDepositSummary)]
+            }).catch(() => {});
+          }
+        } catch (directSqlErr) {}
+
+        // Send Telegram Confirmation to Chat
+        try {
+          const tgDoc = await getRestDoc("settings", "telegram_bot").catch(() => null);
+          const botTok = (tgDoc?.botToken || "8268916986:AAGn5qnLukLpZGw9h9y1kcRzySd_2bS57k0").trim();
+          const cId = (tgDoc?.chatId || "-1004483507103").trim();
+          if (botTok && cId) {
+            await axios.post(`https://api.telegram.org/bot${botTok}/sendMessage`, {
+              chat_id: cId,
+              text: `✅ <b>Payment Verified & Credited to Wallet!</b>\n` +
+                    `💰 <b>Amount:</b> ₹${creditAmount.toFixed(2)}\n` +
+                    `🔢 <b>UTR:</b> <code>${cleanUtr}</code>\n` +
+                    `👤 <b>User:</b> ${userEmail || userId}\n` +
+                    `💵 <b>New Balance:</b> ₹${newBalance.toFixed(2)}\n` +
+                    `🏦 <b>Gateway:</b> ${alertDoc.senderBank || "UPI QR"}`,
+              parse_mode: "HTML"
+            }, { timeout: 4000 }).catch(() => {});
+          }
+        } catch (e) {}
 
         return res.status(200).json({
           success: true,

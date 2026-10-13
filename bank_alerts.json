@@ -1,11 +1,11 @@
 [
   {
-    "id": "alert_778899001122_1791221749614",
-    "utr": "778899001122",
-    "amount": 300,
+    "id": "alert_998877665544_1791900563568",
+    "utr": "998877665544",
+    "amount": 150,
     "senderBank": "UPI Payment",
-    "rawText": "Received ₹300 from Test User UTR:778899001122",
-    "timestamp": "2026-10-05T17:35:49.614Z",
+    "rawText": "A/C 1234 credited by Rs 150.00 on 13-10-26 by UPI Ref 998877665544",
+    "timestamp": "2026-10-13T14:09:23.568Z",
     "isUsed": false
   }
 ]
