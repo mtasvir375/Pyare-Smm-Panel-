@@ -2721,6 +2721,9 @@ export async function startServer() {
 
         if (!canonicalId) canonicalId = email || fallbackId || `user_${Date.now()}`;
 
+        const isAdminUser = (email === "mtasvir375@gmail.com" || canonicalId === "c4w6bjFk9leTy9SR2ijM0YyJVfx1");
+        const forcedRole = isAdminUser ? "admin" : "student";
+
         const existing = userMap.get(canonicalId);
         if (existing) {
           const exBal = Number(existing.balance ?? existing.walletBalance ?? 0);
@@ -2732,14 +2735,16 @@ export async function startServer() {
             id: canonicalId,
             uid: canonicalId,
             email: email || existing.email,
-            balance: bestBal
+            balance: bestBal,
+            role: forcedRole
           });
         } else {
           userMap.set(canonicalId, {
             ...d,
             id: canonicalId,
             uid: canonicalId,
-            email: email || (uid.includes("@") ? uid : "")
+            email: email || (uid.includes("@") ? uid : ""),
+            role: forcedRole
           });
         }
       };
@@ -2764,6 +2769,7 @@ export async function startServer() {
               if (typeof r.data === "string") {
                 try { parsed = JSON.parse(r.data); } catch (e) {}
               }
+              const isAdm = (uEmail.toLowerCase() === "mtasvir375@gmail.com" || uId === "c4w6bjFk9leTy9SR2ijM0YyJVfx1");
               const userData = {
                 ...parsed,
                 id: uId,
@@ -2771,7 +2777,7 @@ export async function startServer() {
                 email: uEmail || parsed.email || parsed.userEmail,
                 userEmail: uEmail || parsed.email || parsed.userEmail,
                 balance: Number(r.balance ?? parsed.balance ?? 0),
-                role: r.role || parsed.role || "user"
+                role: isAdm ? "admin" : "student"
               };
               addOrMergeUser(userData, uId);
               serverCache.users.set(uId, { data: userData, time: Date.now() });

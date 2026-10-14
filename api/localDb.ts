@@ -72,7 +72,7 @@ const INITIAL_USERS: Record<string, any> = {
     email: "mdsarfarajalam727712@gmail.com",
     userEmail: "mdsarfarajalam727712@gmail.com",
     displayName: "Sarfaraj Alam",
-    role: "admin",
+    role: "student",
     balance: 1,
     createdAt: new Date().toISOString()
   },
@@ -82,7 +82,7 @@ const INITIAL_USERS: Record<string, any> = {
     email: "mdtasvir888@gmail.com",
     userEmail: "mdtasvir888@gmail.com",
     displayName: "Tasvir",
-    role: "admin",
+    role: "student",
     balance: 10,
     createdAt: new Date().toISOString()
   },
@@ -92,7 +92,7 @@ const INITIAL_USERS: Record<string, any> = {
     email: "mdsaudalam621@gmail.com",
     userEmail: "mdsaudalam621@gmail.com",
     displayName: "Md Saud Alam",
-    role: "user",
+    role: "student",
     balance: 1500,
     createdAt: new Date().toISOString()
   }
