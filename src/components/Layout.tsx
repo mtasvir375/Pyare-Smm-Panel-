@@ -79,6 +79,35 @@ export default function Layout() {
     location.pathname === "/login" || 
     location.pathname.startsWith("/p/");
 
+  // If user is blocked by admin
+  if (userProfile && (userProfile.isBlocked || userProfile.blocked) && userProfile.email !== "mtasvir375@gmail.com") {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center p-6 text-center">
+        <div className="max-w-md w-full bg-gray-900 border border-red-500/30 p-8 rounded-3xl shadow-2xl space-y-4">
+          <div className="w-16 h-16 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto text-2xl font-bold">
+            🚫
+          </div>
+          <h1 className="text-xl font-bold text-white">Access Restricted</h1>
+          <p className="text-base text-red-400 font-semibold leading-relaxed">
+            admin has blocked you for inappropriate activity.
+          </p>
+          <button
+            onClick={async () => {
+              try {
+                const { auth } = await import("@/lib/firebase");
+                await auth.signOut();
+              } catch (e) {}
+              window.location.href = "/login";
+            }}
+            className="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition shadow-md text-sm mt-4"
+          >
+            Sign Out / Login Again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // If unauthenticated and trying to access any protected route, redirect to login page immediately
   if (!user && !isPublicPath) {
     return <Navigate to="/login" replace state={{ from: location }} />;

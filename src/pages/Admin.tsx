@@ -3046,17 +3046,41 @@ export default function Admin() {
                               </div>
                             </div>
                           </div>
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            className="rounded-xl shrink-0"
-                            onClick={() => {
-                              setEditingUser(u);
-                              setNewBalance(String(u.balance || 0));
-                            }}
-                          >
-                            Edit Wallet
-                          </Button>
+                          <div className="flex items-center gap-2">
+                            {email !== "mtasvir375@gmail.com" && (
+                              <Button
+                                variant={u.isBlocked || u.blocked ? "default" : "destructive"}
+                                size="sm"
+                                className="rounded-xl shrink-0"
+                                onClick={async () => {
+                                  const newBlocked = !(u.isBlocked || u.blocked);
+                                  try {
+                                    await axios.post(formatApiUrl("/api/admin/block-user"), {
+                                      userId: u.id || u.uid,
+                                      isBlocked: newBlocked
+                                    });
+                                    toast.success(newBlocked ? "User blocked successfully" : "User unblocked successfully");
+                                    handleSearchUser(true);
+                                  } catch (err: any) {
+                                    toast.error(err.response?.data?.error || "Failed to update block status");
+                                  }
+                                }}
+                              >
+                                {u.isBlocked || u.blocked ? "Unblock" : "Block"}
+                              </Button>
+                            )}
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="rounded-xl shrink-0"
+                              onClick={() => {
+                                setEditingUser(u);
+                                setNewBalance(String(u.balance || 0));
+                              }}
+                            >
+                              Edit Wallet
+                            </Button>
+                          </div>
                         </CardContent>
                       </Card>
                     );

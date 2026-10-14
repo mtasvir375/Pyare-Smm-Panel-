@@ -2961,6 +2961,35 @@ export async function startServer() {
     }
   });
 
+  app.post("/api/admin/block-user", async (req, res) => {
+    try {
+      const { userId, isBlocked } = req.body || {};
+      if (!userId) return res.status(400).json({ success: false, error: "Missing userId" });
+
+      const userDoc = await getDocSafe("users", userId);
+      const currentData = userDoc?.exists ? (userDoc.data() || {}) : {};
+      const updatedData = {
+        ...currentData,
+        isBlocked: !!isBlocked,
+        blocked: !!isBlocked,
+        updatedAt: new Date().toISOString()
+      };
+
+      await setDocSafe("users", userId, updatedData);
+      setLocalDoc("users", userId, updatedData);
+      tursoSetDoc("users", userId, updatedData).catch(() => {});
+      if (serverCache.users.has(userId)) {
+        const cached = serverCache.users.get(userId);
+        serverCache.users.set(userId, { data: updatedData, time: Date.now() });
+      }
+      savePersistentCache();
+
+      return res.json({ success: true, isBlocked: !!isBlocked });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
   app.get("/api/admin/all-deposits", async (req, res) => {
     try {
       const limitCount = Math.min(Number(req.query.limit) || 100, 100);
