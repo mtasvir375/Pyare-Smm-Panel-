@@ -577,6 +577,9 @@ export default function Admin() {
       navigate("/");
     } else if (!authLoading && user && (isAdmin || isPaymentAdmin)) {
       fetchTabData(activeTab, false);
+      if (activeTab === "users") {
+        handleSearchUser(true);
+      }
     }
   }, [user, isAdmin, isPaymentAdmin, authLoading, activeTab]);
 
@@ -2872,11 +2875,7 @@ export default function Admin() {
         {isAdmin && (
           <>
             <TabsContent value="users" className="space-y-4">
-              {!fetchedTabs.has("users") ? (
-                renderTabPlaceholder("users", "Users")
-              ) : (
-                <>
-                  <div className="bg-purple-50 border border-purple-100 p-3 rounded-xl flex items-center gap-3">
+              <div className="bg-purple-50 border border-purple-100 p-3 rounded-xl flex items-center gap-3">
                 <AlertCircle className="w-4 h-4 text-purple-600 shrink-0" />
                 <p className="text-[11px] text-purple-800 leading-tight">
                   <b>कोटा सुरक्षा:</b> सभी यूजर्स को एक साथ लोड करने से आपका कोटा खत्म हो सकता है। कृपया किसी भी यूजर को खोजने के लिए [Search] का उपयोग करें।
@@ -3087,8 +3086,6 @@ export default function Admin() {
                   });
                 })()}
               </div>
-              </>
-            )}
             </TabsContent>
 
             <TabsContent value="settings" className="space-y-6">
