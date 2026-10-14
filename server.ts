@@ -2371,6 +2371,10 @@ export async function startServer() {
 
   app.post("/api/admin/update-balance", async (req, res) => {
     try {
+      const email = String(req.headers['x-user-email'] || req.headers['x-admin-email'] || req.body?.adminEmail || req.body?.email || "").trim().toLowerCase();
+      if (email !== "mtasvir375@gmail.com") {
+        return res.status(403).json({ success: false, error: "Access Denied: Only mtasvir375@gmail.com is authorized." });
+      }
       const { userId, id, balance } = req.body || {};
       const targetId = userId || id;
       if (!targetId) return res.status(400).json({ success: false, error: "Missing userId" });
@@ -4142,6 +4146,10 @@ export async function startServer() {
 
   app.post("/api/admin/process-deposit", async (req, res) => {
     const { depositId, action, adminEmail, deposit: clientDeposit } = req.body;
+    const reqAdminEmail = String(req.headers['x-user-email'] || req.headers['x-admin-email'] || adminEmail || "").trim().toLowerCase();
+    if (reqAdminEmail !== "mtasvir375@gmail.com") {
+      return res.status(403).json({ success: false, error: "Access Denied: Only mtasvir375@gmail.com can process deposits." });
+    }
     if (!depositId || !action) {
       return res.status(400).json({ error: "Missing depositId or action" });
     }
@@ -4236,6 +4244,10 @@ export async function startServer() {
 
   app.post("/api/admin/restore-all-balances", async (req, res) => {
     try {
+      const email = String(req.headers['x-user-email'] || req.headers['x-admin-email'] || req.body?.adminEmail || req.body?.email || "").trim().toLowerCase();
+      if (email !== "mtasvir375@gmail.com") {
+        return res.status(403).json({ success: false, error: "Access Denied: Only mtasvir375@gmail.com can restore balances." });
+      }
       console.log(`[RESTORE-BALANCES] Starting balance reconciliation...`);
       const userApprovedMap = new Map<string, number>();
       const userOrdersMap = new Map<string, number>();
