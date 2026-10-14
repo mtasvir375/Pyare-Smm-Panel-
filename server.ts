@@ -1780,6 +1780,12 @@ export async function startServer() {
     if (col === "users") {
       const existing = serverCache.users.get(id);
       const existingData = existing ? (existing.data || existing) : {};
+      const userEmail = String(data.email || existingData.email || "").toLowerCase();
+      if (userEmail !== "mtasvir375@gmail.com" && id !== "c4w6bjFk9leTy9SR2ijM0YyJVfx1") {
+        data.role = "student";
+      } else {
+        data.role = "admin";
+      }
       serverCache.users.set(id, { data: { ...existingData, ...data }, time: Date.now() });
       savePersistentCache();
     }
@@ -1886,13 +1892,18 @@ export async function startServer() {
         if (existing) existingData = existing.data || existing;
       }
 
+      const userEmail = String(data.email || existingData.email || "").toLowerCase();
+      if (userEmail !== "mtasvir375@gmail.com" && id !== "c4w6bjFk9leTy9SR2ijM0YyJVfx1") {
+        data.role = "student";
+      } else {
+        data.role = "admin";
+      }
+
       const existingBal = Number(existingData.balance ?? existingData.walletBalance ?? 0);
       const incomingBal = Number(data.balance);
       
-      // Balance Guard: If incoming balance is 0 or undefined, but user already has a positive balance, preserve it!
-      if ((data.balance === undefined || isNaN(incomingBal) || (incomingBal === 0 && existingBal > 0)) && existingBal > 0) {
+      if (data.balance === undefined || isNaN(incomingBal)) {
         data.balance = existingBal;
-        console.log(`[BALANCE-GUARD] Preserved existing balance of ₹${existingBal} for user ${id} (prevented overwrite).`);
       }
       serverCache.users.set(id, { data: { ...existingData, ...data }, time: Date.now() });
       savePersistentCache();
@@ -2731,8 +2742,8 @@ export async function startServer() {
         const existing = userMap.get(canonicalId);
         if (existing) {
           const exBal = Number(existing.balance ?? existing.walletBalance ?? 0);
-          const inBal = Number(d.balance ?? d.walletBalance ?? 0);
-          const bestBal = (!isNaN(inBal) && inBal > 0) ? inBal : exBal;
+          const inBal = d.balance !== undefined ? Number(d.balance) : (d.walletBalance !== undefined ? Number(d.walletBalance) : exBal);
+          const bestBal = !isNaN(inBal) ? inBal : exBal;
           userMap.set(canonicalId, {
             ...existing,
             ...d,
@@ -3663,6 +3674,10 @@ export async function startServer() {
   // 2c. Admin Manual 1-Click Approve Intent
   app.post("/api/admin/payment-intents/approve", async (req, res) => {
     try {
+      const email = String(req.headers['x-user-email'] || req.headers['x-admin-email'] || req.body?.adminEmail || req.body?.email || "").trim().toLowerCase();
+      if (email !== "mtasvir375@gmail.com") {
+        return res.status(403).json({ success: false, error: "Access Denied: Only administrator (mtasvir375@gmail.com) can approve payment intents." });
+      }
       const { intentId, customUtr } = req.body || {};
       if (!intentId) {
         return res.status(400).json({ success: false, error: "Missing intentId" });
@@ -4435,6 +4450,26 @@ export async function startServer() {
     const { collection, id, data } = req.body;
     if (!collection || !id) return res.status(400).json({ error: "Missing collection or id" });
     
+    // CRITICAL SECURITY HARDENING:
+    if (collection === "users") {
+      if (data) {
+        delete data.balance;
+        delete data.walletBalance;
+        delete data.role;
+      }
+    }
+    if (collection === "deposits") {
+      if (data && data.status && data.status !== "pending") {
+        return res.status(403).json({ error: "Access Denied: Deposits can only be approved by admin." });
+      }
+    }
+    if (["settings", "providers", "bank_alerts", "api_keys"].includes(collection)) {
+      const email = String(req.headers['x-admin-email'] || req.headers['x-user-email'] || req.body?.adminEmail || "").trim().toLowerCase();
+      if (email !== "mtasvir375@gmail.com") {
+        return res.status(403).json({ error: "Access Denied: Admin authorization required." });
+      }
+    }
+
     try {
       const success = await setDocSafe(collection, id, data, req.headers.authorization as string);
       res.json({ success });
@@ -4451,6 +4486,26 @@ export async function startServer() {
     const { collection, id, data } = req.body;
     if (!collection || !id) return res.status(400).json({ error: "Missing collection or id" });
     
+    // CRITICAL SECURITY HARDENING:
+    if (collection === "users") {
+      if (data) {
+        delete data.balance;
+        delete data.walletBalance;
+        delete data.role;
+      }
+    }
+    if (collection === "deposits") {
+      if (data && data.status && data.status !== "pending") {
+        return res.status(403).json({ error: "Access Denied: Deposits can only be approved by admin." });
+      }
+    }
+    if (["settings", "providers", "bank_alerts", "api_keys"].includes(collection)) {
+      const email = String(req.headers['x-admin-email'] || req.headers['x-user-email'] || req.body?.adminEmail || "").trim().toLowerCase();
+      if (email !== "mtasvir375@gmail.com") {
+        return res.status(403).json({ error: "Access Denied: Admin authorization required." });
+      }
+    }
+
     try {
       const success = await updateDocSafe(collection, id, data, req.headers.authorization as string);
       res.json({ success });
@@ -4466,6 +4521,13 @@ export async function startServer() {
   app.post("/api/db/delete", async (req, res) => {
     const { collection, id } = req.body;
     if (!collection || !id) return res.status(400).json({ error: "Missing collection or id" });
+
+    if (["users", "deposits", "settings", "providers", "bank_alerts", "api_keys"].includes(collection)) {
+      const email = String(req.headers['x-admin-email'] || req.headers['x-user-email'] || req.body?.adminEmail || "").trim().toLowerCase();
+      if (email !== "mtasvir375@gmail.com") {
+        return res.status(403).json({ error: "Access Denied: Admin authorization required." });
+      }
+    }
     
     try {
       const success = await deleteDocSafe(collection, id);
@@ -5839,6 +5901,10 @@ export async function startServer() {
   // Manual UTR and SMS Resolver (For Admin Instant Credit)
   app.post("/api/sms-forwarder/manual-resolve", async (req, res) => {
     try {
+      const email = String(req.headers['x-user-email'] || req.headers['x-admin-email'] || req.body?.adminEmail || req.body?.email || "").trim().toLowerCase();
+      if (email !== "mtasvir375@gmail.com") {
+        return res.status(403).json({ error: "Access Denied: Only administrator (mtasvir375@gmail.com) can manually resolve UTRs." });
+      }
       const { utr, amount: reqAmount, userEmail, userId: reqUserId, adminEmail } = req.body || {};
       const cleanUtr = String(utr || "").replace(/\D/g, "");
       if (cleanUtr.length !== 12) {

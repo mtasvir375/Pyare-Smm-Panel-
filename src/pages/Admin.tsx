@@ -1003,7 +1003,16 @@ export default function Admin() {
           const userDoc = await dbClient.getDoc("users", matchedUserId);
           const currentBal = Number(userDoc?.balance || 0);
           const updatedBal = currentBal + amtToUse;
-          await dbClient.updateDoc("users", matchedUserId, { balance: updatedBal });
+          await axios.post(formatApiUrl('/api/admin/update-balance'), {
+            userId: matchedUserId,
+            balance: updatedBal,
+            adminEmail: 'mtasvir375@gmail.com'
+          }, {
+            headers: {
+              'x-admin-email': 'mtasvir375@gmail.com',
+              'x-user-email': 'mtasvir375@gmail.com'
+            }
+          });
           await dbClient.addDoc("deposits", {
             userId: matchedUserId,
             userEmail: emailToUse || userDoc?.email || "",
@@ -1160,8 +1169,15 @@ export default function Admin() {
         const userProfile = await dbClient.getUserProfile(uId);
         if (userProfile) {
           const currentBalance = Number(userProfile.balance) || 0;
-          await dbClient.updateUserProfile(uId, {
-            balance: currentBalance + Number(order.totalPrice || order.total_price)
+          await axios.post(formatApiUrl('/api/admin/update-balance'), {
+            userId: uId,
+            balance: currentBalance + Number(order.totalPrice || order.total_price),
+            adminEmail: 'mtasvir375@gmail.com'
+          }, {
+            headers: {
+              'x-admin-email': 'mtasvir375@gmail.com',
+              'x-user-email': 'mtasvir375@gmail.com'
+            }
           });
         }
       }
@@ -1434,8 +1450,15 @@ export default function Admin() {
     if (!editingUser || newBalance === "") return;
     try {
       const updatedBal = Number(newBalance);
-      await dbClient.updateDoc("users", editingUser.id, {
-        balance: updatedBal
+      await axios.post(formatApiUrl('/api/admin/update-balance'), {
+        userId: editingUser.id,
+        balance: updatedBal,
+        adminEmail: 'mtasvir375@gmail.com'
+      }, {
+        headers: {
+          'x-admin-email': 'mtasvir375@gmail.com',
+          'x-user-email': 'mtasvir375@gmail.com'
+        }
       });
       setAllUsers(prev => prev.map(u => (u.id === editingUser.id || (editingUser.email && u.email && u.email.toLowerCase() === editingUser.email.toLowerCase())) ? { ...u, balance: updatedBal } : u));
       toast.success("User wallet balance updated!");

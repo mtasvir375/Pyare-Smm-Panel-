@@ -1,7 +1,7 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Helper functions
+    
     function isSignedIn() {
       return request.auth != null;
     }
@@ -9,82 +9,93 @@ service cloud.firestore {
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
-
+    
     function isAdmin() {
-      return true;
+      return isSignedIn() && request.auth.token.email.lower() == 'mtasvir375@gmail.com';
     }
 
-    function isPaymentAdmin() {
-      return true;
-    }
-
-    // User profiles
+    // User profiles: strictly locked! No normal user can ever update their balance or role!
     match /users/{userId} {
-      allow read, write: if true;
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow create: if isSignedIn() && request.auth.uid == userId 
+        && (!('role' in request.resource.data) || request.resource.data.role == 'student' || isAdmin())
+        && (!('balance' in request.resource.data) || request.resource.data.balance <= 1.0 || isAdmin());
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
 
-    // Orders
+    // Orders: users can only read their own and create pending orders
     match /orders/{orderId} {
-      allow read, write: if true;
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAdmin();
     }
 
-    // Courses (Services)
-    match /courses/{courseId} {
-      allow read, write: if true;
-    }
-
-    // Settings
-    match /settings/{settingId} {
-      allow read, write: if true;
-    }
-
-    // Providers
-    match /providers/{providerId} {
-      allow read, write: if true;
-    }
-
-    // Deposits
+    // Deposits: users can only submit pending deposit requests. Only admin can approve or modify.
     match /deposits/{depositId} {
-      allow read, write: if true;
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid 
+        && request.resource.data.status == 'pending';
+      allow update, delete: if isAdmin();
     }
 
-    // Stats
-    match /stats/counters {
-      allow read, write: if true;
+    // Courses (Services): public read, admin-only write
+    match /courses/{courseId} {
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
-    // Logs
-    match /logs/{logId} {
-      allow read, write: if true;
+    // Providers: strict admin-only
+    match /providers/{providerId} {
+      allow read, write: if isAdmin();
     }
 
-    // Transactions
+    // Settings: public read for payment QR, admin-only write
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Transactions: owner read, admin write
     match /transactions/{txnId} {
-      allow read, write: if true;
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if isAdmin();
     }
 
-    // SMS Forwarder pool, logs & pending user claims
+    // Payment Intents: owner read/create, admin-only update
+    match /payment_intents/{intentId} {
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // Bank Alerts & SMS Forwarder: strict admin-only
+    match /bank_alerts/{alertId} {
+      allow read, write: if isAdmin();
+    }
     match /sms_forwarder_pool/{utr} {
-      allow read, write: if true;
+      allow read, write: if isAdmin();
     }
     match /sms_forwarder_logs/{logId} {
-      allow read, write: if true;
+      allow read, write: if isAdmin();
     }
     match /pending_user_utrs/{utr} {
-      allow read, write: if true;
+      allow read, write: if isAdmin();
     }
-
-    // API Keys (for SMM provider API)
     match /api_keys/{apiKey} {
-      allow read, write: if true;
+      allow read, write: if isAdmin();
+    }
+    match /stats/{statId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /logs/{logId} {
+      allow read, write: if isAdmin();
     }
 
-    // Payment Intents & Bank Alerts for Instant Auto UPI QR
-    match /payment_intents/{intentId} {
-      allow read, write: if true;
-    }
-    match /bank_alerts/{alertId} {
-      allow read, write: if true;
+    // Default deny all other paths
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

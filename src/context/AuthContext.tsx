@@ -52,15 +52,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           } catch (e) {}
         }
         if (profile) {
-          setUserProfile((prev) => {
-            // Protect against race condition where recently credited balance is higher than a slightly delayed response
-            if (prev && typeof prev.balance === "number" && typeof profile.balance === "number") {
-              if (prev.balance > profile.balance) {
-                return { ...profile, balance: prev.balance };
-              }
-            }
-            return profile;
-          });
+          const isAdminEmail = (user.email || '').trim().toLowerCase() === 'mtasvir375@gmail.com';
+          profile.role = isAdminEmail ? 'admin' : 'student';
+          setUserProfile(profile);
           try {
             localStorage.setItem(`user_profile_${user.uid}`, JSON.stringify(profile));
           } catch (e) {}
@@ -127,12 +121,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
           
           if (!profile) {
-            // If we have a local cached profile, use it temporarily
-            if (localCached && typeof localCached.balance === "number" && localCached.balance !== 17702.85 && localCached.balance !== 16751.25) {
-              profile = localCached;
-            } else {
-              const isAdminEmail = firebaseUser.email === 'mtasvir375@gmail.com';
-              const newProfile: any = {
+            const isAdminEmail = (firebaseUser.email || '').trim().toLowerCase() === 'mtasvir375@gmail.com';
+            const newProfile: any = {
                 uid: firebaseUser.uid,
                 email: firebaseUser.email || '',
                 displayName: firebaseUser.displayName || 'User',
@@ -151,7 +141,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 profile = { ...newProfile, createdAt: new Date() };
               }
             }
-          }
 
           if (profile) {
             const isAdminEmail = firebaseUser.email === 'mtasvir375@gmail.com';

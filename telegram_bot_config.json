@@ -8,8 +8,8 @@
   "botUsername": "BbbSmart_bot",
   "startedAt": "2026-10-13T14:35:36.382Z",
   "lastPolledAt": "2026-10-13T14:37:15.460Z",
-  "mode": "polling",
+  "mode": "webhook",
   "instantQrEnabled": true,
   "manualQrEnabled": false,
-  "lastError": "Conflict: Waiting for other connection to close..."
+  "webhookUrl": "https://www.pyaresmmpanel.online/api/telegram-webhook"
 }

@@ -509,7 +509,6 @@ export default function Courses() {
         ].slice(0, 10);
 
         await dbClient.updateUserProfile(user.uid, {
-          balance: finalBal,
           latestOrders: updatedLatestOrders,
           lastOrderedAt: new Date().toISOString()
         });

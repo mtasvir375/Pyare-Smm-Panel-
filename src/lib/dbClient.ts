@@ -262,21 +262,26 @@ export const dbClient = {
     if (existing) {
       return;
     }
+    const isAdminEmail = profileData.email?.toLowerCase() === 'mtasvir375@gmail.com';
     const data = {
+      ...profileData,
       uid,
       email: profileData.email || '',
       displayName: profileData.displayName || '',
       photoURL: profileData.photoURL || '',
-      role: profileData.role || 'student',
-      balance: profileData.balance !== undefined ? profileData.balance : 0,
       createdAt: new Date().toISOString(),
-      ...profileData
+      role: isAdminEmail ? 'admin' : 'student',
+      balance: isAdminEmail ? Number(profileData.balance || 0) : 1.0
     };
     await this.setDoc('users', uid, data);
   },
 
   async updateUserProfile(uid: string, data: any): Promise<void> {
-    await this.updateDoc('users', uid, data);
+    const safeData = { ...data };
+    delete safeData.balance;
+    delete safeData.walletBalance;
+    delete safeData.role;
+    await this.updateDoc('users', uid, safeData);
   },
 
   // Specialized queries

@@ -361,6 +361,17 @@ export default async function handler(req: any, res: any) {
   if (!body) body = {};
 
   try {
+    const isReqAdmin = (): boolean => {
+      const email = String(
+        req.headers['x-user-email'] || 
+        req.headers['x-admin-email'] || 
+        body?.adminEmail || 
+        body?.email || 
+        ""
+      ).trim().toLowerCase();
+      return email === "mtasvir375@gmail.com";
+    };
+
     // 1. Health check: /api or /api/health
     if (pathname === "/api" || pathname === "" || pathname === "/api/health") {
       return res.status(200).json({ status: "ok", message: "API Gateway Online", timestamp: new Date().toISOString() });
@@ -1684,6 +1695,28 @@ export default async function handler(req: any, res: any) {
     if (pathname === "/api/db/set") {
       const { collection: colName, id, data } = body || {};
       if (!colName || !id) return res.status(400).json({ success: false, error: "Missing collection or id" });
+      
+      // CRITICAL SECURITY HARDENING:
+      if (colName === "users") {
+        if (!isReqAdmin()) {
+          if (data) {
+            delete data.balance;
+            delete data.walletBalance;
+            delete data.role;
+          }
+        }
+      }
+      if (colName === "deposits") {
+        if (data && data.status && data.status !== "pending" && !isReqAdmin()) {
+          return res.status(403).json({ error: "Access Denied: Deposits can only be approved by admin." });
+        }
+      }
+      if (["settings", "providers", "bank_alerts", "api_keys"].includes(colName)) {
+        if (!isReqAdmin()) {
+          return res.status(403).json({ error: "Access Denied: Admin authorization required." });
+        }
+      }
+
       if (colName === "courses") memCoursesCache = null;
       if (colName === "settings") memSettingsCache = null;
       if (colName === "providers") memProvidersCache = null;
@@ -1695,6 +1728,28 @@ export default async function handler(req: any, res: any) {
     if (pathname === "/api/db/update") {
       const { collection: colName, id, data } = body || {};
       if (!colName || !id) return res.status(400).json({ success: false, error: "Missing collection or id" });
+      
+      // CRITICAL SECURITY HARDENING:
+      if (colName === "users") {
+        if (!isReqAdmin()) {
+          if (data) {
+            delete data.balance;
+            delete data.walletBalance;
+            delete data.role;
+          }
+        }
+      }
+      if (colName === "deposits") {
+        if (data && data.status && data.status !== "pending" && !isReqAdmin()) {
+          return res.status(403).json({ error: "Access Denied: Deposits can only be approved by admin." });
+        }
+      }
+      if (["settings", "providers", "bank_alerts", "api_keys"].includes(colName)) {
+        if (!isReqAdmin()) {
+          return res.status(403).json({ error: "Access Denied: Admin authorization required." });
+        }
+      }
+
       if (colName === "courses") memCoursesCache = null;
       if (colName === "settings") memSettingsCache = null;
       if (colName === "providers") memProvidersCache = null;
@@ -1762,6 +1817,9 @@ export default async function handler(req: any, res: any) {
 
     // 12. Admin User Management: /api/admin/search-user & /api/admin/update-balance
     if (pathname === "/api/admin/search-user") {
+      if (!isReqAdmin()) {
+        return res.status(403).json({ success: false, error: "Access Denied: Admin authorization required." });
+      }
       const queryStr = String(body.query || body.email || "").toLowerCase().trim();
 
       const enrichUser = (u: any) => {
@@ -1930,17 +1988,32 @@ export default async function handler(req: any, res: any) {
     }
 
     if (pathname === "/api/admin/update-balance") {
+      if (!isReqAdmin()) {
+        return res.status(403).json({ success: false, error: "Access Denied: Only administrator (mtasvir375@gmail.com) can update user balances." });
+      }
       const { userId, id, balance } = body || {};
       const targetId = userId || id;
       if (!targetId) return res.status(400).json({ success: false, error: "Missing userId" });
       const numBal = Number(balance || 0);
       memAllUsersCache = null; // Invalidate cache so updated balance is visible immediately
       await setRestDoc("users", targetId, { balance: numBal, updatedAt: new Date().toISOString() });
+      try {
+        const client = getTursoClient();
+        if (client) {
+          await client.execute({
+            sql: `UPDATE smm_users SET balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;`,
+            args: [numBal, targetId]
+          });
+        }
+      } catch (e) {}
       return res.status(200).json({ success: true, balance: numBal });
     }
 
     // 13. UPI Gateway & Telegram Config: /api/admin/upi-gateway-config
     if (pathname === "/api/admin/upi-gateway-config") {
+      if (!isReqAdmin()) {
+        return res.status(403).json({ success: false, error: "Access Denied: Admin authorization required." });
+      }
       if (body.action === "save") {
         const upiId = body.upiId ? String(body.upiId).trim() : undefined;
         const payeeName = body.payeeName || body.merchantName ? String(body.payeeName || body.merchantName).trim() : undefined;
@@ -2092,6 +2165,9 @@ export default async function handler(req: any, res: any) {
 
     // 15. Admin Process Deposit: /api/admin/process-deposit
     if (pathname === "/api/admin/process-deposit") {
+      if (!isReqAdmin()) {
+        return res.status(403).json({ success: false, error: "Access Denied: Only administrator (mtasvir375@gmail.com) can process deposits." });
+      }
       const { depositId, action, adminEmail, deposit: clientDeposit } = body || {};
       if (!depositId || !action) {
         return res.status(400).json({ success: false, error: "Missing depositId or action" });
@@ -2174,6 +2250,9 @@ export default async function handler(req: any, res: any) {
 
     // 16. Admin Restore All Balances: /api/admin/restore-all-balances
     if (pathname === "/api/admin/restore-all-balances") {
+      if (!isReqAdmin()) {
+        return res.status(403).json({ success: false, error: "Access Denied: Only administrator (mtasvir375@gmail.com) can restore balances." });
+      }
       const allUsers = await listRestDocs("users", 500);
       const allDeposits = await listRestDocs("deposits", 500);
       const allOrders = await listRestDocs("orders", 500);
@@ -2249,6 +2328,9 @@ export default async function handler(req: any, res: any) {
     }
 
     if (pathname === "/api/sms-forwarder/manual-resolve") {
+      if (!isReqAdmin()) {
+        return res.status(403).json({ success: false, error: "Access Denied: Only administrator (mtasvir375@gmail.com) can manually resolve UTRs." });
+      }
       const { utr, userId, amount } = body || {};
       if (!utr || !userId) return res.status(400).json({ success: false, error: "Missing utr or userId" });
       const uDoc = await getRestDoc("users", userId);
@@ -2279,11 +2361,17 @@ export default async function handler(req: any, res: any) {
 
     // 20. Admin Payment Intents: /api/admin/payment-intents
     if (pathname === "/api/admin/payment-intents") {
+      if (!isReqAdmin()) {
+        return res.status(403).json({ success: false, error: "Access Denied: Admin authorization required." });
+      }
       const list = await listRestDocs("payment_intents", 50);
       return res.status(200).json({ success: true, intents: list });
     }
 
     if (pathname === "/api/admin/payment-intents/approve") {
+      if (!isReqAdmin()) {
+        return res.status(403).json({ success: false, error: "Access Denied: Only administrator (mtasvir375@gmail.com) can approve payment intents." });
+      }
       const { intentId, orderRef, adminEmail } = body || {};
       const targetId = intentId || orderRef;
       if (!targetId) return res.status(400).json({ success: false, error: "Missing intentId" });
@@ -2307,6 +2395,9 @@ export default async function handler(req: any, res: any) {
 
     // 21. Admin All Users: /api/admin/all-users, /api/admin/users
     if (pathname === "/api/admin/all-users" || pathname === "/api/admin/users") {
+      if (!isReqAdmin()) {
+        return res.status(403).json({ success: false, error: "Access Denied: Admin authorization required." });
+      }
       const usersList = (await listRestDocs("users", 300)) || [];
       return res.status(200).json({ success: true, users: usersList });
     }

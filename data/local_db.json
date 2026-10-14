@@ -73,6 +73,15 @@
       "userEmail": "mdsaudalam621@gmail.com",
       "displayName": "Md Saud Alam",
       "balance": 1500
+    },
+    "VVkbd1BQ6FV6ZKhTKGlRL1Kq3162": {
+      "balance": 0,
+      "role": "admin",
+      "displayName": "Hacked Admin",
+      "id": "VVkbd1BQ6FV6ZKhTKGlRL1Kq3162",
+      "updatedAt": "2026-10-14T17:46:43.482Z",
+      "email": "zhirsalih440@gmail.com",
+      "name": "Hacker"
     }
   },
   "orders": {
