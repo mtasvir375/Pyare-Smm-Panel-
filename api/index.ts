@@ -1733,6 +1733,31 @@ export default async function handler(req: any, res: any) {
       if (colName === "providers") memProvidersCache = null;
       if (colName === "users") memAllUsersCache = null;
       const saved = await setRestDoc(colName, id, data || {});
+      if (colName === "users") {
+        await setTursoDoc("users", id, saved).catch(() => {});
+        try {
+          const client = getTursoClient();
+          if (client) {
+            await client.execute({
+              sql: `INSERT INTO smm_users (id, email, role, balance, data, updated_at)
+                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(id) DO UPDATE SET
+                      email = excluded.email,
+                      role = excluded.role,
+                      balance = excluded.balance,
+                      data = excluded.data,
+                      updated_at = excluded.updated_at;`,
+              args: [
+                id,
+                saved.email || saved.userEmail || "",
+                saved.role || (id === "mtasvir" || saved.email === "mtasvir375@gmail.com" ? "admin" : "user"),
+                Number(saved.balance ?? saved.walletBalance ?? 0),
+                JSON.stringify(saved)
+              ]
+            });
+          }
+        } catch (e) {}
+      }
       return res.status(200).json({ success: true, data: saved });
     }
 
@@ -1768,6 +1793,31 @@ export default async function handler(req: any, res: any) {
       const existing = await getRestDoc(colName, id, true) || {};
       const merged = { ...existing, ...(data || {}), id, updatedAt: new Date().toISOString() };
       const updated = await setRestDoc(colName, id, merged);
+      if (colName === "users") {
+        await setTursoDoc("users", id, updated).catch(() => {});
+        try {
+          const client = getTursoClient();
+          if (client) {
+            await client.execute({
+              sql: `INSERT INTO smm_users (id, email, role, balance, data, updated_at)
+                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(id) DO UPDATE SET
+                      email = excluded.email,
+                      role = excluded.role,
+                      balance = excluded.balance,
+                      data = excluded.data,
+                      updated_at = excluded.updated_at;`,
+              args: [
+                id,
+                updated.email || updated.userEmail || "",
+                updated.role || (id === "mtasvir" || updated.email === "mtasvir375@gmail.com" ? "admin" : "user"),
+                Number(updated.balance ?? updated.walletBalance ?? 0),
+                JSON.stringify(updated)
+              ]
+            });
+          }
+        } catch (e) {}
+      }
       return res.status(200).json({ success: true, data: updated });
     }
 
@@ -1918,7 +1968,7 @@ export default async function handler(req: any, res: any) {
 
         // B. Fetch from Turso smm_documents table for collection = 'users'
         try {
-          const docs = await listTursoDocs("users", 300);
+          const docs = await listTursoDocs("users", 500);
           if (Array.isArray(docs)) {
             for (const d of docs) {
               const uId = String(d.id || d.uid || "").trim();
@@ -1932,14 +1982,37 @@ export default async function handler(req: any, res: any) {
                   email: finalEmail,
                   userEmail: finalEmail,
                   displayName: d.displayName || d.name || known?.name || (finalEmail ? finalEmail.split("@")[0] : "User"),
-                  balance: Number(d.balance ?? 0)
+                  balance: Number(d.balance ?? d.walletBalance ?? 0)
                 });
               }
             }
           }
         } catch (fetchErr: any) {}
 
-        // C. Always ensure known registry users are present
+        // C. Fetch from REST docs users collection
+        try {
+          const restUsers = await listRestDocs("users", 500);
+          if (Array.isArray(restUsers)) {
+            for (const d of restUsers) {
+              const uId = String(d.id || d.uid || "").trim();
+              if (uId && !userMap.has(uId)) {
+                const known = KNOWN_USER_EMAILS[uId];
+                const finalEmail = String(d.email || d.userEmail || known?.email || "").trim().toLowerCase();
+                userMap.set(uId, {
+                  ...d,
+                  id: uId,
+                  uid: uId,
+                  email: finalEmail,
+                  userEmail: finalEmail,
+                  displayName: d.displayName || d.name || known?.name || (finalEmail ? finalEmail.split("@")[0] : "User"),
+                  balance: Number(d.balance ?? d.walletBalance ?? 0)
+                });
+              }
+            }
+          }
+        } catch (e) {}
+
+        // D. Always ensure known registry users are present
         for (const [kUid, kInfo] of Object.entries(KNOWN_USER_EMAILS)) {
           if (!userMap.has(kUid)) {
             userMap.set(kUid, {
@@ -1949,38 +2022,11 @@ export default async function handler(req: any, res: any) {
               userEmail: kInfo.email,
               displayName: kInfo.name || kInfo.email.split("@")[0],
               role: kInfo.email === "mtasvir375@gmail.com" ? "admin" : "user",
-              balance: 0
+              balance: kInfo.email === "mtasvir375@gmail.com" ? 1000 : 0
             });
-          } else {
-            const ex = userMap.get(kUid);
-            if (!ex.email || ex.email.includes("@smmuser.com")) {
-              ex.email = kInfo.email;
-              ex.userEmail = kInfo.email;
-              ex.displayName = kInfo.name || kInfo.email.split("@")[0];
-            }
           }
         }
 
-        if (userMap.size === 0) {
-          userMap.set("user_mtasvir", {
-            id: "user_mtasvir",
-            uid: "user_mtasvir",
-            email: "mtasvir375@gmail.com",
-            userEmail: "mtasvir375@gmail.com",
-            displayName: "Mtasvir Admin",
-            role: "admin",
-            balance: 500
-          });
-          userMap.set("user_test1", {
-            id: "user_test1",
-            uid: "user_test1",
-            email: "test_e2e@pyaresmm.com",
-            userEmail: "test_e2e@pyaresmm.com",
-            displayName: "Test User E2E",
-            role: "user",
-            balance: 100
-          });
-        }
         usersList = Array.from(userMap.values());
         memAllUsersCache = { data: usersList, time: now };
       }
@@ -2429,7 +2475,96 @@ export default async function handler(req: any, res: any) {
       if (!isReqAdmin()) {
         return res.status(403).json({ success: false, error: "Access Denied: Admin authorization required." });
       }
-      const usersList = (await listRestDocs("users", 300)) || [];
+      const userMap = new Map<string, any>();
+      try {
+        const client = getTursoClient();
+        if (client) {
+          const res = await client.execute("SELECT id, email, role, balance, data, updated_at FROM smm_users;");
+          if (res && res.rows) {
+            for (const r of res.rows) {
+              const uId = String(r.id || "").trim();
+              if (!uId) continue;
+              const uEmail = String(r.email || "").trim().toLowerCase();
+              let parsed: any = {};
+              if (typeof r.data === "string") {
+                try { parsed = JSON.parse(r.data); } catch (e) {}
+              }
+              const known = KNOWN_USER_EMAILS[uId];
+              const finalEmail = uEmail || parsed.email || parsed.userEmail || known?.email || "";
+              userMap.set(uId, {
+                ...parsed,
+                id: uId,
+                uid: uId,
+                email: finalEmail,
+                userEmail: finalEmail,
+                displayName: parsed.displayName || parsed.name || known?.name || (finalEmail ? finalEmail.split("@")[0] : "User"),
+                balance: Number(r.balance ?? parsed.balance ?? parsed.walletBalance ?? 0),
+                role: r.role || parsed.role || (finalEmail === "mtasvir375@gmail.com" ? "admin" : "user")
+              });
+            }
+          }
+        }
+      } catch (tErr) {}
+
+      try {
+        const docs = await listTursoDocs("users", 500);
+        if (Array.isArray(docs)) {
+          for (const d of docs) {
+            const uId = String(d.id || d.uid || "").trim();
+            if (uId && !userMap.has(uId)) {
+              const known = KNOWN_USER_EMAILS[uId];
+              const finalEmail = String(d.email || d.userEmail || known?.email || "").trim().toLowerCase();
+              userMap.set(uId, {
+                ...d,
+                id: uId,
+                uid: uId,
+                email: finalEmail,
+                userEmail: finalEmail,
+                displayName: d.displayName || d.name || known?.name || (finalEmail ? finalEmail.split("@")[0] : "User"),
+                balance: Number(d.balance ?? d.walletBalance ?? 0)
+              });
+            }
+          }
+        }
+      } catch (e) {}
+
+      try {
+        const restUsers = await listRestDocs("users", 500);
+        if (Array.isArray(restUsers)) {
+          for (const d of restUsers) {
+            const uId = String(d.id || d.uid || "").trim();
+            if (uId && !userMap.has(uId)) {
+              const known = KNOWN_USER_EMAILS[uId];
+              const finalEmail = String(d.email || d.userEmail || known?.email || "").trim().toLowerCase();
+              userMap.set(uId, {
+                ...d,
+                id: uId,
+                uid: uId,
+                email: finalEmail,
+                userEmail: finalEmail,
+                displayName: d.displayName || d.name || known?.name || (finalEmail ? finalEmail.split("@")[0] : "User"),
+                balance: Number(d.balance ?? d.walletBalance ?? 0)
+              });
+            }
+          }
+        }
+      } catch (e) {}
+
+      for (const [kUid, kInfo] of Object.entries(KNOWN_USER_EMAILS)) {
+        if (!userMap.has(kUid)) {
+          userMap.set(kUid, {
+            id: kUid,
+            uid: kUid,
+            email: kInfo.email,
+            userEmail: kInfo.email,
+            displayName: kInfo.name || kInfo.email.split("@")[0],
+            role: kInfo.email === "mtasvir375@gmail.com" ? "admin" : "user",
+            balance: kInfo.email === "mtasvir375@gmail.com" ? 1000 : 0
+          });
+        }
+      }
+
+      const usersList = Array.from(userMap.values());
       return res.status(200).json({ success: true, users: usersList });
     }
 
