@@ -733,7 +733,7 @@ export function verifyAndClaimAlert(
       amount: amt,
       senderBank: "UPI Auto-Verified Payment",
       rawText: `Auto-verified payment UTR ${cleanUtr} for ₹${amt}`,
-      receivedAt: new Date().toISOString(),
+      timestamp: new Date().toISOString(),
       isUsed: false
     };
     memoryAlerts.push(alert);

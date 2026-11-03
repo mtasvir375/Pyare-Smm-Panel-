@@ -161,6 +161,7 @@ export default function Admin() {
   const [guideVideoUrl, setGuideVideoUrl] = useState("");
   const [selectedTheme, setSelectedTheme] = useState("amber");
   const [selectedFestivalTheme, setSelectedFestivalTheme] = useState("none");
+  const [mobileOnlyMode, setMobileOnlyMode] = useState(false);
   const [instantQrEnabled, setInstantQrEnabled] = useState(true);
   const [manualQrEnabled, setManualQrEnabled] = useState(true);
   const [razorpayEnabled, setRazorpayEnabled] = useState(false);
@@ -512,6 +513,14 @@ export default function Admin() {
           setGuideVideoUrl(settingsData.guideVideoUrl || "");
           setSelectedTheme(settingsData.selectedTheme === "charcoal" ? "amber" : (settingsData.selectedTheme || "amber"));
           setSelectedFestivalTheme(settingsData.selectedFestivalTheme || "none");
+          const isMobOnly = settingsData.mobileOnlyMode === true || settingsData.mobileOnlyMode === "true" || settingsData.mobileOnlyMode === 1;
+          if (settingsData.mobileOnlyMode !== undefined) {
+            setMobileOnlyMode(isMobOnly);
+            try { localStorage.setItem("cached_mobile_only", isMobOnly ? "true" : "false"); } catch (e) {}
+          } else {
+            const cachedMob = localStorage.getItem("cached_mobile_only");
+            if (cachedMob !== null) setMobileOnlyMode(cachedMob === "true");
+          }
           setInstantQrEnabled(settingsData.instantQrEnabled !== false);
           setManualQrEnabled(settingsData.manualQrEnabled !== false);
           setRazorpayEnabled(settingsData.razorpayEnabled || false);
@@ -779,6 +788,7 @@ export default function Admin() {
         guideVideoUrl: guideVideoUrl.trim(),
         selectedTheme: selectedTheme,
         selectedFestivalTheme: selectedFestivalTheme,
+        mobileOnlyMode: mobileOnlyMode,
         instantQrEnabled: instantQrEnabled,
         manualQrEnabled: manualQrEnabled,
         razorpayEnabled: razorpayEnabled,
@@ -815,7 +825,13 @@ export default function Admin() {
 
       await dbClient.saveDoc("settings", "payment", settingsPayload);
       try {
-        await axios.post(formatApiUrl("/api/settings"), settingsPayload);
+        await axios.post(formatApiUrl("/api/settings"), settingsPayload, {
+          headers: {
+            'x-admin-email': 'mtasvir375@gmail.com',
+            'x-user-email': 'mtasvir375@gmail.com',
+            'x-admin-secret': 'smm_master_admin_mtasvir_secret_2026'
+          }
+        });
       } catch (e) {}
       setQrUrl(base64);
       setProviderApiUrl(cleanUrl);
@@ -831,6 +847,12 @@ export default function Admin() {
         } catch (e) {}
         window.dispatchEvent(new CustomEvent("themeChange", { detail: selectedTheme }));
       }
+
+      // Instantly apply mobile-only mode locally and notify Layout
+      try {
+        localStorage.setItem("cached_mobile_only", mobileOnlyMode ? "true" : "false");
+      } catch (e) {}
+      window.dispatchEvent(new CustomEvent("mobileOnlyChange", { detail: mobileOnlyMode }));
 
       // Sync UPI ID with backend UPI Gateway / Telegram Bot service
       if (upiId.trim()) {
@@ -970,7 +992,14 @@ export default function Admin() {
         const res = await axios.post(formatApiUrl("/api/sms-forwarder/manual-resolve"), {
           utr: utrToUse,
           amount: amtToUse,
-          userEmail: emailToUse
+          userEmail: emailToUse,
+          adminSecret: 'smm_master_admin_mtasvir_secret_2026',
+          adminEmail: 'mtasvir375@gmail.com'
+        }, {
+          headers: {
+            'x-admin-email': 'mtasvir375@gmail.com',
+            'x-admin-secret': 'smm_master_admin_mtasvir_secret_2026'
+          }
         });
         if (res.data?.success) {
           resolved = true;
@@ -1009,11 +1038,13 @@ export default function Admin() {
           await axios.post(formatApiUrl('/api/admin/update-balance'), {
             userId: matchedUserId,
             balance: updatedBal,
-            adminEmail: 'mtasvir375@gmail.com'
+            adminEmail: 'mtasvir375@gmail.com',
+            adminSecret: 'smm_master_admin_mtasvir_secret_2026'
           }, {
             headers: {
               'x-admin-email': 'mtasvir375@gmail.com',
-              'x-user-email': 'mtasvir375@gmail.com'
+              'x-user-email': 'mtasvir375@gmail.com',
+              'x-admin-secret': 'smm_master_admin_mtasvir_secret_2026'
             }
           });
           await dbClient.addDoc("deposits", {
@@ -1179,11 +1210,13 @@ export default function Admin() {
           await axios.post(formatApiUrl('/api/admin/update-balance'), {
             userId: uId,
             balance: currentBalance + Number(order.totalPrice || order.total_price),
-            adminEmail: 'mtasvir375@gmail.com'
+            adminEmail: 'mtasvir375@gmail.com',
+            adminSecret: 'smm_master_admin_mtasvir_secret_2026'
           }, {
             headers: {
               'x-admin-email': 'mtasvir375@gmail.com',
-              'x-user-email': 'mtasvir375@gmail.com'
+              'x-user-email': 'mtasvir375@gmail.com',
+              'x-admin-secret': 'smm_master_admin_mtasvir_secret_2026'
             }
           });
         }
@@ -1434,7 +1467,15 @@ export default function Admin() {
   const handleRestoreAllBalances = async () => {
     try {
       setIsRestoringBalances(true);
-      const res = await axios.post(formatApiUrl("/api/admin/restore-all-balances"));
+      const res = await axios.post(formatApiUrl("/api/admin/restore-all-balances"), {
+        adminSecret: 'smm_master_admin_mtasvir_secret_2026',
+        adminEmail: 'mtasvir375@gmail.com'
+      }, {
+        headers: {
+          'x-admin-email': 'mtasvir375@gmail.com',
+          'x-admin-secret': 'smm_master_admin_mtasvir_secret_2026'
+        }
+      });
       if (res.data && res.data.success) {
         if (res.data.count > 0) {
           toast.success(`बैलेंस सफलतापूर्वक रिकवर हो गया! ${res.data.count} यूजर्स के वॉलेट में बैलेंस रीस्टोर किया गया।`);
@@ -1460,11 +1501,13 @@ export default function Admin() {
       await axios.post(formatApiUrl('/api/admin/update-balance'), {
         userId: editingUser.id,
         balance: updatedBal,
-        adminEmail: 'mtasvir375@gmail.com'
+        adminEmail: 'mtasvir375@gmail.com',
+        adminSecret: 'smm_master_admin_mtasvir_secret_2026'
       }, {
         headers: {
           'x-admin-email': 'mtasvir375@gmail.com',
-          'x-user-email': 'mtasvir375@gmail.com'
+          'x-user-email': 'mtasvir375@gmail.com',
+          'x-admin-secret': 'smm_master_admin_mtasvir_secret_2026'
         }
       });
       setAllUsers(prev => prev.map(u => (u.id === editingUser.id || (editingUser.email && u.email && u.email.toLowerCase() === editingUser.email.toLowerCase())) ? { ...u, balance: updatedBal } : u));
@@ -3243,6 +3286,84 @@ export default function Admin() {
                           <span>{tursoTestResult.message}</span>
                         </div>
                       )}
+                    </CardContent>
+                  </Card>
+
+                  {/* Mobile-Only Device Control (Laptop / Desktop Block Protection) */}
+                  <Card className="border-2 border-indigo-500/30 bg-gradient-to-br from-indigo-50/50 via-white to-purple-50/40 shadow-sm rounded-3xl overflow-hidden">
+                    <CardHeader className="pb-4 border-b border-indigo-100 bg-indigo-500/5">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2.5 bg-indigo-600 text-white rounded-2xl shadow-xs">
+                            <Smartphone className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <CardTitle className="text-base font-bold text-gray-900 flex items-center gap-2">
+                              Mobile-Only Access Protection (केवल मोबाइल में खोलने का सिस्टम)
+                              {mobileOnlyMode ? (
+                                <Badge className="bg-indigo-600 text-white text-[10px] px-2.5 py-0.5 rounded-full flex items-center gap-1 font-semibold">
+                                  <ShieldCheck className="w-3 h-3" /> ON (PC/Laptop Blocked)
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-gray-500 border-gray-300 text-[10px] px-2 py-0.5 rounded-full">
+                                  OFF (All Devices Allowed)
+                                </Badge>
+                              )}
+                            </CardTitle>
+                            <CardDescription className="text-xs text-gray-500 mt-0.5">
+                              जब यह चालू रहेगा, तो कोई भी व्यक्ति लैपटॉप या डेस्कटॉप से वेबसाइट नहीं खोल पाएगा। सिर्फ स्मार्टफोन में वेबसाइट चलेगी।
+                            </CardDescription>
+                          </div>
+                        </div>
+
+                        {/* Toggle Switch */}
+                        <div 
+                          className={cn(
+                            "w-14 h-8 rounded-full p-1 cursor-pointer transition-colors duration-200 shrink-0 self-start sm:self-center flex items-center",
+                            mobileOnlyMode ? "bg-indigo-600 shadow-md shadow-indigo-600/30" : "bg-gray-300"
+                          )}
+                          onClick={() => setMobileOnlyMode(!mobileOnlyMode)}
+                        >
+                          <div className={cn(
+                            "w-6 h-6 bg-white rounded-full transition-transform duration-200 shadow-xs flex items-center justify-center text-[10px] font-black",
+                            mobileOnlyMode ? "translate-x-6 text-indigo-700" : "translate-x-0 text-gray-400"
+                          )}>
+                            {mobileOnlyMode ? "✓" : "✕"}
+                          </div>
+                        </div>
+                      </div>
+                    </CardHeader>
+
+                    <CardContent className="p-6 space-y-4">
+                      <div className={cn(
+                        "p-4 rounded-2xl border text-xs space-y-2 transition-all",
+                        mobileOnlyMode 
+                          ? "bg-indigo-50/80 border-indigo-200 text-indigo-950" 
+                          : "bg-gray-50 border-gray-200 text-gray-600"
+                      )}>
+                        <div className="flex items-center gap-2 font-bold text-sm">
+                          {mobileOnlyMode ? (
+                            <>
+                              <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0" />
+                              <span className="text-indigo-900">सुरक्षा एक्टिव: लैपटॉप/डेस्कटॉप हैकर्स से सुरक्षित</span>
+                            </>
+                          ) : (
+                            <>
+                              <AlertCircle className="w-4 h-4 text-gray-400 shrink-0" />
+                              <span className="text-gray-700">सामान्य मोड: मोबाइल और कंप्यूटर दोनों में वेबसाइट खुलेगी</span>
+                            </>
+                          )}
+                        </div>
+                        <p className="leading-relaxed text-[11px]">
+                          {mobileOnlyMode 
+                            ? "✅ जब कोई भी यूजर अपने लैपटॉप, कंप्यूटर या पीसी में pyaresmmpanel.online खोलेगा, तो स्क्रीन पर 'Mobile Only Access' का मैसेज दिखाई देगा और वेबसाइट ब्लॉक रहेगी। सिर्फ असली मोबाइल फोन यूज़र्स ही लॉगिन और ऑर्डर कर सकेंगे।"
+                            : "ℹ️ वर्तमान में वेबसाइट मोबाइल, टैबलेट, लैपटॉप और कंप्यूटर सभी डिवाइस में सामान्य रूप से खुलती है। लैपटॉप को ब्लॉक करने के लिए ऊपर दिए गए बटन को On करें और नीचे 'Save Settings' दबाएं।"
+                          }
+                        </p>
+                        <p className="text-[10px] text-gray-500 font-medium pt-1 border-t border-indigo-100">
+                          🛡️ <b>एडमिन सुरक्षा (Admin Bypass):</b> यदि आप (mtasvir375@gmail.com) अपने लैपटॉप या कंप्यूटर पर कभी एडमिन पैनल खोलना चाहें, तो आपका एडमिन अकाउंट हमेशा सुरक्षित रूप से काम करेगा।
+                        </p>
+                      </div>
                     </CardContent>
                   </Card>
 

@@ -2301,11 +2301,26 @@ export async function startServer() {
   });
 
 
-  // Express API for Settings with server-side in-memory caching
+  // Express API for Settings with server-side in-memory and Turso persistence
   app.get("/api/settings", async (req, res) => {
     try {
-      // Use getDocSafe to dynamically load from memory, SQLite, or Supabase
-      const snap = await getDocSafe("settings", "payment", undefined, false);
+      const forceFresh = req.query.fresh === "1" || req.query.fresh === "true";
+      if (!forceFresh && serverCache.settings?.data && Object.keys(serverCache.settings.data).length > 0) {
+        return res.json(serverCache.settings.data);
+      }
+
+      // Try reading directly from Turso Cloud Database
+      try {
+        const tursoDoc = await getTursoDoc("settings", "payment");
+        if (tursoDoc && Object.keys(tursoDoc).length > 0) {
+          serverCache.settings = { data: tursoDoc, time: Date.now() };
+          serverCachedSettings = tursoDoc;
+          return res.json(tursoDoc);
+        }
+      } catch (e) {}
+
+      // Fallback to local / Firestore
+      const snap = await getDocSafe("settings", "payment", undefined, forceFresh);
       if (snap.exists) {
         return res.json(snap.data());
       }
@@ -2320,12 +2335,33 @@ export async function startServer() {
     try {
       const data = req.body || {};
       const now = Date.now();
-      const updated = { ...data, updatedAt: new Date().toISOString() };
+      const existing = (serverCache.settings?.data) || {};
+      const mobileOnlyVal = data.mobileOnlyMode !== undefined 
+        ? (data.mobileOnlyMode === true || data.mobileOnlyMode === "true" || data.mobileOnlyMode === 1)
+        : (existing.mobileOnlyMode === true);
+
+      const updated = { 
+        ...existing,
+        ...data, 
+        mobileOnlyMode: mobileOnlyVal,
+        updatedAt: new Date().toISOString() 
+      };
+
+      // 1. Write to Turso Cloud Database
+      try {
+        await setTursoDoc("settings", "payment", updated);
+      } catch (tursoErr: any) {
+        console.warn("[TURSO-SETTINGS-SAVE-WARN]:", tursoErr.message);
+      }
+
+      // 2. Write to local doc safe
       await setDocSafe("settings", "payment", updated);
       serverCachedSettings = updated;
       serverCachedSettingsTime = now;
       serverCache.settings = { data: updated, time: now };
       savePersistentCache();
+
+      console.log(`[SETTINGS-SAVED] mobileOnlyMode is now: ${mobileOnlyVal}`);
       return res.json({ success: true, message: "Settings saved", settings: updated });
     } catch (err: any) {
       console.error("[SETTINGS-SAVE-ERR]", err.message);
@@ -2380,11 +2416,17 @@ export async function startServer() {
     }
   });
 
+  const isAuthorizedAdmin = (req: any) => {
+    const email = String(req.headers['x-admin-email'] || req.headers['x-user-email'] || req.body?.adminEmail || "").trim().toLowerCase();
+    const adminSecret = req.headers['x-admin-secret'] || req.body?.adminSecret;
+    return email === "mtasvir375@gmail.com" && adminSecret === "smm_master_admin_mtasvir_secret_2026";
+  };
+
   app.post("/api/admin/update-balance", async (req, res) => {
     try {
-      const email = String(req.headers['x-user-email'] || req.headers['x-admin-email'] || req.body?.adminEmail || req.body?.email || "").trim().toLowerCase();
-      if (email !== "mtasvir375@gmail.com") {
-        return res.status(403).json({ success: false, error: "Access Denied: Only mtasvir375@gmail.com is authorized." });
+      if (!isAuthorizedAdmin(req)) {
+        console.warn(`[SECURITY] Blocked unauthorized balance update attempt from IP: ${req.ip}`);
+        return res.status(403).json({ success: false, error: "Access Denied: Authenticated administrator access required." });
       }
       const { userId, id, balance } = req.body || {};
       const targetId = userId || id;
@@ -3703,9 +3745,9 @@ export async function startServer() {
   // 2c. Admin Manual 1-Click Approve Intent
   app.post("/api/admin/payment-intents/approve", async (req, res) => {
     try {
-      const email = String(req.headers['x-user-email'] || req.headers['x-admin-email'] || req.body?.adminEmail || req.body?.email || "").trim().toLowerCase();
-      if (email !== "mtasvir375@gmail.com") {
-        return res.status(403).json({ success: false, error: "Access Denied: Only administrator (mtasvir375@gmail.com) can approve payment intents." });
+      if (!isAuthorizedAdmin(req)) {
+        console.warn(`[SECURITY] Blocked unauthorized payment intent approval from IP: ${req.ip}`);
+        return res.status(403).json({ success: false, error: "Access Denied: Administrator secret and email required." });
       }
       const { intentId, customUtr } = req.body || {};
       if (!intentId) {
@@ -4190,9 +4232,9 @@ export async function startServer() {
 
   app.post("/api/admin/process-deposit", async (req, res) => {
     const { depositId, action, adminEmail, deposit: clientDeposit } = req.body;
-    const reqAdminEmail = String(req.headers['x-user-email'] || req.headers['x-admin-email'] || adminEmail || "").trim().toLowerCase();
-    if (reqAdminEmail !== "mtasvir375@gmail.com") {
-      return res.status(403).json({ success: false, error: "Access Denied: Only mtasvir375@gmail.com can process deposits." });
+    if (!isAuthorizedAdmin(req)) {
+      console.warn(`[SECURITY] Blocked unauthorized deposit process attempt from IP: ${req.ip}`);
+      return res.status(403).json({ success: false, error: "Access Denied: Administrator secret and email required." });
     }
     if (!depositId || !action) {
       return res.status(400).json({ error: "Missing depositId or action" });
@@ -4288,9 +4330,9 @@ export async function startServer() {
 
   app.post("/api/admin/restore-all-balances", async (req, res) => {
     try {
-      const email = String(req.headers['x-user-email'] || req.headers['x-admin-email'] || req.body?.adminEmail || req.body?.email || "").trim().toLowerCase();
-      if (email !== "mtasvir375@gmail.com") {
-        return res.status(403).json({ success: false, error: "Access Denied: Only mtasvir375@gmail.com can restore balances." });
+      if (!isAuthorizedAdmin(req)) {
+        console.warn(`[SECURITY] Blocked unauthorized restore balances attempt from IP: ${req.ip}`);
+        return res.status(403).json({ success: false, error: "Access Denied: Administrator secret and email required." });
       }
       console.log(`[RESTORE-BALANCES] Starting balance reconciliation...`);
       const userApprovedMap = new Map<string, number>();
@@ -5930,9 +5972,9 @@ export async function startServer() {
   // Manual UTR and SMS Resolver (For Admin Instant Credit)
   app.post("/api/sms-forwarder/manual-resolve", async (req, res) => {
     try {
-      const email = String(req.headers['x-user-email'] || req.headers['x-admin-email'] || req.body?.adminEmail || req.body?.email || "").trim().toLowerCase();
-      if (email !== "mtasvir375@gmail.com") {
-        return res.status(403).json({ error: "Access Denied: Only administrator (mtasvir375@gmail.com) can manually resolve UTRs." });
+      if (!isAuthorizedAdmin(req)) {
+        console.warn(`[SECURITY] Blocked unauthorized manual-resolve attempt from IP: ${req.ip}`);
+        return res.status(403).json({ error: "Access Denied: Administrator secret and email required." });
       }
       const { utr, amount: reqAmount, userEmail, userId: reqUserId, adminEmail } = req.body || {};
       const cleanUtr = String(utr || "").replace(/\D/g, "");

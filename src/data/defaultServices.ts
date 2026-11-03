@@ -41,5 +41,6 @@ export const DEFAULT_SETTINGS = {
   instantQrEnabled: true,
   qrAutoEnabled: false,
   selectedTheme: "amber",
-  selectedFestivalTheme: "none"
+  selectedFestivalTheme: "none",
+  mobileOnlyMode: false
 };

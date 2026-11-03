@@ -19,7 +19,7 @@ service cloud.firestore {
       allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
       allow create: if isSignedIn() && request.auth.uid == userId 
         && (!('role' in request.resource.data) || request.resource.data.role == 'student' || isAdmin())
-        && (!('balance' in request.resource.data) || request.resource.data.balance <= 1.0 || isAdmin());
+        && (!('balance' in request.resource.data) || request.resource.data.balance == 0 || request.resource.data.balance == 0.0 || isAdmin());
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }

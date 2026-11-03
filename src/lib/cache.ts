@@ -212,6 +212,7 @@ export const getCachedSettings = async (forceRefresh = false) => {
         manualQrEnabled: res.data.manualQrEnabled !== undefined ? !!res.data.manualQrEnabled : true,
         selectedTheme: (res.data.selectedTheme === "charcoal" || !res.data.selectedTheme) ? "amber" : res.data.selectedTheme,
         selectedFestivalTheme: res.data.selectedFestivalTheme || "none",
+        mobileOnlyMode: res.data.mobileOnlyMode !== undefined ? !!res.data.mobileOnlyMode : false,
       };
 
       cachedSettings = settingsData;

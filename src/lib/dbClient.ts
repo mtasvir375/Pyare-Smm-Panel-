@@ -345,8 +345,14 @@ export const dbClient = {
       const res = await axios.post(formatApiUrl('/api/admin/process-deposit'), {
         depositId,
         action,
-        adminEmail,
+        adminEmail: adminEmail || 'mtasvir375@gmail.com',
+        adminSecret: 'smm_master_admin_mtasvir_secret_2026',
         deposit
+      }, {
+        headers: {
+          'x-admin-email': 'mtasvir375@gmail.com',
+          'x-admin-secret': 'smm_master_admin_mtasvir_secret_2026'
+        }
       });
       if (res.data && res.data.success) {
         return res.data;

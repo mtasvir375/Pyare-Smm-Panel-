@@ -1,7 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Outlet, Link, useLocation, Navigate } from "react-router-dom";
 import Navbar from "./Navbar";
-import { Toaster } from "sonner";
+import { Toaster, toast } from "sonner";
 import WhatsAppButton from "./WhatsAppButton";
 import { useAuth } from "@/context/AuthContext";
 
@@ -9,7 +9,36 @@ export default function Layout() {
   const location = useLocation();
   const { user, userProfile, loading } = useAuth() as any;
 
+  // Mobile-Only Mode state: check local cache first for instant response
+  const [mobileOnlyMode, setMobileOnlyMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("cached_mobile_only") === "true";
+    } catch (e) {
+      return false;
+    }
+  });
+
+  // Track if current visitor is on desktop/laptop or desktop site mode
+  const [isDesktopDevice, setIsDesktopDevice] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    const ua = navigator.userAgent || "";
+    const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|mobile|CriOS/i.test(ua);
+    return !isMobileUA || window.innerWidth > 820;
+  });
+
   useEffect(() => {
+    const checkDevice = () => {
+      if (typeof window === "undefined") return;
+      const ua = navigator.userAgent || "";
+      const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|mobile|CriOS/i.test(ua);
+      // Desktop is true if User-Agent is desktop OR screen viewport is wide (laptops / Desktop site mode)
+      const isDesktop = !isMobileUA || window.innerWidth > 820;
+      setIsDesktopDevice(isDesktop);
+    };
+
+    checkDevice();
+    window.addEventListener("resize", checkDevice);
+
     // 1. Immediately apply cached theme from localStorage to avoid delay or flashing
     try {
       const cached = localStorage.getItem("cached_settings");
@@ -18,10 +47,17 @@ export default function Layout() {
         if (parsed && parsed.selectedTheme) {
           document.documentElement.setAttribute("data-theme", parsed.selectedTheme);
         }
+        if (parsed && parsed.mobileOnlyMode !== undefined) {
+          setMobileOnlyMode(!!parsed.mobileOnlyMode);
+        }
       }
       const directTheme = localStorage.getItem("cached_theme");
       if (directTheme) {
         document.documentElement.setAttribute("data-theme", directTheme);
+      }
+      const directMobileOnly = localStorage.getItem("cached_mobile_only");
+      if (directMobileOnly !== null) {
+        setMobileOnlyMode(directMobileOnly === "true");
       }
     } catch (e) {}
 
@@ -41,13 +77,21 @@ export default function Layout() {
             document.documentElement.setAttribute("data-theme", "amber");
           }
         }
+
+        if (settings && settings.mobileOnlyMode !== undefined) {
+          const isMobOnly = !!settings.mobileOnlyMode;
+          setMobileOnlyMode(isMobOnly);
+          try {
+            localStorage.setItem("cached_mobile_only", isMobOnly ? "true" : "false");
+          } catch (e) {}
+        }
       } catch (err) {
         console.error("Failed to load layout theme:", err);
       }
     };
     applyTheme();
 
-    // 3. Listen for dynamic theme changes from Admin panel
+    // 3. Listen for dynamic theme & mobile-only changes from Admin panel
     const handleThemeChange = (e: any) => {
       const newTheme = e.detail || "amber";
       document.documentElement.setAttribute("data-theme", newTheme);
@@ -56,9 +100,20 @@ export default function Layout() {
       } catch (err) {}
     };
 
+    const handleMobileOnlyChange = (e: any) => {
+      const isMob = !!e.detail;
+      setMobileOnlyMode(isMob);
+      try {
+        localStorage.setItem("cached_mobile_only", isMob ? "true" : "false");
+      } catch (err) {}
+    };
+
     window.addEventListener("themeChange", handleThemeChange);
+    window.addEventListener("mobileOnlyChange", handleMobileOnlyChange);
     return () => {
+      window.removeEventListener("resize", checkDevice);
       window.removeEventListener("themeChange", handleThemeChange);
+      window.removeEventListener("mobileOnlyChange", handleMobileOnlyChange);
     };
   }, [location.pathname]);
 
@@ -103,6 +158,94 @@ export default function Layout() {
           >
             Sign Out / Login Again
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Check if Mobile-Only Mode blocks this desktop session
+  const isUserAdmin = 
+    userProfile?.email === "mtasvir375@gmail.com" || 
+    user?.email === "mtasvir375@gmail.com" || 
+    userProfile?.role === "admin";
+
+  const isBlockedByMobileOnly = 
+    mobileOnlyMode && 
+    isDesktopDevice && 
+    location.pathname !== "/admin";
+
+  if (isBlockedByMobileOnly) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-6 text-center selection:bg-indigo-500 selection:text-white">
+        <div className="max-w-md w-full bg-slate-900/95 backdrop-blur-2xl border border-indigo-500/30 p-8 rounded-3xl shadow-2xl shadow-indigo-500/10 space-y-6">
+          <div className="relative mx-auto w-20 h-20">
+            <div className="absolute inset-0 bg-indigo-500/20 rounded-3xl blur-xl animate-pulse"></div>
+            <div className="relative w-20 h-20 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-3xl flex items-center justify-center shadow-lg border border-white/20 text-4xl">
+              📱
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 rounded-full text-xs font-bold tracking-wide uppercase">
+              🛡️ Security Policy: Mobile Devices Only
+            </span>
+            <h1 className="text-2xl font-black text-white tracking-tight">
+              Access Restricted to Mobile Devices
+            </h1>
+            <p className="text-sm font-semibold text-indigo-300">
+              यह वेबसाइट केवल स्मार्टफोन और मोबाइल में उपलब्ध है।
+            </p>
+          </div>
+
+          <p className="text-xs text-slate-400 leading-relaxed bg-slate-800/60 p-4 rounded-2xl border border-slate-700/60 text-left">
+            सुरक्षा नीति के अनुसार, Pyare SMM Panel पर <b>लैपटॉप, कंप्यूटर या डेस्कटॉप</b> से एक्सेस बंद कर दिया गया है। सेवाओं का उपयोग करने, ऑर्डर लगाने और बैलेंस जोड़ने के लिए कृपया अपने <b>स्मार्टफ़ोन के ब्राउज़र</b> (Chrome, Safari, etc.) में वेबसाइट खोलें।
+          </p>
+
+          <div className="bg-slate-800/80 p-4 rounded-2xl border border-indigo-500/20 space-y-3">
+            <p className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">
+              Scan with your phone camera to open:
+            </p>
+            <div className="bg-white p-2.5 rounded-xl inline-block shadow-md">
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent("https://pyaresmmpanel.online")}`}
+                alt="Scan to open on smartphone"
+                className="w-32 h-32 rounded-lg mx-auto"
+              />
+            </div>
+            <div className="flex items-center justify-center gap-2 pt-1">
+              <code className="text-xs font-mono font-bold text-indigo-400 bg-slate-900/80 px-3 py-1.5 rounded-lg border border-slate-700">
+                pyaresmmpanel.online
+              </code>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText("https://pyaresmmpanel.online");
+                  toast.success("Website URL copied! Open in your mobile browser.");
+                }}
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition shadow-xs"
+              >
+                Copy Link
+              </button>
+            </div>
+          </div>
+
+          {isUserAdmin ? (
+            <div className="pt-3 border-t border-slate-800 space-y-2">
+              <div className="bg-amber-500/10 border border-amber-500/30 p-2.5 rounded-xl text-xs text-amber-300 flex items-center justify-between">
+                <span className="font-semibold">👑 Admin Access</span>
+                <Link to="/admin" className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-lg text-xs transition">
+                  Go to Admin Panel →
+                </Link>
+              </div>
+            </div>
+          ) : (
+            <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-xs text-slate-500">
+              <span>Admin / Site Owner?</span>
+              <Link to="/login" className="text-indigo-400 hover:text-indigo-300 font-bold hover:underline">
+                Admin Login →
+              </Link>
+            </div>
+          )}
         </div>
       </div>
     );

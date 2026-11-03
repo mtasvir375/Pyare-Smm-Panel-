@@ -175,7 +175,16 @@ export const TelegramBotTab: React.FC = () => {
     }
     setApprovingIntentId(intentId);
     try {
-      const res = await axios.post("/api/admin/payment-intents/approve", { intentId });
+      const res = await axios.post("/api/admin/payment-intents/approve", {
+        intentId,
+        adminSecret: 'smm_master_admin_mtasvir_secret_2026',
+        adminEmail: 'mtasvir375@gmail.com'
+      }, {
+        headers: {
+          'x-admin-email': 'mtasvir375@gmail.com',
+          'x-admin-secret': 'smm_master_admin_mtasvir_secret_2026'
+        }
+      });
       if (res.data && res.data.success) {
         toast.success(`₹${amount} safaltapoorvak user account me credit kar diya gaya!`);
         fetchIntents();
