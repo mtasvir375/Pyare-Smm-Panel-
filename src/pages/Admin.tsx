@@ -218,7 +218,9 @@ export default function Admin() {
   const [orderSearch, setOrderSearch] = useState("");
   const [editingUser, setEditingUser] = useState<any>(null);
   const [newBalance, setNewBalance] = useState("");
+  const [addBalanceAmount, setAddBalanceAmount] = useState("");
   const [selectedScreenshot, setSelectedScreenshot] = useState<string | null>(null);
+  const [viewPaymentHistory, setViewPaymentHistory] = useState<any>(null);
   const [checkingStatus, setCheckingStatus] = useState(false);
   const statusIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastCheckedRef = useRef<number>(0);
@@ -1491,6 +1493,35 @@ export default function Admin() {
       toast.error("बैलेंस रिकवरी में त्रुटि: " + err.message);
     } finally {
       setIsRestoringBalances(false);
+    }
+  };
+
+  const handleAddUserBalance = async () => {
+    if (!editingUser || !addBalanceAmount || Number(addBalanceAmount) <= 0) {
+      toast.error("Please enter a valid amount to add.");
+      return;
+    }
+    try {
+      const amountToAdd = Number(addBalanceAmount);
+      // Assuming a new backend endpoint /api/admin/add-balance
+      await axios.post(formatApiUrl('/api/admin/add-balance'), {
+        userId: editingUser.id,
+        amount: amountToAdd,
+        adminEmail: 'mtasvir375@gmail.com',
+        adminSecret: 'smm_master_admin_mtasvir_secret_2026'
+      }, {
+        headers: {
+          'x-admin-email': 'mtasvir375@gmail.com',
+          'x-user-email': 'mtasvir375@gmail.com',
+          'x-admin-secret': 'smm_master_admin_mtasvir_secret_2026'
+        }
+      });
+      setAllUsers(prev => prev.map(u => (u.id === editingUser.id || (editingUser.email && u.email && u.email.toLowerCase() === editingUser.email.toLowerCase())) ? { ...u, balance: Number(u.balance || 0) + amountToAdd } : u));
+      toast.success("Balance added successfully!");
+      setEditingUser(null);
+      setAddBalanceAmount("");
+    } catch (error: any) {
+      toast.error(`Error adding balance: ${error.message}`);
     }
   };
 
@@ -3119,9 +3150,20 @@ export default function Admin() {
                               variant="outline" 
                               size="sm" 
                               className="rounded-xl shrink-0"
+                              onClick={async () => {
+                                const allDeps = await dbClient.getDepositsAdmin(100); const filtered = allDeps.filter((d: any) => (d.userId || d.user_id) === (u.id || u.uid)); setViewPaymentHistory({ user: u, deposits: filtered });
+                              }}
+                            >
+                              UPH
+                            </Button>
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="rounded-xl shrink-0"
                               onClick={() => {
                                 setEditingUser(u);
                                 setNewBalance(String(u.balance || 0));
+                                setAddBalanceAmount("");
                               }}
                             >
                               Edit Wallet
@@ -4922,6 +4964,24 @@ export default function Admin() {
                 onChange={(e) => setNewBalance(e.target.value)}
               />
             </div>
+            <div className="pt-2 border-t space-y-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Add Amount (₹)</label>
+              <div className="flex gap-2">
+                <Input 
+                  type="number"
+                  className="rounded-xl h-12"
+                  value={addBalanceAmount}
+                  onChange={(e) => setAddBalanceAmount(e.target.value)}
+                  placeholder="Enter amount to add"
+                />
+                <Button 
+                  className="rounded-xl h-12 font-bold bg-emerald-600 hover:bg-emerald-700" 
+                  onClick={handleAddUserBalance}
+                >
+                  Add
+                </Button>
+              </div>
+            </div>
           </div>
 
           <DialogFooter className="flex-col gap-2">
@@ -4929,7 +4989,7 @@ export default function Admin() {
               className="w-full rounded-xl h-12 font-bold" 
               onClick={handleUpdateUserBalance}
             >
-              Update Wallet
+              Update Wallet (Overwrite)
             </Button>
             <Button 
               variant="ghost" 
@@ -4990,6 +5050,32 @@ export default function Admin() {
               Cancel
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* UPH Modal */}
+      <Dialog open={!!viewPaymentHistory} onOpenChange={(open) => !open && setViewPaymentHistory(null)}>
+        <DialogContent className="sm:max-w-lg rounded-3xl p-6">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-bold">User Payment History: {viewPaymentHistory?.user?.email}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-4 max-h-[60vh] overflow-y-auto">
+            {viewPaymentHistory?.deposits?.length > 0 ? (
+              viewPaymentHistory.deposits.map((d: any) => (
+                <div key={d.id} className="p-3 bg-gray-50 rounded-xl border border-gray-100 flex items-center justify-between text-xs">
+                  <div>
+                    <p className="font-bold text-gray-900">₹{d.amount}</p>
+                    <p className="text-gray-500">{new Date(d.createdAt).toLocaleString()}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-medium text-gray-700 uppercase">{d.status}</p>
+                    <p className="text-gray-400 font-mono">{d.utr || 'N/A'}</p>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-gray-500 text-center py-4">No payment history found.</p>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>

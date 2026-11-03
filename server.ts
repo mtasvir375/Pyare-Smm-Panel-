@@ -2422,6 +2422,42 @@ export async function startServer() {
     return email === "mtasvir375@gmail.com" && adminSecret === "smm_master_admin_mtasvir_secret_2026";
   };
 
+  app.post("/api/admin/add-balance", async (req, res) => {
+    try {
+      if (!isAuthorizedAdmin(req)) {
+        console.warn(`[SECURITY] Blocked unauthorized add-balance attempt from IP: ${req.ip}`);
+        return res.status(403).json({ success: false, error: "Access Denied." });
+      }
+      const { userId, amount } = req.body || {};
+      if (!userId || !amount) return res.status(400).json({ success: false, error: "Missing userId or amount" });
+
+      // Read current balance
+      const userSnap = await getDocSafe("users", userId, req.headers.authorization as string, true);
+      if (!userSnap.exists) return res.status(404).json({ success: false, error: "User not found" });
+      
+      const currentBalance = Number(userSnap.data().balance || 0);
+      const newBalance = currentBalance + Number(amount);
+
+      // Update balance
+      await updateDocSafe("users", userId, { balance: newBalance, updatedAt: new Date().toISOString() });
+
+      // Record History (Deposit by admin)
+      await addDocSafe("deposits", {
+        userId,
+        amount: Number(amount),
+        status: "approved",
+        createdAt: new Date().toISOString(),
+        verifiedAt: new Date().toISOString(),
+        processedBy: "admin",
+        paymentMethod: "Deposit by admin"
+      }, req.headers.authorization as string);
+
+      return res.json({ success: true, balance: newBalance });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   app.post("/api/admin/update-balance", async (req, res) => {
     try {
       if (!isAuthorizedAdmin(req)) {
