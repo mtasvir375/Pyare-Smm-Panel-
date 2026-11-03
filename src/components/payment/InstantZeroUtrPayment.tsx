@@ -48,7 +48,7 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [intent, setIntent] = useState<PaymentIntentResponse | null>(null);
-  const [secondsRemaining, setSecondsRemaining] = useState<number>(1800);
+  const [secondsRemaining, setSecondsRemaining] = useState<number>(300);
   const [isSuccess, setIsSuccess] = useState(false);
   const [completedData, setCompletedData] = useState<{ amount: number; utr?: string; newBalance?: number } | null>(null);
   const [redirectCountdown, setRedirectCountdown] = useState<number>(3);
@@ -209,7 +209,7 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
       if (intentObj && isMounted) {
         setIntent(intentObj);
         const rem = Math.max(0, Math.floor((intentObj.expiresAt - Date.now()) / 1000));
-        setSecondsRemaining(rem > 0 ? rem : 1800);
+        setSecondsRemaining(rem > 0 ? rem : 300);
         setLoading(false);
 
         // Always ensure intent is persisted directly into Firestore so backend bot can match it from ANY domain!
@@ -425,7 +425,7 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
                 upiLink,
                 expiresAt: now + 30 * 60 * 1000
               });
-              setSecondsRemaining(1800);
+              setSecondsRemaining(300);
               setLoading(false);
             }}
             className="w-full rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-11"
@@ -448,49 +448,18 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
 
   if (isSuccess && completedData) {
     return (
-      <div className="p-6 text-center space-y-5 animate-in zoom-in-95 duration-300">
-        <div className="w-20 h-20 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto shadow-lg shadow-emerald-600/20 animate-bounce">
-          <CheckCircle2 className="w-12 h-12" />
-        </div>
-        <div className="space-y-1.5">
-          <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 text-xs px-3 py-1 font-bold">
-            ✅ VERIFIED AUTOMATICALLY
-          </Badge>
-          <h3 className="text-2xl font-black text-gray-900">
-            ₹{Number(completedData.amount || 0).toFixed(2)} Credited!
-          </h3>
-          <p className="text-xs text-gray-500">
-            Payment confirmed via Telegram SMS alert!
-          </p>
-          {completedData.newBalance !== undefined && (
-            <p className="text-sm font-black text-emerald-600 pt-1">
-              New Wallet Balance: ₹{Number(completedData.newBalance || 0).toFixed(2)}
-            </p>
-          )}
-        </div>
-        <div className="p-3 bg-gray-50 rounded-2xl border border-gray-100 text-left text-xs space-y-1 font-mono text-gray-600">
-          <div className="flex justify-between">
-            <span className="text-gray-400">Order Ref:</span>
-            <span className="font-bold">{intent?.orderRef}</span>
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in">
+        <div className="bg-white rounded-3xl p-6 text-center space-y-4 max-w-sm w-full shadow-2xl animate-in zoom-in-95 duration-300">
+          <div className="w-20 h-20 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto">
+            <CheckCircle2 className="w-12 h-12" />
           </div>
-          {completedData.utr && (
-            <div className="flex justify-between">
-              <span className="text-gray-400">Bank UTR:</span>
-              <span className="font-bold">{completedData.utr}</span>
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-2 pt-1">
-          <p className="text-[11px] font-bold text-emerald-700 animate-pulse">
-            Closing and returning to wallet in {redirectCountdown}s...
+          <h3 className="text-xl font-black text-gray-900">Payment Successful!</h3>
+          <p className="text-sm text-gray-500">
+            ₹{Number(completedData.amount || 0).toFixed(2)} added to your wallet.
           </p>
-          <Button
-            onClick={() => onSuccess(completedData.amount, completedData.newBalance)}
-            className="w-full h-12 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2"
-          >
-            <span>Done / Back to Wallet ({redirectCountdown}s)</span>
-          </Button>
+          <p className="text-xs font-bold text-emerald-600 animate-pulse">
+            Redirecting in {redirectCountdown}s...
+          </p>
         </div>
       </div>
     );
