@@ -212,6 +212,13 @@ export default function Courses() {
   }, []);
 
   useEffect(() => {
+    if (isSuccessPopupOpen) {
+      const timer = setTimeout(() => setIsSuccessPopupOpen(false), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [isSuccessPopupOpen]);
+
+  useEffect(() => {
     if (isAddFundsOpen) {
       import("@/lib/cache").then(mod => mod.getCachedSettings(true)).then(settings => {
         if (settings) {

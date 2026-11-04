@@ -148,6 +148,13 @@ export default function Profile() {
     };
   }, []);
 
+  useEffect(() => {
+    if (isSuccessPopupOpen) {
+      const timer = setTimeout(() => setIsSuccessPopupOpen(false), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [isSuccessPopupOpen]);
+
   const handleRazorpayPayment = async () => {
     if (!amount || Number(amount) < 1) {
       toast.error("Minimum amount is ₹1");

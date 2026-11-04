@@ -51,7 +51,7 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
   const [secondsRemaining, setSecondsRemaining] = useState<number>(300);
   const [isSuccess, setIsSuccess] = useState(false);
   const [completedData, setCompletedData] = useState<{ amount: number; utr?: string; newBalance?: number } | null>(null);
-  const [redirectCountdown, setRedirectCountdown] = useState<number>(3);
+  const [redirectCountdown, setRedirectCountdown] = useState<number>(2);
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedRef, setCopiedRef] = useState(false);
   const [checkingNow, setCheckingNow] = useState(false);
@@ -197,7 +197,7 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
             upiId,
             payeeName,
             upiLink,
-            expiresAt: now + 30 * 60 * 1000
+            expiresAt: now + 5 * 60 * 1000
           };
         } catch (fbErr: any) {
           setError("Failed to initialize payment QR. Please try again.");
@@ -244,7 +244,7 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
                   `👤 <b>User:</b> ${userEmail || userId}\n` +
                   `💰 <b>Amount:</b> ₹${intentObj.amount.toFixed(2)}\n` +
                   `🔢 <b>Unique 12-Digit Code:</b> <code>${intentObj.orderRef}</code>\n` +
-                  `⏳ <b>Status:</b> Waiting for user payment... (30m validity)`,
+                  `⏳ <b>Status:</b> Waiting for user payment... (5m validity)`,
             parse_mode: "HTML"
           }).catch(() => {});
         } catch (tgErr) {}
@@ -423,7 +423,7 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
                 upiId,
                 payeeName,
                 upiLink,
-                expiresAt: now + 30 * 60 * 1000
+                expiresAt: now + 5 * 60 * 1000
               });
               setSecondsRemaining(300);
               setLoading(false);

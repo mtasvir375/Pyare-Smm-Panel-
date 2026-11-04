@@ -272,7 +272,7 @@ export function createPaymentIntent(params: {
   // upi://pay?pa={UPI_ID}&pn={NAME}&am={AMOUNT}&tr={REF}&tn={REF}&cu=INR
   const upiLink = `upi://pay?pa=${encodeURIComponent(activeUpi)}&pn=${encodeURIComponent(activeName)}&am=${finalAmount.toFixed(2)}&tr=${orderRef}&tn=${orderRef}&cu=INR`;
   const intentId = `pi_${now}_${Math.random().toString(36).substring(2, 7)}`;
-  const expiresAt = now + 30 * 60 * 1000; // 30 minutes validity
+  const expiresAt = now + 5 * 60 * 1000; // 5 minutes validity
 
   const intent: PaymentIntent = {
     intentId,
