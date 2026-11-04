@@ -221,6 +221,34 @@ export default function Admin() {
   const [addBalanceAmount, setAddBalanceAmount] = useState("");
   const [selectedScreenshot, setSelectedScreenshot] = useState<string | null>(null);
   const [viewPaymentHistory, setViewPaymentHistory] = useState<any>(null);
+  const [viewOrderHistory, setViewOrderHistory] = useState<{ user: any; orders: any[]; loading?: boolean } | null>(null);
+  const [uodSearch, setUodSearch] = useState("");
+  const [uodStatusFilter, setUodStatusFilter] = useState("all");
+  const [copiedOrderId, setCopiedOrderId] = useState<string | null>(null);
+  const [copiedLinkIndex, setCopiedLinkIndex] = useState<number | null>(null);
+
+  const handleOpenUserOrders = async (u: any) => {
+    setViewOrderHistory({ user: u, orders: [], loading: true });
+    setUodSearch("");
+    setUodStatusFilter("all");
+    try {
+      const uId = String(u.id || u.uid || "").trim();
+      const uEmail = String(u.email || u.userEmail || "").trim();
+      const res = await axios.get(formatApiUrl(`/api/admin/user-orders?userId=${encodeURIComponent(uId)}&email=${encodeURIComponent(uEmail)}`), {
+        headers: { 'x-admin-email': 'mtasvir375@gmail.com' },
+        timeout: 8000
+      });
+      if (res.data && Array.isArray(res.data.orders)) {
+        setViewOrderHistory({ user: u, orders: res.data.orders, loading: false });
+      } else {
+        const fallback = Array.isArray(u.latestOrders) ? u.latestOrders : [];
+        setViewOrderHistory({ user: u, orders: fallback, loading: false });
+      }
+    } catch (err) {
+      const fallback = Array.isArray(u.latestOrders) ? u.latestOrders : [];
+      setViewOrderHistory({ user: u, orders: fallback, loading: false });
+    }
+  };
   const [checkingStatus, setCheckingStatus] = useState(false);
   const statusIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastCheckedRef = useRef<number>(0);
@@ -3153,6 +3181,15 @@ export default function Admin() {
                             <Button 
                               variant="outline" 
                               size="sm" 
+                              className="rounded-xl shrink-0 border-blue-200 text-blue-700 hover:bg-blue-50 hover:text-blue-800 font-bold"
+                              onClick={() => handleOpenUserOrders(u)}
+                              title="User Order Details & History"
+                            >
+                              UOD
+                            </Button>
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
                               className="rounded-xl shrink-0"
                               onClick={() => {
                                 setEditingUser(u);
@@ -5070,6 +5107,271 @@ export default function Admin() {
               <p className="text-sm text-gray-500 text-center py-4">No payment history found.</p>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* UOD Modal - User Order Details & History */}
+      <Dialog open={!!viewOrderHistory} onOpenChange={(open) => !open && setViewOrderHistory(null)}>
+        <DialogContent className="sm:max-w-2xl max-h-[88vh] flex flex-col rounded-3xl p-5 sm:p-6 bg-white overflow-hidden shadow-2xl">
+          <DialogHeader className="shrink-0 pb-3 border-b border-gray-100">
+            <div className="flex flex-wrap items-center justify-between gap-2 pr-6">
+              <div>
+                <DialogTitle className="text-lg font-bold flex items-center gap-2 text-gray-900">
+                  <span className="px-2 py-0.5 rounded-lg bg-blue-100 text-blue-700 text-xs font-mono font-bold">UOD</span>
+                  User Order History
+                </DialogTitle>
+                <DialogDescription className="text-xs text-gray-500 truncate max-w-sm mt-0.5">
+                  {viewOrderHistory?.user?.email || viewOrderHistory?.user?.displayName || "User"}
+                  <span className="ml-2 font-mono text-gray-400">ID: {viewOrderHistory?.user?.id || viewOrderHistory?.user?.uid}</span>
+                </DialogDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  Current Wallet: ₹{Number(viewOrderHistory?.user?.balance || 0).toFixed(2)}
+                </span>
+                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                  {viewOrderHistory?.orders?.length || 0} Orders
+                </span>
+              </div>
+            </div>
+
+            {/* Quick Search & Status Filter inside Modal */}
+            {viewOrderHistory?.orders && viewOrderHistory.orders.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 pt-3">
+                <div className="relative flex-1 min-w-[170px]">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                  <Input
+                    placeholder="Search ID, title, or target link..."
+                    className="h-8 pl-8 pr-2 text-xs rounded-xl bg-gray-50 border-gray-200"
+                    value={uodSearch}
+                    onChange={(e) => setUodSearch(e.target.value)}
+                  />
+                </div>
+                <div className="flex items-center gap-1 overflow-x-auto text-xs py-0.5">
+                  {["all", "Completed", "In progress", "Pending", "Cancelled"].map((st) => (
+                    <button
+                      key={st}
+                      type="button"
+                      onClick={() => setUodStatusFilter(st)}
+                      className={`px-2 py-0.5 rounded-lg text-[11px] font-medium transition-all shrink-0 ${
+                        uodStatusFilter.toLowerCase() === st.toLowerCase()
+                          ? "bg-gray-900 text-white font-bold"
+                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                      }`}
+                    >
+                      {st === "all" ? "All" : st}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </DialogHeader>
+
+          {/* Orders Scrollable Content */}
+          <div className="flex-1 overflow-y-auto space-y-3 py-3 pr-1">
+            {viewOrderHistory?.loading ? (
+              <div className="py-12 flex flex-col items-center justify-center gap-2 text-gray-500">
+                <RefreshCw className="w-6 h-6 animate-spin text-blue-600" />
+                <p className="text-xs font-medium">Loading user orders from Turso database...</p>
+              </div>
+            ) : (() => {
+              const orders = viewOrderHistory?.orders || [];
+              const searchLower = uodSearch.trim().toLowerCase();
+              const filtered = orders.filter((o: any) => {
+                if (uodStatusFilter !== "all" && String(o.status || "").toLowerCase() !== uodStatusFilter.toLowerCase()) {
+                  return false;
+                }
+                if (!searchLower) return true;
+                const matchId = String(o.id || o.orderId || "").toLowerCase().includes(searchLower);
+                const matchTitle = String(o.title || "").toLowerCase().includes(searchLower);
+                const matchLink = String(o.targetLink || o.link || o.target_link || "").toLowerCase().includes(searchLower);
+                const matchProvider = String(o.providerOrderId || "").toLowerCase().includes(searchLower);
+                return matchId || matchTitle || matchLink || matchProvider;
+              });
+
+              if (filtered.length === 0) {
+                return (
+                  <div className="py-12 text-center text-gray-500">
+                    <AlertCircle className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+                    <p className="text-sm font-semibold text-gray-700">कोई ऑर्डर नहीं मिला (No Orders Found)</p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      {orders.length === 0
+                        ? "इस यूजर ने अभी तक कोई ऑर्डर नहीं लगाया है।"
+                        : "सर्च या फ़िल्टर से मेल खाता कोई ऑर्डर नहीं है।"}
+                    </p>
+                  </div>
+                );
+              }
+
+              return filtered.map((ord: any, idx: number) => {
+                const orderId = String(ord.id || ord.orderId || `ORD-${idx + 1}`);
+                const amount = Number(ord.totalPrice || ord.charge || ord.amount || 0);
+                const targetLink = String(ord.targetLink || ord.link || ord.target_link || "").trim();
+                const createdAtStr = ord.createdAt || ord.created_at || ord.updatedAt || ord.date;
+                let formattedDate = "N/A";
+                if (createdAtStr) {
+                  try {
+                    const dt = new Date(createdAtStr);
+                    formattedDate = !isNaN(dt.getTime())
+                      ? dt.toLocaleString("en-IN", {
+                          day: "2-digit",
+                          month: "short",
+                          year: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          hour12: true
+                        })
+                      : String(createdAtStr);
+                  } catch (e) {
+                    formattedDate = String(createdAtStr);
+                  }
+                }
+
+                // Remaining wallet balance after order
+                const walletAfter = ord.walletBalanceAfter !== undefined
+                  ? Number(ord.walletBalanceAfter)
+                  : (ord.newBalance !== undefined ? Number(ord.newBalance) : null);
+
+                const statusStr = String(ord.status || "Completed");
+                const statusColor = statusStr.toLowerCase().includes("complete")
+                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                  : statusStr.toLowerCase().includes("progress") || statusStr.toLowerCase().includes("processing")
+                  ? "bg-blue-50 text-blue-700 border-blue-200"
+                  : statusStr.toLowerCase().includes("cancel") || statusStr.toLowerCase().includes("fail")
+                  ? "bg-red-50 text-red-700 border-red-200"
+                  : "bg-amber-50 text-amber-700 border-amber-200";
+
+                return (
+                  <div
+                    key={orderId + "_" + idx}
+                    className="p-3.5 bg-gray-50/80 hover:bg-gray-50 rounded-2xl border border-gray-200/80 transition-all space-y-2.5 text-xs shadow-2xs"
+                  >
+                    {/* Top Row: Order ID, Status, Date & Time */}
+                    <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-gray-200/60 pb-2">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono font-bold text-gray-800 text-[11px] bg-white px-2 py-0.5 rounded-md border border-gray-200 shadow-2xs">
+                          #{orderId}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(orderId);
+                            setCopiedOrderId(orderId);
+                            setTimeout(() => setCopiedOrderId(null), 2000);
+                            toast.success("Order ID copied!");
+                          }}
+                          className="text-gray-400 hover:text-gray-700 p-0.5"
+                          title="Copy Order ID"
+                        >
+                          {copiedOrderId === orderId ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border uppercase tracking-wider ${statusColor}`}>
+                          {statusStr}
+                        </span>
+                        <span className="text-[11px] text-gray-500 font-medium">
+                          📅 {formattedDate}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Service Name & Quantity */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="font-bold text-gray-900 text-xs sm:text-[13px] leading-snug">
+                          {ord.title || "SMM Service Order"}
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2 mt-1 text-[11px] text-gray-500">
+                          {ord.category && (
+                            <span className="px-1.5 py-0.5 rounded bg-gray-200/70 text-gray-700 font-medium text-[10px]">
+                              {ord.category}
+                            </span>
+                          )}
+                          <span>मात्रा (Quantity): <b>{Number(ord.quantity || 0).toLocaleString()}</b></span>
+                          {ord.providerOrderId && (
+                            <span className="font-mono text-gray-400 text-[10px]">
+                              Provider ID: #{ord.providerOrderId}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Financial Row: Amount Spent & Wallet Balance After Order */}
+                    <div className="grid grid-cols-2 gap-2 pt-0.5">
+                      <div className="bg-white border border-gray-200 rounded-xl p-2.5 flex items-center justify-between">
+                        <span className="text-[11px] text-gray-500 font-medium">ऑर्डर अमाउंट:</span>
+                        <span className="text-sm font-extrabold text-gray-900">₹{amount.toFixed(2)}</span>
+                      </div>
+                      <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-2.5 flex items-center justify-between">
+                        <span className="text-[11px] text-emerald-800 font-medium">ऑर्डर बाद वॉलेट:</span>
+                        <span className="text-sm font-extrabold text-emerald-700">
+                          {walletAfter !== null ? `₹${walletAfter.toFixed(2)}` : "दर्ज नहीं (N/A)"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Target Link Box */}
+                    <div className="bg-white border border-gray-200 rounded-xl p-2 flex items-center justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">टारगेट लिंक (Target Link):</p>
+                        <p className="font-mono text-[11px] text-blue-600 truncate select-all">
+                          {targetLink || "कोई लिंक दर्ज नहीं"}
+                        </p>
+                      </div>
+                      {targetLink && (
+                        <div className="flex items-center gap-1 shrink-0">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-[11px] text-gray-600 hover:bg-gray-100 rounded-lg"
+                            onClick={() => {
+                              navigator.clipboard.writeText(targetLink);
+                              setCopiedLinkIndex(idx);
+                              setTimeout(() => setCopiedLinkIndex(null), 2000);
+                              toast.success("Target link copied!");
+                            }}
+                          >
+                            {copiedLinkIndex === idx ? (
+                              <Check className="w-3.5 h-3.5 text-emerald-600 mr-1" />
+                            ) : (
+                              <Copy className="w-3.5 h-3.5 mr-1" />
+                            )}
+                            Copy
+                          </Button>
+                          <a
+                            href={targetLink.startsWith("http") ? targetLink : `https://${targetLink}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center justify-center h-7 px-2 text-[11px] text-blue-600 hover:bg-blue-50 rounded-lg border border-blue-200 font-medium"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5 mr-1" />
+                            Open
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+          </div>
+
+          <DialogFooter className="shrink-0 pt-3 border-t border-gray-100 flex items-center justify-between">
+            <span className="text-[11px] text-gray-400 font-mono">
+              Powered by Turso Database
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-xl px-5 text-xs font-semibold"
+              onClick={() => setViewOrderHistory(null)}
+            >
+              Close
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

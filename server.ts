@@ -2798,6 +2798,126 @@ export async function startServer() {
     res.json(serverCache.latestOrders.slice(0, 50));
   });
 
+  app.all("/api/admin/user-orders", async (req, res) => {
+    const targetUid = String(req.query?.userId || req.body?.userId || "").trim();
+    const targetEmail = String(req.query?.email || req.body?.email || "").trim().toLowerCase();
+
+    if (!targetUid && !targetEmail) {
+      return res.status(400).json({ success: false, error: "Missing userId or email" });
+    }
+
+    try {
+      const client = getTursoClient();
+      const matchingOrders: any[] = [];
+      const seenOrderIds = new Set<string>();
+
+      // 1. Fetch from Turso smm_documents where collection = 'orders'
+      if (client) {
+        const result = await client.execute("SELECT id, data FROM smm_documents WHERE collection = 'orders';").catch(() => null);
+        if (result?.rows) {
+          for (const r of result.rows) {
+            try {
+              const ord = typeof r.data === "string" ? JSON.parse(r.data) : r.data;
+              if (!ord) continue;
+              const oUid = String(ord.userId || ord.user_id || "").trim();
+              const oEmail = String(ord.userEmail || ord.user_email || "").trim().toLowerCase();
+              const oId = String(ord.id || r.id);
+
+              if ((targetUid && oUid === targetUid) || (targetEmail && oEmail && oEmail === targetEmail)) {
+                if (!seenOrderIds.has(oId)) {
+                  seenOrderIds.add(oId);
+                  matchingOrders.push({ id: oId, ...ord });
+                }
+              }
+            } catch (e) {}
+          }
+        }
+      }
+
+      // 2. Also check in-memory cache & user doc in Turso
+      if (targetUid) {
+        const uDoc = await getTursoDoc("users", targetUid);
+        if (uDoc && Array.isArray(uDoc.latestOrders)) {
+          for (const ord of uDoc.latestOrders) {
+            if (ord && ord.id && !seenOrderIds.has(ord.id)) {
+              seenOrderIds.add(ord.id);
+              matchingOrders.push(ord);
+            }
+          }
+        }
+      }
+
+      // 3. Check serverCache.latestOrders
+      if (Array.isArray(serverCache.latestOrders)) {
+        for (const ord of serverCache.latestOrders) {
+          if (!ord) continue;
+          const oUid = String(ord.userId || ord.user_id || "").trim();
+          const oEmail = String(ord.userEmail || ord.user_email || "").trim().toLowerCase();
+          const oId = String(ord.id || ord.orderId);
+          if ((targetUid && oUid === targetUid) || (targetEmail && oEmail && oEmail === targetEmail)) {
+            if (!seenOrderIds.has(oId)) {
+              seenOrderIds.add(oId);
+              matchingOrders.push(ord);
+            }
+          }
+        }
+      }
+
+      // 4. Sort chronologically
+      matchingOrders.sort((a, b) => {
+        const timeA = new Date(a.createdAt || a.created_at || a.updatedAt || 0).getTime();
+        const timeB = new Date(b.createdAt || b.created_at || b.updatedAt || 0).getTime();
+        return timeA - timeB;
+      });
+
+      // 5. Ensure walletBalanceAfter is present
+      let userCurrentBalance = 0;
+      if (targetUid) {
+        const uDoc = await getTursoDoc("users", targetUid);
+        userCurrentBalance = Number(uDoc?.balance || 0);
+      } else if (targetEmail) {
+        try {
+          if (client) {
+            const uR = await client.execute("SELECT data FROM smm_documents WHERE collection = 'users';");
+            for (const row of uR.rows) {
+              const u = typeof row.data === "string" ? JSON.parse(row.data) : row.data;
+              if (String(u?.email || "").toLowerCase() === targetEmail) {
+                userCurrentBalance = Number(u?.balance || 0);
+                break;
+              }
+            }
+          }
+        } catch (e) {}
+      }
+
+      let runningBal = userCurrentBalance;
+      for (let i = matchingOrders.length - 1; i >= 0; i--) {
+        const ord = matchingOrders[i];
+        const charge = Number(ord.totalPrice || ord.charge || ord.amount || 0);
+        if (ord.walletBalanceAfter !== undefined && ord.walletBalanceAfter !== null) {
+          ord.walletBalanceAfter = Number(ord.walletBalanceAfter);
+          runningBal = ord.walletBalanceAfter;
+        } else if (ord.newBalance !== undefined && ord.newBalance !== null) {
+          ord.walletBalanceAfter = Number(ord.newBalance);
+          runningBal = ord.walletBalanceAfter;
+        } else {
+          ord.walletBalanceAfter = Number(runningBal.toFixed(2));
+          runningBal = Number((runningBal + charge).toFixed(2));
+        }
+      }
+
+      matchingOrders.reverse();
+
+      res.json({
+        success: true,
+        count: matchingOrders.length,
+        orders: matchingOrders
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message, orders: [] });
+    }
+  });
+
   app.post("/api/admin/search-user", async (req, res) => {
     const query = String(req.body.query || req.body.email || "").trim();
     
