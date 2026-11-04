@@ -1041,36 +1041,21 @@ export async function startServer() {
       updatedAt: new Date().toISOString()
     };
 
-    // 2. Immediately update in-memory cache and persistent disk cache
-    serverCache.users.set(user_id, { data: updatedData, time: Date.now() });
-    savePersistentCache();
-
-    // 3. Persist immediately to Firestore via REST
-    try {
-      const restOk = await setDocREST("users", user_id, { balance: newBalance, updatedAt: new Date().toISOString() }, token);
-      if (restOk) {
-        console.log(`[BALANCE-SAFE] Successfully persisted balance ₹${newBalance} to Firestore for ${user_id}`);
-      } else {
-        console.warn(`[BALANCE-SAFE] setDocREST returned false for user ${user_id}`);
-      }
-    } catch (persistErr: any) {
-      console.error(`[BALANCE-SAFE] Warning: REST balance persist error for ${user_id}:`, persistErr.message);
-    }
-
-    // Try Admin SDK atomic increment as secondary sync if available
-    if (!useRestFallback && adminSdkSucceeded) {
-      try {
-        await fdb.collection("users").doc(user_id).set({
-          balance: newBalance,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
-      } catch (e) {}
-    }
-
-    // Persist to Turso database (smm_users and smm_documents)
+    // 2. Immediately update Turso database, in-memory cache, and disk cache
     try {
       await setTursoDoc("users", user_id, updatedData);
     } catch (e) {}
+    serverCache.users.set(user_id, { data: updatedData, time: Date.now() });
+    savePersistentCache();
+
+    // 3. Optional background sync to Firestore (non-blocking)
+    setDocREST("users", user_id, { balance: newBalance, updatedAt: new Date().toISOString() }, token).catch(() => {});
+    if (!useRestFallback && adminSdkSucceeded) {
+      fdb.collection("users").doc(user_id).set({
+        balance: newBalance,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true }).catch(() => {});
+    }
 
     return { success: true, newBalance };
   };
@@ -2506,181 +2491,106 @@ export async function startServer() {
   app.get("/api/user-orders/:userId", async (req, res) => {
     const { userId } = req.params;
     const qEmail = String(req.query.email || req.query.userEmail || "").trim().toLowerCase();
-    const limitCount = Math.min(parseInt(req.query.limit as string) || 20, 50);
+    const limitCount = Math.min(parseInt(req.query.limit as string) || 50, 100);
     
     // Add super strict validation for invalid or placeholder user IDs
     if ((!userId || userId === "undefined" || userId === "null" || userId === "placeholder" || userId.trim() === "") && !qEmail) {
       return res.json([]);
     }
 
-    // 1. Check in-memory serverCache orders first (0 Firestore Reads!)
-    if (serverCache.orders.size > 0 || serverCache.latestOrders.length > 0) {
-      const memoryOrders = [
-        ...Array.from(serverCache.orders.values()).map((o: any) => o.data || o),
-        ...serverCache.latestOrders
-      ];
-      
-      const userMemoryOrders = memoryOrders.filter((item: any) => {
-        const orderUserId = item.userId || item.user_id;
-        const orderEmail = String(item.userEmail || item.user_email || "").trim().toLowerCase();
-        const matchesId = userId && userId !== "undefined" && userId !== "null" && orderUserId === userId;
-        const matchesEmail = qEmail && orderEmail && orderEmail === qEmail;
-        if (!matchesId && !matchesEmail) return false;
-        
-        const pId = item.providerOrderId || item.provider_order_id;
-        const isFailedAborted = item.status?.toLowerCase() === 'failed' && (!pId || pId === 'N/A');
-        return !isFailedAborted;
-      });
-
-      if (userMemoryOrders.length > 0) {
-        // Unique by order id and return latest
-        const map = new Map<string, any>();
-        userMemoryOrders.forEach((o: any) => {
-          const key = o.id || o.providerOrderId || o.createdAt || o.created_at;
-          if (key) map.set(key, o);
-        });
-        const sorted = Array.from(map.values()).sort((a: any, b: any) => {
-          const tA = new Date(a.createdAt || a.created_at || 0).getTime();
-          const tB = new Date(b.createdAt || b.created_at || 0).getTime();
-          return tB - tA;
-        });
-        return res.json(sorted.slice(0, limitCount));
-      }
-    }
-    
-    // 2. Check User Profile document latestOrders (0 extra queries if cached, 1 read otherwise)
-    if (userId && userId !== "undefined" && userId !== "null") {
-      try {
-        const uDoc = await getDocSafe("users", userId);
-        const uData = uDoc?.data ? uDoc.data() : uDoc;
-        if (uData && Array.isArray(uData.latestOrders) && uData.latestOrders.length > 0) {
-          return res.json(uData.latestOrders.slice(0, limitCount));
-        }
-      } catch (uErr) {}
-    }
-
     try {
-      let docs: any[] = [];
-      if (!useRestFallback) {
+      const ordersMap = new Map<string, any>();
+      const client = getTursoClient();
+
+      // 1. Fetch from Turso database smm_documents (collection = 'orders')
+      if (client) {
         try {
-          if (userId && userId !== "undefined" && userId !== "null") {
-            const snap = await fdb.collection("orders")
-              .where("userId", "==", userId)
-              .limit(limitCount)
-              .get();
-            docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          }
-          
-          if (docs.length === 0 && qEmail) {
-            const emailSnap = await fdb.collection("orders")
-              .where("userEmail", "==", qEmail)
-              .limit(limitCount)
-              .get();
-            docs = emailSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          }
-        } catch (err: any) {
-          console.warn("[API] Admin fetch for user orders failed, trying REST:", err.message);
-          if (err.message?.includes("permissions") || err.message?.includes("PERMISSION_DENIED") || err.code === 7) {
-            useRestFallback = true;
-          }
-        }
-      }
+          const result = await client.execute("SELECT id, data FROM smm_documents WHERE collection = 'orders';");
+          if (result?.rows) {
+            for (const r of result.rows) {
+              try {
+                const ord = typeof r.data === "string" ? JSON.parse(r.data) : r.data;
+                if (!ord) continue;
+                const oUid = String(ord.userId || ord.user_id || "").trim();
+                const oEmail = String(ord.userEmail || ord.user_email || "").trim().toLowerCase();
+                const oId = String(ord.id || r.id);
 
-      if (useRestFallback) {
-        const queryRes = await runQueryREST({
-          structuredQuery: {
-            from: [{ collectionId: "orders" }],
-            where: {
-              fieldFilter: {
-                field: { fieldPath: "userId" },
-                op: "EQUAL",
-                value: { stringValue: userId }
-              }
-            },
-            limit: limitCount
-          }
-        }, req.headers.authorization as string || systemAccessToken);
-        
-        if (queryRes) {
-          docs = queryRes.map(doc => ({ id: doc.id, ...doc.data() }));
-        }
-
-        if (docs.length === 0 && qEmail) {
-          const emailQueryRes = await runQueryREST({
-            structuredQuery: {
-              from: [{ collectionId: "orders" }],
-              where: {
-                fieldFilter: {
-                  field: { fieldPath: "userEmail" },
-                  op: "EQUAL",
-                  value: { stringValue: qEmail }
+                if ((userId && oUid === userId) || (qEmail && oEmail && oEmail === qEmail)) {
+                  ordersMap.set(oId, { id: oId, ...ord });
                 }
-              },
-              limit: limitCount
+              } catch (e) {}
             }
-          }, req.headers.authorization as string || systemAccessToken);
-          if (emailQueryRes) {
-            docs = emailQueryRes.map(doc => ({ id: doc.id, ...doc.data() }));
           }
+        } catch (tursoErr: any) {
+          console.warn("[USER-ORDERS-TURSO-WARN]:", tursoErr.message);
         }
       }
 
-      // Filter strictly to ensure only orders belonging to the specified user are returned.
-      // This prevents any leakage or "fake" orders belonging to other users.
-      // Also filter out aborted "Failed" orders that do not have a valid provider ID (e.g. they failed before transmission).
-      const filteredDocs = docs.filter(item => {
-        const orderUserId = item.userId || item.user_id;
-        const orderEmail = String(item.userEmail || item.user_email || "").trim().toLowerCase();
-        const matchesId = userId && userId !== "undefined" && userId !== "null" && orderUserId === userId;
-        const matchesEmail = qEmail && orderEmail && orderEmail === qEmail;
-        if (!matchesId && !matchesEmail) return false;
-        
-        // Skip failed aborted/unplaced orders (without a valid provider order ID)
-        const pId = item.providerOrderId || item.provider_order_id;
-        const isFailedAborted = item.status?.toLowerCase() === 'failed' && (!pId || pId === 'N/A');
-        return !isFailedAborted;
-      });
+      // 2. Also check User Profile latestOrders
+      if (userId && userId !== "undefined" && userId !== "null") {
+        try {
+          const uDoc = await getDocSafe("users", userId);
+          const uData = uDoc?.data ? uDoc.data() : uDoc;
+          if (uData && Array.isArray(uData.latestOrders)) {
+            for (const ord of uData.latestOrders) {
+              if (ord && (ord.id || ord.providerOrderId)) {
+                const oId = String(ord.id || ord.providerOrderId);
+                if (!ordersMap.has(oId)) {
+                  ordersMap.set(oId, ord);
+                }
+              }
+            }
+          }
+        } catch (uErr) {}
+      }
 
-      // Convert timestamp formats to ISO strings robustly and keep in memory cache in sync
-      const processedDocs = filteredDocs.map(item => {
+      // 3. Also check serverCache.latestOrders and serverCache.orders
+      if (serverCache.orders.size > 0 || serverCache.latestOrders.length > 0) {
+        const memoryOrders = [
+          ...Array.from(serverCache.orders.values()).map((o: any) => o.data || o),
+          ...serverCache.latestOrders
+        ];
+        memoryOrders.forEach((item: any) => {
+          if (!item) return;
+          const orderUserId = item.userId || item.user_id;
+          const orderEmail = String(item.userEmail || item.user_email || "").trim().toLowerCase();
+          const matchesId = userId && userId !== "undefined" && userId !== "null" && orderUserId === userId;
+          const matchesEmail = qEmail && orderEmail && orderEmail === qEmail;
+          if (matchesId || matchesEmail) {
+            const key = String(item.id || item.providerOrderId || "");
+            if (key && !ordersMap.has(key)) {
+              ordersMap.set(key, item);
+            }
+          }
+        });
+      }
+
+      const allOrders = Array.from(ordersMap.values()).map(item => {
         let createdAtIso = new Date().toISOString();
         if (item.createdAt) {
-          if (typeof item.createdAt === "string") {
-            createdAtIso = item.createdAt;
-          } else if (item.createdAt.toDate) {
-            createdAtIso = item.createdAt.toDate().toISOString();
-          } else if (typeof item.createdAt.seconds === "number") {
-            createdAtIso = new Date(item.createdAt.seconds * 1000).toISOString();
-          }
+          if (typeof item.createdAt === "string") createdAtIso = item.createdAt;
+          else if (item.createdAt.toDate) createdAtIso = item.createdAt.toDate().toISOString();
+          else if (typeof item.createdAt.seconds === "number") createdAtIso = new Date(item.createdAt.seconds * 1000).toISOString();
         }
-        let updatedAtIso = createdAtIso;
-        if (item.updatedAt) {
-          if (typeof item.updatedAt === "string") {
-            updatedAtIso = item.updatedAt;
-          } else if (item.updatedAt.toDate) {
-            updatedAtIso = item.updatedAt.toDate().toISOString();
-          } else if (typeof item.updatedAt.seconds === "number") {
-            updatedAtIso = new Date(item.updatedAt.seconds * 1000).toISOString();
-          }
-        }
-        const normalizedItem = {
+        return {
           ...item,
           createdAt: createdAtIso,
-          updatedAt: updatedAtIso
+          updatedAt: item.updatedAt || createdAtIso
         };
-        addOrderToMemory(item.id, normalizedItem);
-        return normalizedItem;
       });
 
-      // Sort by createdAt descending robustly
-      processedDocs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      // Filter out aborted Failed orders with no providerOrderId
+      const validOrders = allOrders.filter(item => {
+        const pId = item.providerOrderId || item.provider_order_id;
+        const isFailedAborted = item.status?.toLowerCase() === 'failed' && (!pId || pId === 'N/A');
+        return !isFailedAborted;
+      });
 
-      // Limit response to requested amount (strictly 15 orders limit)
-      const userOrders = processedDocs.slice(0, limitCount);
-      res.json(userOrders);
+      validOrders.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      return res.json(validOrders.slice(0, limitCount));
     } catch (apiErr: any) {
-      console.error("[API] Failed to get user orders on-demand:", userId, apiErr.message);
-      res.status(500).json({ error: "Failed to fetch orders" });
+      console.error("[API] Failed to get user orders:", userId, apiErr.message);
+      return res.status(500).json({ error: "Failed to fetch orders" });
     }
   });
 
@@ -6395,45 +6305,24 @@ export async function startServer() {
             }
             const refundedBal = Number((currentBal + amt).toFixed(2));
 
-            let refundOk = false;
-            if (!useRestFallback && adminSdkSucceeded) {
-              try {
-                await fdb.collection("users").doc(uid).set({
-                  balance: refundedBal,
-                  updatedAt: admin.firestore.FieldValue.serverTimestamp()
-                }, { merge: true });
-                refundOk = true;
-              } catch (e: any) {
-                console.warn(`[REFUND-FAIL] Admin SDK refund error:`, e.message);
-              }
-            }
-
-            if (!refundOk) {
-              try {
-                await setDocREST("users", uid, { balance: refundedBal, updatedAt: new Date().toISOString() }, token);
-                refundOk = true;
-              } catch (e: any) {
-                console.warn(`[REFUND-FAIL] REST refund error:`, e.message);
-              }
-            }
-
-            // Sync in-memory, localDb, and Turso Cloud Database
             const refundUserData = {
               uid,
               balance: refundedBal,
               updatedAt: new Date().toISOString()
             };
             setLocalDoc("users", uid, refundUserData);
-            tursoSetDoc("users", uid, refundUserData).catch(() => {});
-
-            if (serverCache.users.has(uid)) {
-              const cached = serverCache.users.get(uid);
-              serverCache.users.set(uid, {
-                data: { ...(cached?.data || cached || { uid }), balance: refundedBal, updatedAt: new Date().toISOString() },
-                time: Date.now()
-              });
-            }
+            serverCache.users.set(uid, {
+              data: { ...(serverCache.users.get(uid)?.data || { uid }), balance: refundedBal, updatedAt: new Date().toISOString() },
+              time: Date.now()
+            });
             savePersistentCache();
+
+            try {
+              await setTursoDoc("users", uid, refundUserData);
+            } catch (e) {}
+
+            // Background non-blocking sync to Firestore
+            setDocREST("users", uid, { balance: refundedBal, updatedAt: new Date().toISOString() }, token).catch(() => {});
 
             currentOrderData.balanceAlreadyDeducted = false;
             currentOrderData.newBalance = refundedBal;
@@ -6596,44 +6485,27 @@ export async function startServer() {
           throw lowBalErr;
         }
 
-        // Deduct upfront directly in Firebase Firestore so no subsequent order from website or app can reuse the same funds!
+        // Deduct upfront directly in Turso Cloud Database & RAM cache (fast 20ms write!)
         const newBalance = Math.max(0, Number((liveBalance - orderAmount).toFixed(2)));
-        console.log(`[FIREBASE-DIRECT-DEDUCT] Deducting ₹${orderAmount} from User ${userId} in Firebase. Live balance: ₹${liveBalance} -> ₹${newBalance}`);
+        console.log(`[TURSO-DIRECT-DEDUCT] Deducting ₹${orderAmount} from User ${userId}. Live balance: ₹${liveBalance} -> ₹${newBalance}`);
 
-        let directDeductSuccess = false;
-        if (!useRestFallback && adminSdkSucceeded) {
-          try {
-            await fdb.collection("users").doc(userId).set({
-              balance: newBalance,
-              updatedAt: admin.firestore.FieldValue.serverTimestamp()
-            }, { merge: true });
-            directDeductSuccess = true;
-          } catch (e: any) {
-            console.warn(`[FIREBASE-DIRECT-DEDUCT] Admin SDK write failed: ${e.message}`);
-          }
-        }
-
-        if (!directDeductSuccess) {
-          try {
-            const ok = await setDocREST("users", userId, { balance: newBalance, updatedAt: new Date().toISOString() });
-            if (ok) directDeductSuccess = true;
-          } catch (e: any) {
-            console.warn(`[FIREBASE-DIRECT-DEDUCT] REST write failed: ${e.message}`);
-          }
-        }
-
-        // Immediately update Turso Cloud Database, localDb, and RAM cache
         const updatedUserData = {
           ...(userDocData || { uid: userId }),
           balance: newBalance,
           updatedAt: new Date().toISOString()
         };
         setLocalDoc("users", userId, updatedUserData);
-        tursoSetDoc("users", userId, updatedUserData).catch((err: any) => {
-          console.warn(`[TURSO-BALANCE-DEDUCT-WARN] Failed to write new balance to Turso:`, err.message);
-        });
         serverCache.users.set(userId, { data: updatedUserData, time: Date.now() });
         savePersistentCache();
+
+        try {
+          await setTursoDoc("users", userId, updatedUserData);
+        } catch (err: any) {
+          console.warn(`[TURSO-BALANCE-DEDUCT-WARN] Failed to write new balance to Turso:`, err.message);
+        }
+
+        // Background non-blocking sync to Firestore
+        setDocREST("users", userId, { balance: newBalance, updatedAt: new Date().toISOString() }).catch(() => {});
 
         currentOrderData.balanceAlreadyDeducted = true;
         currentOrderData.deductedAmount = orderAmount;

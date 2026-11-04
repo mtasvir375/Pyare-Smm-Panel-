@@ -408,10 +408,10 @@ export default function Courses() {
       let userToken = "";
       try {
         if (user && typeof user.getIdToken === "function") {
-          userToken = await user.getIdToken(true);
+          userToken = await user.getIdToken(false);
         }
       } catch (tokErr) {
-        console.warn("[ORDER] Token refresh warning:", tokErr);
+        console.warn("[ORDER] Token retrieval warning:", tokErr);
       }
 
       const headers: any = { "Content-Type": "application/json" };
@@ -419,15 +419,13 @@ export default function Courses() {
 
       let resData: any = null;
       const targetApiUrl = formatApiUrl("/api/proxy-provider");
-      console.log(`[ORDER] Submitting order to backend API: ${targetApiUrl}`);
 
       try {
         let res: any = null;
         try {
-          res = await axios.post(targetApiUrl, orderPayload, { headers, timeout: 35000 });
+          res = await axios.post(targetApiUrl, orderPayload, { headers, timeout: 20000 });
         } catch (initialErr: any) {
           // If initial request failed with server error or redirect, attempt retry with absolute URL
-          console.warn("[ORDER] Primary post attempt failed, retrying with fallback...", initialErr?.message);
           let retryUrl = targetApiUrl;
           if (typeof window !== "undefined") {
             const origin = window.location.origin;
@@ -435,7 +433,7 @@ export default function Courses() {
               retryUrl = `${origin}${retryUrl.startsWith("/") ? retryUrl : `/${retryUrl}`}`;
             }
           }
-          res = await axios.post(retryUrl, orderPayload, { headers, timeout: 35000 });
+          res = await axios.post(retryUrl, orderPayload, { headers, timeout: 20000 });
         }
         resData = res?.data;
       } catch (apiErr: any) {
@@ -443,7 +441,6 @@ export default function Courses() {
         const status = apiErr.response?.status;
         let cleanErrStr = "Failed to place order with provider. Please try again or check your link.";
 
-        // If the backend returned a specific 400 validation error (e.g. invalid link or user balance)
         if (status === 400 && primaryData) {
           const rawErr = primaryData.error || primaryData.message;
           if (rawErr && typeof rawErr !== "string") {
@@ -457,8 +454,6 @@ export default function Courses() {
           throw new Error(cleanErrStr);
         }
 
-        console.warn("[ORDER] API call encountered error:", apiErr.message, primaryData);
-        
         if (primaryData) {
           if (typeof primaryData.error === "string") cleanErrStr = primaryData.error;
           else if (typeof primaryData.message === "string" && !primaryData.message.includes("A server error has occurred")) cleanErrStr = primaryData.message;
@@ -491,39 +486,7 @@ export default function Courses() {
         updateUserProfileLocal({ balance: finalBal });
       }
 
-      // Persist deducted balance and rotating latest 10 orders directly to user profile in Firestore
-      try {
-        const uDoc = await dbClient.getDoc("users", user.uid);
-        const existingOrders = Array.isArray(uDoc?.latestOrders) ? uDoc.latestOrders : [];
-        const newOrderSummary = {
-          id: orderId,
-          userId: user.uid,
-          userEmail: user.email || "",
-          courseId: selectedCourse.id,
-          serviceId: selectedCourse.id,
-          title: selectedCourse.title,
-          category: selectedCourse.category || "Other",
-          quantity: Math.floor(Number(quantity)),
-          targetLink: formattedLink,
-          totalPrice: Number(totalPrice),
-          status: "In progress",
-          providerOrderId: finalProviderOrderId,
-          createdAt: new Date().toISOString()
-        };
-        const updatedLatestOrders = [
-          newOrderSummary,
-          ...existingOrders.filter((o: any) => o && o.id !== orderId && o.providerOrderId !== finalProviderOrderId)
-        ].slice(0, 10);
-
-        await dbClient.updateUserProfile(user.uid, {
-          latestOrders: updatedLatestOrders,
-          lastOrderedAt: new Date().toISOString()
-        });
-      } catch (persistErr) {
-        console.warn("[ORDER] Profile balance & latest orders direct sync error:", persistErr);
-      }
-
-      // Update local state and UI (Server already deducted balance in Firestore and in-memory cache)
+      // Show success popup instantly to the user (0ms delay!)
       setLastOrder({ ...orderData, status: "Pending", providerOrderId: finalProviderOrderId });
       setIsOrderSuccessOpen(true);
       toast.success(`Order Placed Successfully! Order ID: ${finalProviderOrderId}`);

@@ -161,7 +161,7 @@ export default function Dashboard() {
             if (Array.isArray(parsed) && parsed.length > 0) {
               initialOrders = parseOrdersList(parsed);
               if (isMounted && initialOrders.length > 0) {
-                setOrders(initialOrders.slice(0, 10));
+                setOrders(initialOrders);
                 setLoading(false);
               }
             }
@@ -170,35 +170,27 @@ export default function Dashboard() {
           }
         }
 
-        // 2. If browser cache is cleared, load immediately from userProfile (0ms, 0 extra Firestore reads!)
+        // 2. If browser cache is cleared, load immediately from userProfile
         if (initialOrders.length === 0 && userProfile && Array.isArray((userProfile as any).latestOrders) && (userProfile as any).latestOrders.length > 0) {
           initialOrders = parseOrdersList((userProfile as any).latestOrders);
           if (isMounted && initialOrders.length > 0) {
-            setOrders(initialOrders.slice(0, 10));
+            setOrders(initialOrders);
             setLoading(false);
-            console.log(`[DASHBOARD] ✅ Restored ${initialOrders.length} orders instantly from persistent User Profile!`);
           }
         }
 
-        // Strict Quota Guard: If orders are already loaded from cache or userProfile, SKIP network read completely!
-        if (initialOrders.length > 0 && refreshTrigger === 0) {
-          setLoading(false);
-          return;
-        }
-
-        // 4. Only fetch from network if cache is missing or expired
+        // 3. Always fetch all permanent orders from Turso database to guarantee full permanent history
         try {
-          const fetched = await dbClient.getUserOrders(user.uid, 10, user.email || undefined);
+          const fetched = await dbClient.getUserOrders(user.uid, 100, user.email || undefined);
           if (Array.isArray(fetched) && isMounted) {
             const combined = [...initialOrders, ...fetched];
             const freshParsed = parseOrdersList(combined);
 
-            // Strictly cap to latest 10 orders (FIFO rotation)
-            const latest10 = freshParsed.slice(0, 10);
-            setOrders(latest10);
+            setOrders(freshParsed);
+            setLoading(false);
 
-            // Update local/session cache with fresh list
-            const jsonStr = JSON.stringify(latest10);
+            // Update local/session cache with complete list
+            const jsonStr = JSON.stringify(freshParsed);
             const nowStr = Date.now().toString();
             const keysToSave = [uidKey];
             if (emailKey) keysToSave.push(emailKey);

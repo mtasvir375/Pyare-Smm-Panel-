@@ -93,10 +93,43 @@ async function setTursoDoc(collection: string, id: string, data: any): Promise<b
         args: [id, data.title || "", data.category || "General", Number(data.pricePerThousand || data.price || 0), data.providerId || "", String(data.providerServiceId || ""), Number(data.minLimit || 0), Number(data.maxLimit || 0), data.status || "active", dataJson, now]
       });
     } else if (collection === "users") {
+      let userBalance = data.balance !== undefined ? Number(data.balance) : (data.walletBalance !== undefined ? Number(data.walletBalance) : null);
+      let userRole = data.role || null;
+      let userEmail = data.email || data.userEmail || null;
+      let mergedData = { ...data };
+
+      if (userBalance === null) {
+        try {
+          const exRes = await client.execute({ sql: `SELECT balance, role, email, data FROM smm_users WHERE id = ? LIMIT 1;`, args: [id] });
+          if (exRes.rows.length > 0) {
+            const row = exRes.rows[0];
+            userBalance = Number(row.balance || 0);
+            if (!userRole) userRole = String(row.role || "student");
+            if (!userEmail) userEmail = String(row.email || "");
+            let exJson: any = {};
+            if (typeof row.data === "string") { try { exJson = JSON.parse(row.data); } catch(e) {} }
+            mergedData = { ...exJson, ...data, balance: userBalance };
+          }
+        } catch(e) {}
+        if (userBalance === null) userBalance = 0;
+      }
+      mergedData.balance = userBalance;
+      const finalJson = JSON.stringify(mergedData);
+
       await client.execute({
-        sql: `INSERT INTO smm_users (id, email, role, balance, data, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET email = excluded.email, role = excluded.role, balance = excluded.balance, data = excluded.data, updated_at = excluded.updated_at;`,
-        args: [id, data.email || data.userEmail || "", data.role || "student", Number(data.balance || 0), dataJson, now]
+        sql: `INSERT INTO smm_users (id, email, role, balance, data, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+              ON CONFLICT(id) DO UPDATE SET
+                email = COALESCE(NULLIF(excluded.email, ''), smm_users.email),
+                role = COALESCE(NULLIF(excluded.role, ''), smm_users.role),
+                balance = excluded.balance,
+                data = excluded.data,
+                updated_at = excluded.updated_at;`,
+        args: [id, userEmail || "", userRole || "student", userBalance, finalJson, now]
       });
+      await client.execute({
+        sql: `INSERT INTO smm_documents (collection, id, data, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(collection, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at;`,
+        args: [collection, id, finalJson, now]
+      }).catch(() => {});
     } else if (collection === "settings") {
       await client.execute({
         sql: `INSERT INTO smm_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at;`,
@@ -2006,18 +2039,22 @@ export default async function handler(req: any, res: any) {
     }
 
     if (pathname === "/api/db/set") {
-      const { collection: colName, id, data } = body || {};
+      let { collection: colName, id, data } = body || {};
       if (!colName || !id) return res.status(400).json({ success: false, error: "Missing collection or id" });
       
-      // CRITICAL SECURITY HARDENING:
+      // CRITICAL SECURITY & BALANCE HARDENING:
       if (colName === "users") {
-        if (!isReqAdmin()) {
-          if (data) {
-            delete data.balance;
-            delete data.walletBalance;
-            delete data.role;
-          }
+        const existing = await getTursoDoc("users", id) || await getRestDoc("users", id, true) || {};
+        const exBal = Number(existing.balance ?? existing.walletBalance ?? 0);
+        let safeBal = exBal;
+        let safeRole = existing.role || (id === "mtasvir" || existing.email === "mtasvir375@gmail.com" ? "admin" : "user");
+        if (isReqAdmin() && data && data.balance !== undefined) {
+          safeBal = Number(data.balance);
         }
+        if (isReqAdmin() && data && data.role) {
+          safeRole = data.role;
+        }
+        data = { ...existing, ...(data || {}), id, balance: safeBal, role: safeRole, updatedAt: new Date().toISOString() };
       }
       if (colName === "deposits") {
         if (data && data.status && data.status !== "pending" && !isReqAdmin()) {
@@ -2037,28 +2074,6 @@ export default async function handler(req: any, res: any) {
       const saved = await setRestDoc(colName, id, data || {});
       if (colName === "users") {
         await setTursoDoc("users", id, saved).catch(() => {});
-        try {
-          const client = getTursoClient();
-          if (client) {
-            await client.execute({
-              sql: `INSERT INTO smm_users (id, email, role, balance, data, updated_at)
-                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                    ON CONFLICT(id) DO UPDATE SET
-                      email = excluded.email,
-                      role = excluded.role,
-                      balance = excluded.balance,
-                      data = excluded.data,
-                      updated_at = excluded.updated_at;`,
-              args: [
-                id,
-                saved.email || saved.userEmail || "",
-                saved.role || (id === "mtasvir" || saved.email === "mtasvir375@gmail.com" ? "admin" : "user"),
-                Number(saved.balance ?? saved.walletBalance ?? 0),
-                JSON.stringify(saved)
-              ]
-            });
-          }
-        } catch (e) {}
       }
       return res.status(200).json({ success: true, data: saved });
     }
@@ -2092,33 +2107,20 @@ export default async function handler(req: any, res: any) {
       if (colName === "settings") memSettingsCache = null;
       if (colName === "providers") memProvidersCache = null;
       if (colName === "users") memAllUsersCache = null;
-      const existing = await getRestDoc(colName, id, true) || {};
+      const existing = await getTursoDoc(colName, id) || await getRestDoc(colName, id, true) || {};
       const merged = { ...existing, ...(data || {}), id, updatedAt: new Date().toISOString() };
+      if (colName === "users") {
+        const exBal = Number(existing.balance ?? existing.walletBalance ?? 0);
+        if (!isReqAdmin() || data?.balance === undefined) {
+          merged.balance = exBal;
+        }
+        if (!isReqAdmin() || !data?.role) {
+          merged.role = existing.role || (id === "mtasvir" || existing.email === "mtasvir375@gmail.com" ? "admin" : "user");
+        }
+      }
       const updated = await setRestDoc(colName, id, merged);
       if (colName === "users") {
         await setTursoDoc("users", id, updated).catch(() => {});
-        try {
-          const client = getTursoClient();
-          if (client) {
-            await client.execute({
-              sql: `INSERT INTO smm_users (id, email, role, balance, data, updated_at)
-                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                    ON CONFLICT(id) DO UPDATE SET
-                      email = excluded.email,
-                      role = excluded.role,
-                      balance = excluded.balance,
-                      data = excluded.data,
-                      updated_at = excluded.updated_at;`,
-              args: [
-                id,
-                updated.email || updated.userEmail || "",
-                updated.role || (id === "mtasvir" || updated.email === "mtasvir375@gmail.com" ? "admin" : "user"),
-                Number(updated.balance ?? updated.walletBalance ?? 0),
-                JSON.stringify(updated)
-              ]
-            });
-          }
-        } catch (e) {}
       }
       return res.status(200).json({ success: true, data: updated });
     }
@@ -2490,53 +2492,58 @@ export default async function handler(req: any, res: any) {
       }
       const targetUid = String(req.query?.userId || pathUid || "").trim();
       const targetEmail = String(req.query?.email || req.query?.userEmail || "").trim().toLowerCase();
+      const limitCount = Math.min(parseInt(req.query?.limit as string) || 50, 100);
 
       if (!targetUid && !targetEmail) {
         return res.status(200).json([]);
       }
 
-      // Check in-memory 10-minute cache first (0 Firestore reads!)
-      const cacheKey = targetUid || targetEmail;
-      const memCached = memUserOrders.get(cacheKey);
-      if (memCached && (Date.now() - memCached.time < 10 * 60 * 1000)) {
-        return res.status(200).json(memCached.data);
-      }
-
-      // Check User Profile document latestOrders first (0 extra reads if cached!)
-      if (targetUid) {
-        try {
-          const uDoc = await getRestDoc("users", targetUid);
-          if (uDoc && Array.isArray(uDoc.latestOrders) && uDoc.latestOrders.length > 0) {
-            const list = uDoc.latestOrders.slice(0, 10);
-            memUserOrders.set(cacheKey, { data: list, time: Date.now() });
-            return res.status(200).json(list);
-          }
-        } catch (e) {}
-      }
-
-      // Fallback query to orders collection
       try {
-        let ordList: any[] = [];
-        if (targetUid) {
-          ordList = await queryRestDocs("orders", "userId", targetUid, 30);
-        } else if (targetEmail) {
-          ordList = await queryRestDocs("orders", "userEmail", targetEmail, 30);
+        const ordersMap = new Map<string, any>();
+        const client = getTursoClient();
+
+        // 1. Fetch from Turso database orders collection
+        if (client) {
+          const res = await client.execute("SELECT id, data FROM smm_documents WHERE collection = 'orders';");
+          if (res?.rows) {
+            for (const r of res.rows) {
+              try {
+                const ord = typeof r.data === "string" ? JSON.parse(r.data) : r.data;
+                if (!ord) continue;
+                const oUid = String(ord.userId || ord.user_id || "").trim();
+                const oEmail = String(ord.userEmail || ord.user_email || "").trim().toLowerCase();
+                const oId = String(ord.id || r.id);
+
+                if ((targetUid && oUid === targetUid) || (targetEmail && oEmail && oEmail === targetEmail)) {
+                  ordersMap.set(oId, { id: oId, ...ord });
+                }
+              } catch (e) {}
+            }
+          }
         }
 
-        const filtered = ordList.filter((item: any) => {
-          if (!item) return false;
-          const uUid = String(item.userId || item.user_id || "").trim();
-          const uEmail = String(item.userEmail || item.user_email || "").trim().toLowerCase();
-          return (targetUid && uUid === targetUid) || (targetEmail && uEmail && uEmail === targetEmail);
-        });
-        filtered.sort((a, b) => {
+        // 2. Also check User Profile latestOrders
+        if (targetUid) {
+          const uDoc = await getTursoDoc("users", targetUid) || await getRestDoc("users", targetUid);
+          if (uDoc && Array.isArray(uDoc.latestOrders)) {
+            for (const ord of uDoc.latestOrders) {
+              if (ord && (ord.id || ord.providerOrderId)) {
+                const oId = String(ord.id || ord.providerOrderId);
+                if (!ordersMap.has(oId)) {
+                  ordersMap.set(oId, ord);
+                }
+              }
+            }
+          }
+        }
+
+        const sorted = Array.from(ordersMap.values()).sort((a, b) => {
           const timeA = new Date(a.createdAt || a.created_at || 0).getTime();
           const timeB = new Date(b.createdAt || b.created_at || 0).getTime();
           return timeB - timeA;
         });
-        const finalOrders = filtered.slice(0, 10);
-        memUserOrders.set(cacheKey, { data: finalOrders, time: Date.now() });
-        return res.status(200).json(finalOrders);
+
+        return res.status(200).json(sorted.slice(0, limitCount));
       } catch (e: any) {
         return res.status(200).json([]);
       }

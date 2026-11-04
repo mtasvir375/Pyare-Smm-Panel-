@@ -159,9 +159,6 @@ export const dbClient = {
     try {
       await axios.post(formatApiUrl('/api/db/update'), { collection: table, id, data: merged }, { timeout: 8000 });
     } catch (e) {}
-    try {
-      await axios.post(formatApiUrl('/api/db/set'), { collection: table, id, data: merged }, { timeout: 8000 });
-    } catch (e) {}
 
     // 3. Clear cache
     if (table === 'courses' || table === 'settings' || table === 'providers') {
@@ -245,13 +242,13 @@ export const dbClient = {
     }
   },
 
-  async getUserOrders(userId: string, l = 10, email?: string): Promise<any[]> {
-    const limitCount = Math.min(l, 10);
+  async getUserOrders(userId: string, l = 100, email?: string): Promise<any[]> {
+    const limitCount = Math.min(l, 100);
     try {
       const emailQuery = email ? `&email=${encodeURIComponent(email)}` : "";
-      const response = await axios.get(formatApiUrl(`/api/user-orders/${userId}?limit=${limitCount}${emailQuery}`), { timeout: 4000 });
+      const response = await axios.get(formatApiUrl(`/api/user-orders/${userId}?limit=${limitCount}${emailQuery}`), { timeout: 8000 });
       if (Array.isArray(response.data)) {
-        return response.data.slice(0, 10);
+        return response.data;
       }
     } catch (e) {}
     return [];
