@@ -142,6 +142,68 @@ async function setTursoDoc(collection: string, id: string, data: any): Promise<b
   }
 }
 
+async function isPaymentClaimedInTurso(key: string): Promise<boolean> {
+  const cleanKey = String(key || "").trim();
+  if (!cleanKey) return false;
+  const client = getTursoClient();
+  if (!client) return false;
+  try {
+    const res = await client.execute({
+      sql: `SELECT id FROM smm_documents WHERE collection = 'claimed_payments' AND id = ? LIMIT 1;`,
+      args: [cleanKey]
+    });
+    if (res.rows.length > 0) return true;
+    const depRes = await client.execute({
+      sql: `SELECT id FROM smm_deposits WHERE transaction_id = ? OR id = ? LIMIT 1;`,
+      args: [cleanKey, cleanKey]
+    });
+    return depRes.rows.length > 0;
+  } catch (err) {
+    return false;
+  }
+}
+
+async function tryClaimPaymentInTurso(
+  claimKeys: (string | undefined | null)[],
+  claimData: any
+): Promise<{ claimed: boolean; alreadyClaimedKey?: string }> {
+  const validKeys = Array.from(
+    new Set(
+      claimKeys
+        .map((k) => (k ? String(k).trim() : ""))
+        .filter((k) => k.length > 0)
+    )
+  );
+  if (validKeys.length === 0) return { claimed: true };
+  const client = getTursoClient();
+  if (!client) return { claimed: true };
+
+  for (const k of validKeys) {
+    const already = await isPaymentClaimedInTurso(k);
+    if (already) return { claimed: false, alreadyClaimedKey: k };
+  }
+
+  const now = new Date().toISOString();
+  const payloadStr = JSON.stringify({ ...claimData, claimedAt: now });
+
+  for (const k of validKeys) {
+    try {
+      const res = await client.execute({
+        sql: `INSERT INTO smm_documents (collection, id, data, updated_at)
+              VALUES ('claimed_payments', ?, ?, ?)
+              ON CONFLICT(collection, id) DO NOTHING;`,
+        args: [k, payloadStr, now]
+      });
+      if (res.rowsAffected === 0) {
+        return { claimed: false, alreadyClaimedKey: k };
+      }
+    } catch (err) {
+      return { claimed: false, alreadyClaimedKey: k };
+    }
+  }
+  return { claimed: true };
+}
+
 async function listTursoDocs(collection: string, limitCount = 200): Promise<any[]> {
   const client = getTursoClient();
   if (!client || !collection) return [];
@@ -1556,9 +1618,9 @@ export default async function handler(req: any, res: any) {
           }
 
           if (match && intent.orderRef) {
-            const doubleDoc = await getRestDoc("claimed_payments", intent.orderRef).catch(() => null);
-            if (doubleDoc && doubleDoc.credited) {
-              console.log(`[RECONCILE-PREVENTED] Permanent check: Order ${intent.orderRef} already claimed in Firestore. Skipping match.`);
+            const alreadyClaimed = await isPaymentClaimedInTurso(intent.orderRef);
+            if (alreadyClaimed) {
+              console.log(`[RECONCILE-PREVENTED] Order ${intent.orderRef} already claimed in Turso SQL DB. Skipping match.`);
               match = null;
             }
           }
@@ -1567,17 +1629,56 @@ export default async function handler(req: any, res: any) {
             const matchUtr = match.utr || intent.orderRef;
             const creditAmt = Number(intent.amount || match.amount || 0);
 
-            // Double-check: Mark claimed_payments IMMEDIATELY as atomic distributed lock
-            await setRestDoc("claimed_payments", intent.orderRef, {
+            // Ironclad Atomic SQL Lock in Turso BEFORE updating balance:
+            const atomicLock = await tryClaimPaymentInTurso(
+              [intent.orderRef, matchUtr, intent.intentId],
+              { orderRef: intent.orderRef, utr: matchUtr, userId: intent.userId, amount: creditAmt }
+            );
+
+            if (!atomicLock.claimed) {
+              console.log(`[CHECK-INTENT-DUPLICATE-BLOCKED] Payment ${intent.orderRef} / ${matchUtr} was already claimed (lock key: ${atomicLock.alreadyClaimedKey}). Returning completed status without crediting balance again!`);
+              let uBal = 0;
+              try {
+                const u = (await getTursoDoc("users", intent.userId)) || (await getRestDoc("users", intent.userId));
+                uBal = Number(u?.balance !== undefined ? u.balance : (u?.walletBalance || 0));
+              } catch (e) {}
+
+              const compData = {
+                ...intent,
+                status: "completed",
+                completedAt: Date.now(),
+                utr: matchUtr,
+                creditedAmount: creditAmt,
+                newBalance: uBal,
+                notified: true
+              };
+              memIntents.set(strId, { data: compData, time: Date.now() });
+              if (intent.orderRef) memIntents.set(intent.orderRef, { data: compData, time: Date.now() });
+
+              return res.status(200).json({
+                success: true,
+                status: "completed",
+                intentId: intent.intentId,
+                orderRef: intent.orderRef,
+                amount: intent.amount,
+                creditedAmount: creditAmt,
+                utr: matchUtr,
+                completedAt: compData.completedAt,
+                newBalance: uBal
+              });
+            }
+
+            // Also mirror to claimed_payments for REST fallback compatibility
+            setRestDoc("claimed_payments", intent.orderRef, {
               orderRef: intent.orderRef,
               utr: matchUtr,
               userId: intent.userId,
               amount: creditAmt,
               credited: true,
               claimedAt: new Date().toISOString()
-            });
+            }).catch(() => {});
 
-            // Fetch current user balance from Turso first, then Firestore
+            // Fetch current user balance from Turso
             let currentBal = 0;
             let uDoc: any = null;
             try {

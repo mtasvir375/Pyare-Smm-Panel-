@@ -781,5 +781,89 @@ export const setTursoDoc = tursoSetDoc;
 export const listTursoDocs = tursoListDocs;
 export const deleteTursoDoc = tursoDeleteDoc;
 
+/**
+ * Ironclad Atomic SQL Lock for Payment Claims to prevent Double Credit across concurrent processes
+ */
+export async function isPaymentClaimedInTurso(key: string): Promise<boolean> {
+  const cleanKey = String(key || "").trim();
+  if (!cleanKey) return false;
+  const client = getTursoClient();
+  if (!client) return false;
+
+  try {
+    const res = await client.execute({
+      sql: `SELECT id FROM smm_documents WHERE collection = 'claimed_payments' AND id = ? LIMIT 1;`,
+      args: [cleanKey]
+    });
+    if (res.rows.length > 0) return true;
+
+    const depRes = await client.execute({
+      sql: `SELECT id FROM smm_deposits WHERE transaction_id = ? OR id = ? LIMIT 1;`,
+      args: [cleanKey, cleanKey]
+    });
+    return depRes.rows.length > 0;
+  } catch (err) {
+    return false;
+  }
+}
+
+export async function tryClaimPaymentInTurso(
+  claimKeys: (string | undefined | null)[],
+  claimData: any
+): Promise<{ claimed: boolean; alreadyClaimedKey?: string }> {
+  const validKeys = Array.from(
+    new Set(
+      claimKeys
+        .map((k) => (k ? String(k).trim() : ""))
+        .filter((k) => k.length > 0)
+    )
+  );
+
+  if (validKeys.length === 0) {
+    return { claimed: true };
+  }
+
+  const client = getTursoClient();
+  if (!client) {
+    return { claimed: true };
+  }
+
+  // 1. Check if any key is ALREADY claimed
+  for (const k of validKeys) {
+    const already = await isPaymentClaimedInTurso(k);
+    if (already) {
+      console.log(`[TURSO-ATOMIC-CLAIM-REJECT] Key ${k} was already claimed in Turso DB.`);
+      return { claimed: false, alreadyClaimedKey: k };
+    }
+  }
+
+  // 2. Attempt atomic insertion for all keys
+  const now = new Date().toISOString();
+  const payloadStr = JSON.stringify({ ...claimData, claimedAt: now });
+
+  for (const k of validKeys) {
+    try {
+      const res = await client.execute({
+        sql: `INSERT INTO smm_documents (collection, id, data, updated_at)
+              VALUES ('claimed_payments', ?, ?, ?)
+              ON CONFLICT(collection, id) DO NOTHING;`,
+        args: [k, payloadStr, now]
+      });
+
+      if (res.rowsAffected === 0) {
+        console.log(`[TURSO-ATOMIC-CLAIM-RACE-REJECT] Key ${k} race condition hit on insert (rowsAffected = 0).`);
+        return { claimed: false, alreadyClaimedKey: k };
+      }
+    } catch (err: any) {
+      console.error(`[TURSO-ATOMIC-CLAIM-ERR] Failed inserting claim for key ${k}:`, err?.message);
+      return { claimed: false, alreadyClaimedKey: k };
+    }
+  }
+
+  console.log(`[TURSO-ATOMIC-CLAIM-SUCCESS] Successfully locked payment keys in Turso SQL: ${validKeys.join(", ")}`);
+  return { claimed: true };
+}
+
 // Load config initially
 loadTursoConfigFromDisk();
+

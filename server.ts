@@ -23,7 +23,9 @@ import {
   getTursoDoc,
   setTursoDoc,
   listTursoDocs,
-  deleteTursoDoc
+  deleteTursoDoc,
+  isPaymentClaimedInTurso,
+  tryClaimPaymentInTurso
 } from "./server/tursoDb";
 import {
   getLocalSqliteDb,
@@ -1070,26 +1072,15 @@ export async function startServer() {
     const orderRef = (intent.orderRef || "").trim();
     const intentId = (intent.intentId || "").trim();
 
-    // 0. Firestore Persistent Duplicate Guard (Acts as ironclad distributed lock):
-    if (orderRef) {
-      try {
-        const claimDoc = await getDocSafe("claimed_payments", orderRef);
-        const claimData = claimDoc?.data ? claimDoc.data() : claimDoc;
-        if (claimData && claimData.credited) {
-          console.log(`[DUPLICATE-PREVENTED] Permanent Firestore check: Order ${orderRef} was already claimed in Firestore. Skipping.`);
-          return true;
-        }
-      } catch (err) {}
-    }
-    if (cleanUtr) {
-      try {
-        const claimDoc = await getDocSafe("claimed_payments", cleanUtr);
-        const claimData = claimDoc?.data ? claimDoc.data() : claimDoc;
-        if (claimData && claimData.credited) {
-          console.log(`[DUPLICATE-PREVENTED] Permanent Firestore check: UTR ${cleanUtr} was already claimed in Firestore. Skipping.`);
-          return true;
-        }
-      } catch (err) {}
+    // 0. Turso SQL Permanent Atomic Lock:
+    const atomicClaim = await tryClaimPaymentInTurso(
+      [orderRef, cleanUtr, intentId],
+      { orderRef, utr: cleanUtr, intentId, userId: intent.userId, amount: intent.amount }
+    );
+
+    if (!atomicClaim.claimed) {
+      console.log(`[ZERO-UTR-DUPLICATE-BLOCKED] Payment ${orderRef} / ${cleanUtr} was already claimed in Turso SQL DB (claimed key: ${atomicClaim.alreadyClaimedKey}). Skipping balance add.`);
+      return true;
     }
 
     // Strict Multi-Level Duplicate Guard (In-memory lock check):
