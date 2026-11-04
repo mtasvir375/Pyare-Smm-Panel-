@@ -2585,6 +2585,133 @@ export async function startServer() {
     }
   });
 
+  app.get("/api/user-deposits/:userId", async (req, res) => {
+    const { userId } = req.params;
+    const qEmail = String(req.query.email || req.query.userEmail || "").trim().toLowerCase();
+    const limitCount = Math.min(parseInt(req.query.limit as string) || 100, 200);
+
+    if ((!userId || userId === "undefined" || userId === "null" || userId.trim() === "") && !qEmail) {
+      return res.json([]);
+    }
+
+    try {
+      const depositsMap = new Map<string, any>();
+      const client = getTursoClient();
+
+      // 1. Fetch from Turso database smm_deposits table
+      if (client) {
+        try {
+          const depResult = await client.execute({
+            sql: `SELECT id, user_id, amount, status, transaction_id, data, created_at FROM smm_deposits;`
+          });
+          if (depResult?.rows) {
+            for (const r of depResult.rows) {
+              try {
+                let dep = typeof r.data === "string" ? JSON.parse(r.data) : r.data;
+                if (!dep) dep = {};
+                const dUid = String(r.user_id || dep.userId || dep.user_id || "").trim();
+                const dEmail = String(dep.userEmail || dep.user_email || "").trim().toLowerCase();
+                const dId = String(r.id || dep.id);
+
+                const matchesId = userId && userId !== "undefined" && userId !== "null" && dUid === userId;
+                const matchesEmail = qEmail && dEmail && dEmail === qEmail;
+
+                if (matchesId || matchesEmail) {
+                  depositsMap.set(dId, {
+                    id: dId,
+                    userId: dUid,
+                    amount: Number(r.amount ?? dep.amount ?? 0),
+                    status: r.status || dep.status || "approved",
+                    utr: r.transaction_id || dep.utr || dep.orderRef || dId,
+                    createdAt: r.created_at || dep.createdAt || dep.verifiedAt || new Date().toISOString(),
+                    ...dep
+                  });
+                }
+              } catch (e) {}
+            }
+          }
+        } catch (tursoErr: any) {
+          console.warn("[USER-DEPOSITS-TURSO-WARN]:", tursoErr.message);
+        }
+
+        // Also check smm_documents (collection = 'deposits')
+        try {
+          const docResult = await client.execute("SELECT id, data FROM smm_documents WHERE collection = 'deposits';");
+          if (docResult?.rows) {
+            for (const r of docResult.rows) {
+              try {
+                const dep = typeof r.data === "string" ? JSON.parse(r.data) : r.data;
+                if (!dep) continue;
+                const dUid = String(dep.userId || dep.user_id || "").trim();
+                const dEmail = String(dep.userEmail || dep.user_email || "").trim().toLowerCase();
+                const dId = String(dep.id || r.id);
+
+                const matchesId = userId && userId !== "undefined" && userId !== "null" && dUid === userId;
+                const matchesEmail = qEmail && dEmail && dEmail === qEmail;
+
+                if ((matchesId || matchesEmail) && !depositsMap.has(dId)) {
+                  depositsMap.set(dId, { id: dId, ...dep });
+                }
+              } catch (e) {}
+            }
+          }
+        } catch (e) {}
+      }
+
+      // 2. Check User Profile latestDeposits in Turso
+      if (userId && userId !== "undefined" && userId !== "null") {
+        try {
+          const uDoc = await getTursoDoc("users", userId) || await getDocSafe("users", userId);
+          const uData = uDoc?.data ? uDoc.data() : uDoc;
+          if (uData && Array.isArray(uData.latestDeposits)) {
+            for (const dep of uData.latestDeposits) {
+              if (dep && (dep.id || dep.utr || dep.orderRef)) {
+                const dId = String(dep.id || `dep_${dep.utr || dep.orderRef}`);
+                if (!depositsMap.has(dId)) {
+                  depositsMap.set(dId, dep);
+                }
+              }
+            }
+          }
+        } catch (uErr) {}
+      }
+
+      const parseTime = (val: any): number => {
+        if (!val) return 0;
+        if (typeof val === "number") return val;
+        if (typeof val === "string") {
+          const t = new Date(val).getTime();
+          return isNaN(t) ? 0 : t;
+        }
+        if (val.seconds) return val.seconds * 1000;
+        if (val._seconds) return val._seconds * 1000;
+        return 0;
+      };
+
+      const allDeposits = Array.from(depositsMap.values()).map(item => {
+        let createdAtIso = new Date().toISOString();
+        const dateVal = item.createdAt || item.created_at || item.verifiedAt || item.timestamp;
+        if (dateVal) {
+          if (typeof dateVal === "string") createdAtIso = dateVal;
+          else if (dateVal.toDate) createdAtIso = dateVal.toDate().toISOString();
+          else if (typeof dateVal.seconds === "number") createdAtIso = new Date(dateVal.seconds * 1000).toISOString();
+        }
+        return {
+          ...item,
+          createdAt: createdAtIso,
+          status: item.status || "approved"
+        };
+      });
+
+      // SORT DESCENDING BY TIMESTAMP (NEWEST DEPOSIT AT THE VERY TOP STRICTLY)
+      allDeposits.sort((a, b) => parseTime(b.createdAt) - parseTime(a.createdAt));
+      return res.json(allDeposits.slice(0, limitCount));
+    } catch (apiErr: any) {
+      console.error("[API] Failed to get user deposits:", userId, apiErr.message);
+      return res.status(500).json({ error: "Failed to fetch deposits" });
+    }
+  });
+
   // Securely place a new order on custom domain server
   app.post("/api/orders", async (req, res) => {
     try {

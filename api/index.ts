@@ -2577,9 +2577,119 @@ export default async function handler(req: any, res: any) {
       }
     }
 
-    // 14. User Deposits History: /api/user/deposits (Disabled to save Firestore read quota)
-    if (pathname === "/api/user/deposits") {
-      return res.status(200).json({ success: true, deposits: [] });
+    // 14. User Deposits History: /api/user-deposits/:userId or /api/user/deposits
+    if (pathname.startsWith("/api/user-deposits") || pathname.startsWith("/api/user/deposits")) {
+      const parts = pathname.split("/").filter(Boolean);
+      let pathUid = "";
+      if (parts.length >= 3) {
+        pathUid = parts[2];
+      }
+      const targetUid = String(req.query?.userId || pathUid || "").trim();
+      const targetEmail = String(req.query?.email || req.query?.userEmail || "").trim().toLowerCase();
+      const limitCount = Math.min(parseInt(req.query?.limit as string) || 100, 200);
+
+      if (!targetUid && !targetEmail) {
+        return res.status(200).json([]);
+      }
+
+      try {
+        const depositsMap = new Map<string, any>();
+        const client = getTursoClient();
+
+        if (client) {
+          try {
+            const depResult = await client.execute({
+              sql: `SELECT id, user_id, amount, status, transaction_id, data, created_at FROM smm_deposits;`
+            });
+            if (depResult?.rows) {
+              for (const r of depResult.rows) {
+                try {
+                  let dep = typeof r.data === "string" ? JSON.parse(r.data) : r.data;
+                  if (!dep) dep = {};
+                  const dUid = String(r.user_id || dep.userId || dep.user_id || "").trim();
+                  const dEmail = String(dep.userEmail || dep.user_email || "").trim().toLowerCase();
+                  const dId = String(r.id || dep.id);
+
+                  const matchesId = targetUid && targetUid !== "undefined" && targetUid !== "null" && dUid === targetUid;
+                  const matchesEmail = targetEmail && dEmail && dEmail === targetEmail;
+
+                  if (matchesId || matchesEmail) {
+                    depositsMap.set(dId, {
+                      id: dId,
+                      userId: dUid,
+                      amount: Number(r.amount ?? dep.amount ?? 0),
+                      status: r.status || dep.status || "approved",
+                      utr: r.transaction_id || dep.utr || dep.orderRef || dId,
+                      createdAt: r.created_at || dep.createdAt || dep.verifiedAt || new Date().toISOString(),
+                      ...dep
+                    });
+                  }
+                } catch (e) {}
+              }
+            }
+          } catch (tErr) {}
+
+          try {
+            const res = await client.execute("SELECT id, data FROM smm_documents WHERE collection = 'deposits';");
+            if (res?.rows) {
+              for (const r of res.rows) {
+                try {
+                  const dep = typeof r.data === "string" ? JSON.parse(r.data) : r.data;
+                  if (!dep) continue;
+                  const dUid = String(dep.userId || dep.user_id || "").trim();
+                  const dEmail = String(dep.userEmail || dep.user_email || "").trim().toLowerCase();
+                  const dId = String(dep.id || r.id);
+
+                  const matchesId = targetUid && targetUid !== "undefined" && targetUid !== "null" && dUid === targetUid;
+                  const matchesEmail = targetEmail && dEmail && dEmail === targetEmail;
+
+                  if ((matchesId || matchesEmail) && !depositsMap.has(dId)) {
+                    depositsMap.set(dId, { id: dId, ...dep });
+                  }
+                } catch (e) {}
+              }
+            }
+          } catch (e) {}
+        }
+
+        if (targetUid) {
+          try {
+            const uDoc = await getTursoDoc("users", targetUid) || await getRestDoc("users", targetUid);
+            if (uDoc && Array.isArray(uDoc.latestDeposits)) {
+              for (const dep of uDoc.latestDeposits) {
+                if (dep && (dep.id || dep.utr || dep.orderRef)) {
+                  const dId = String(dep.id || `dep_${dep.utr || dep.orderRef}`);
+                  if (!depositsMap.has(dId)) {
+                    depositsMap.set(dId, dep);
+                  }
+                }
+              }
+            }
+          } catch (uErr) {}
+        }
+
+        const parseTime = (val: any): number => {
+          if (!val) return 0;
+          if (typeof val === "number") return val;
+          if (typeof val === "string") {
+            const t = new Date(val).getTime();
+            return isNaN(t) ? 0 : t;
+          }
+          if (val.seconds) return val.seconds * 1000;
+          if (val._seconds) return val._seconds * 1000;
+          return 0;
+        };
+
+        const sorted = Array.from(depositsMap.values()).sort((a, b) => {
+          const timeA = parseTime(a.createdAt || a.created_at || a.verifiedAt);
+          const timeB = parseTime(b.createdAt || b.created_at || b.verifiedAt);
+          return timeB - timeA;
+        });
+
+        return res.status(200).json(sorted.slice(0, limitCount));
+      } catch (e: any) {
+        return res.status(200).json([]);
+      }
     }
 
     // 15. User Orders History: /api/user-orders/:userId or /api/user-orders

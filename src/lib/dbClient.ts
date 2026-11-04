@@ -498,14 +498,32 @@ export const dbClient = {
     });
   },
 
-  async getUserDeposits(userId: string, userEmail?: string): Promise<any[]> {
+  async getUserDeposits(userId: string, userEmail?: string, l = 100): Promise<any[]> {
+    const limitCount = Math.min(l, 100);
+    if (!userId && !userEmail) return [];
     try {
-      const { clientTursoGetDocs } = await import('./tursoClient');
-      const docs = await clientTursoGetDocs('deposits', 50);
-      if (Array.isArray(docs)) {
-        return docs.filter((d: any) => d.userId === userId || (userEmail && d.userEmail?.toLowerCase() === userEmail.toLowerCase()));
+      const emailQuery = userEmail ? `&email=${encodeURIComponent(userEmail)}` : "";
+      const response = await axios.get(formatApiUrl(`/api/user-deposits/${userId}?limit=${limitCount}${emailQuery}`), { timeout: 8000 });
+      if (Array.isArray(response.data) && response.data.length > 0) {
+        return response.data;
       }
     } catch (e) {}
+
+    // Direct Turso read fallback
+    try {
+      const { clientTursoGetDocs } = await import('./tursoClient');
+      const docs = await clientTursoGetDocs('deposits', limitCount);
+      if (Array.isArray(docs)) {
+        const uUid = userId;
+        const uEmail = (userEmail || "").trim().toLowerCase();
+        return docs.filter((d: any) => {
+          const dUid = d.userId || d.user_id;
+          const dEmail = String(d.userEmail || d.user_email || "").trim().toLowerCase();
+          return (dUid && dUid === uUid) || (uEmail && dEmail && dEmail === uEmail);
+        });
+      }
+    } catch (e) {}
+
     return [];
   },
 

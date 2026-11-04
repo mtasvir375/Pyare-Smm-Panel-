@@ -30,22 +30,76 @@ export default function Dashboard() {
 
   const fetchUserDeposits = async () => {
     if (!user) return;
-    setLoadingDeposits(true);
+    
+    const uidKey = `deposits_${user.uid}`;
+    const emailKey = user.email ? `deposits_${user.email.toLowerCase()}` : null;
+    let initialList: any[] = [];
+
+    // 1. Instant 0ms load from localStorage/sessionStorage
     try {
-      const allDeps = await dbClient.getDepositsAdmin(100);
-      const uUid = user.uid;
-      const uEmail = (user.email || "").trim().toLowerCase();
-      const filtered = allDeps.filter((d: any) => {
-        const dUid = d.userId || d.user_id;
-        const dEmail = String(d.userEmail || d.user_email || "").trim().toLowerCase();
-        return (dUid && dUid === uUid) || (uEmail && dEmail && dEmail === uEmail);
+      const cachedData = localStorage.getItem(uidKey) || sessionStorage.getItem(uidKey) ||
+        (emailKey ? (localStorage.getItem(emailKey) || sessionStorage.getItem(emailKey)) : null);
+      if (cachedData) {
+        const parsed = JSON.parse(cachedData);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          initialList = parsed;
+          setUserDeposits(initialList);
+          setLoadingDeposits(false);
+        }
+      }
+    } catch (e) {}
+
+    // 2. 0ms Backup from userProfile.latestDeposits
+    if (initialList.length === 0 && userProfile && Array.isArray((userProfile as any).latestDeposits) && (userProfile as any).latestDeposits.length > 0) {
+      initialList = (userProfile as any).latestDeposits;
+      setUserDeposits(initialList);
+      setLoadingDeposits(false);
+    }
+
+    if (initialList.length === 0) {
+      setLoadingDeposits(true);
+    }
+
+    try {
+      // 3. Fetch full permanent user deposit history from API / Turso DB
+      const freshApiDeposits = await dbClient.getUserDeposits(user.uid, user.email || undefined, 100);
+      
+      // Combine local cache, profile latestDeposits, and API response
+      const combined = [
+        ...freshApiDeposits,
+        ...initialList,
+        ...(Array.isArray((userProfile as any)?.latestDeposits) ? (userProfile as any).latestDeposits : [])
+      ];
+
+      // Deduplicate by unique deposit key
+      const mergedMap = new Map<string, any>();
+      combined.forEach((dep: any) => {
+        if (!dep) return;
+        const key = String(dep.id || dep.utr || dep.orderRef || dep.createdAt || dep.created_at || "");
+        if (key && !mergedMap.has(key)) {
+          mergedMap.set(key, dep);
+        }
       });
-      filtered.sort((a: any, b: any) => {
-        const timeA = getTimestampMs(a.createdAt || a.created_at || a.verifiedAt);
-        const timeB = getTimestampMs(b.createdAt || b.created_at || b.verifiedAt);
+
+      const dedupedList = Array.from(mergedMap.values());
+
+      // STRICT DESCENDING SORT: Newest deposit ALWAYS at the very top!
+      dedupedList.sort((a, b) => {
+        const timeA = getTimestampMs(a.createdAt || a.created_at || a.verifiedAt || a.timestamp);
+        const timeB = getTimestampMs(b.createdAt || b.created_at || b.verifiedAt || b.timestamp);
         return timeB - timeA;
       });
-      setUserDeposits(filtered);
+
+      setUserDeposits(dedupedList);
+
+      // Save complete list to localStorage & sessionStorage
+      try {
+        const jsonStr = JSON.stringify(dedupedList);
+        [uidKey, emailKey].filter(Boolean).forEach(k => {
+          localStorage.setItem(k!, jsonStr);
+          sessionStorage.setItem(k!, jsonStr);
+        });
+      } catch (e) {}
     } catch (e) {
       console.error("Error loading payment history:", e);
     } finally {
@@ -54,10 +108,8 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    if (viewMode === 'payments') {
-      fetchUserDeposits();
-    }
-  }, [viewMode, user]);
+    fetchUserDeposits();
+  }, [viewMode, user, userProfile]);
 
   // Helper to parse dates/timestamps robustly in both ISO, Epoch, and DD/MM/YYYY formats
   const getTimestampMs = (val: any): number => {
