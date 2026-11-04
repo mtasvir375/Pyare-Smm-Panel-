@@ -15,7 +15,17 @@ export const clearCache = () => {
     cachedProviders = null;
     lastProvidersFetch = 0;
     
-    // Concurrently clear server-side cache so visitors fetch fresh data immediately
+    // Clear browser persistent cache
+    try {
+      localStorage.removeItem("cached_courses");
+      localStorage.removeItem("cached_courses_time");
+      localStorage.removeItem("cached_settings");
+      localStorage.removeItem("cached_settings_time");
+      localStorage.removeItem("cached_providers");
+      localStorage.removeItem("cached_providers_time");
+    } catch(e) {}
+
+    // Concurrently clear server-side cache
     axios.post(formatApiUrl("/api/clear-cache")).catch(() => {});
 };
 
@@ -54,24 +64,34 @@ export const sortServicesList = (list: any[]): any[] => {
 
 export const getCachedCourses = async (forceRefresh = false) => {
   const now = Date.now();
+  const LOCAL_TTL = 5 * 1000; // 5 seconds TTL to eliminate stale content flash
   
   if (forceRefresh) {
     cachedCourses = null;
     lastCoursesFetch = 0;
+    try {
+      localStorage.removeItem("cached_courses");
+      localStorage.removeItem("cached_courses_time");
+    } catch(e) {}
   } else {
+    // 1. Check in-memory first (fastest)
     if (cachedCourses && (now - lastCoursesFetch < CACHE_DURATION)) {
       return cachedCourses;
     }
 
-    // Immediately load from localStorage on page refresh
+    // 2. Check localStorage with very strict TTL
     try {
       const lsData = localStorage.getItem("cached_courses");
-      if (lsData) {
-        const parsed = JSON.parse(lsData);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          cachedCourses = sortServicesList(parsed);
-          lastCoursesFetch = now;
-          return cachedCourses;
+      const lsTime = localStorage.getItem("cached_courses_time");
+      if (lsData && lsTime) {
+        const timePassed = now - parseInt(lsTime);
+        if (timePassed < LOCAL_TTL) {
+          const parsed = JSON.parse(lsData);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            cachedCourses = sortServicesList(parsed);
+            lastCoursesFetch = now;
+            return cachedCourses;
+          }
         }
       }
     } catch (e) {}

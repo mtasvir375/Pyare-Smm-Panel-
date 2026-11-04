@@ -474,3 +474,18 @@ export async function updateTursoCredentials(url: string, authToken: string): Pr
   initTursoClient(url, authToken);
   return { success: true, message: "Credentials updated" };
 }
+
+export default async function handler(req: any, res: any) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "*");
+  if (req.method === "OPTIONS") return res.status(200).end();
+
+  const client = getTursoClient();
+  return res.status(200).json({
+    connected: !!client,
+    url: currentConfig.url,
+    hasToken: !!currentConfig.authToken,
+    message: client ? "Turso Active" : "Turso Disconnected"
+  });
+}

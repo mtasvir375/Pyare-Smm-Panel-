@@ -1154,12 +1154,6 @@ export default function Admin() {
       } catch (e) {}
 
       const combined = [...users, ...fsUsers];
-      if (combined.length === 0) {
-        combined.push(
-          { id: "user_mtasvir", uid: "user_mtasvir", email: "mtasvir375@gmail.com", userEmail: "mtasvir375@gmail.com", displayName: "Mtasvir Admin", role: "admin", balance: 500 },
-          { id: "user_test1", uid: "user_test1", email: "test_e2e@pyaresmm.com", userEmail: "test_e2e@pyaresmm.com", displayName: "Test User E2E", role: "user", balance: 100 }
-        );
-      }
 
       const qLow = q.toLowerCase();
       const filtered = qLow ? combined.filter(u => 

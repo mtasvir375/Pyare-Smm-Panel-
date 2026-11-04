@@ -40,7 +40,7 @@ export const formatApiUrl = (endpoint: string): string => {
 
 // Safe Axios and Fetch configuration
 if (typeof window !== "undefined") {
-  // Only intercept if an explicit custom backend URL is configured
+  // 1. Request Interceptor: Only rewrite if an explicit custom backend URL is configured
   axios.interceptors.request.use((config) => {
     const base = getApiBaseUrl();
     if (base && config.url && !config.url.startsWith("http")) {
@@ -51,4 +51,35 @@ if (typeof window !== "undefined") {
   }, (error) => {
     return Promise.reject(error);
   });
+
+  // 2. Response Interceptor: Automatic failover for custom domains
+  // If an API call fails with 5xx or Network Error on a custom domain, seamlessly retry with Cloud Run backend
+  axios.interceptors.response.use(
+    (response) => response,
+    async (error) => {
+      const originalRequest = error.config;
+      if (
+        originalRequest &&
+        !originalRequest._retryWithCloudRun &&
+        (error.response?.status >= 500 || error.code === "ERR_NETWORK" || !error.response) &&
+        typeof window !== "undefined" &&
+        window.location.hostname !== "localhost" &&
+        !window.location.hostname.includes("run.app")
+      ) {
+        originalRequest._retryWithCloudRun = true;
+        const currentUrl = originalRequest.url || "";
+        let newUrl = currentUrl;
+        if (!newUrl.startsWith("http")) {
+          const clean = newUrl.startsWith("/") ? newUrl : `/${newUrl}`;
+          newUrl = `${STABLE_CLOUD_RUN_BACKEND}${clean}`;
+        } else if (newUrl.includes(window.location.hostname)) {
+          newUrl = newUrl.replace(/https?:\/\/[^\/]+/, STABLE_CLOUD_RUN_BACKEND);
+        }
+        originalRequest.url = newUrl;
+        console.warn(`[API-FAILOVER] Retrying ${currentUrl} via Cloud Run backend: ${newUrl}`);
+        return axios(originalRequest);
+      }
+      return Promise.reject(error);
+    }
+  );
 }

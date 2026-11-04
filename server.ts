@@ -2239,6 +2239,11 @@ export async function startServer() {
   app.get("/api/courses", async (req, res) => {
     try {
       const forceFresh = req.query.force === "true";
+      if (forceFresh) {
+        serverCache.courses.clear();
+        serverCachedCourses = null;
+        serverCachedCoursesTime = 0;
+      }
       const combinedMap = new Map<string, any>();
 
       // 1. Load from local disk (so newly added services in local_db are never lost)
