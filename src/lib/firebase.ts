@@ -1,6 +1,5 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, setPersistence, browserLocalPersistence } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: "AIzaSyBW_IUbuocn83oBCfQfbZsGbswo-OcgxRY",
@@ -15,10 +14,10 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Initialize Firebase services
+// Initialize Firebase Auth (Google Sign-In only - Firestore DB is completely disabled)
 export const auth = getAuth(app);
-export const db = getFirestore(app, "ai-studio-f36429fa-50a3-4e58-b960-86b1e1d0141c");
 export const googleProvider = new GoogleAuthProvider();
+export const db = null as any;
 
 // Set persistence to local
 setPersistence(auth, browserLocalPersistence).catch((error) => {

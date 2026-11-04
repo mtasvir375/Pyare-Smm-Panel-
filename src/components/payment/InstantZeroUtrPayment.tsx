@@ -2,8 +2,8 @@ import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
-import { doc, setDoc, onSnapshot } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { clientTursoSetDoc } from "@/lib/tursoClient";
+import { formatApiUrl } from "@/lib/apiConfig";
 import {
   Zap,
   CheckCircle2,
@@ -212,8 +212,8 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
         setSecondsRemaining(rem > 0 ? rem : 300);
         setLoading(false);
 
-        // Always ensure intent is persisted directly into Firestore so backend bot can match it from ANY domain!
-        const firestoreData = {
+        // Save directly into Turso Database
+        const intentPayload = {
           ...intentObj,
           userId: String(userId),
           userEmail: userEmail ? String(userEmail) : "",
@@ -221,18 +221,9 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
           createdAt: Date.now()
         };
 
-        try {
-          setDoc(doc(db, "payment_intents", intentObj.intentId), firestoreData, { merge: true }).catch(() => {});
-          setDoc(doc(db, "payment_intents", intentObj.orderRef), firestoreData, { merge: true }).catch(() => {});
-        } catch (fErr) {}
-
-        // Also save directly into Turso smm_documents so bot matches it instantly on custom domain
-        try {
-          import("@/lib/tursoClient").then(({ clientTursoSetDoc }) => {
-            clientTursoSetDoc("payment_intents", intentObj.intentId, firestoreData).catch(() => {});
-            clientTursoSetDoc("payment_intents", intentObj.orderRef, firestoreData).catch(() => {});
-          }).catch(() => {});
-        } catch (tErr) {}
+        clientTursoSetDoc("payment_intents", intentObj.intentId, intentPayload).catch(() => {});
+        clientTursoSetDoc("payment_intents", intentObj.orderRef, intentPayload).catch(() => {});
+        axios.post(formatApiUrl('/api/db/set'), { collection: "payment_intents", id: intentObj.intentId, data: intentPayload }).catch(() => {});
 
         // Send Telegram Bot Notification
         try {
@@ -259,39 +250,6 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
       if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
     };
   }, [amount, userId, userEmail]);
-
-  // 2. Real-time Firestore Listener on payment intent (Instant 50ms verification without polling delay!)
-  useEffect(() => {
-    if (!intent || isSuccess) return;
-
-    const handleCompletedIntent = (data: any) => {
-      if (data && data.status === "completed" && !isSuccess) {
-        const finalAmt = data.creditedAmount || data.amount || intent.amount;
-        const finalUtr = data.utr || intent.orderRef;
-        setIsSuccess(true);
-        setCompletedData({
-          amount: finalAmt,
-          utr: finalUtr,
-          newBalance: data.newBalance
-        });
-        persistApprovedDepositLocally(finalAmt, finalUtr, intent.orderRef);
-        toast.success(`🎉 Payment Verified! ₹${finalAmt} credited to your wallet!`);
-      }
-    };
-
-    const unsubIntent1 = onSnapshot(doc(db, "payment_intents", intent.intentId), (snap) => {
-      if (snap.exists()) handleCompletedIntent(snap.data());
-    }, () => {});
-
-    const unsubIntent2 = onSnapshot(doc(db, "payment_intents", intent.orderRef), (snap) => {
-      if (snap.exists()) handleCompletedIntent(snap.data());
-    }, () => {});
-
-    return () => {
-      unsubIntent1();
-      unsubIntent2();
-    };
-  }, [intent, isSuccess]);
 
   // 3. Countdown Timer
   useEffect(() => {
@@ -351,7 +309,7 @@ export const InstantZeroUtrPayment: React.FC<InstantZeroUtrPaymentProps> = ({
     pollIntervalRef.current = setInterval(() => {
       if (typeof document !== "undefined" && (document.hidden || document.visibilityState === "hidden")) return;
       verifyStatus(false);
-    }, 4000);
+    }, 2500);
 
     return () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);

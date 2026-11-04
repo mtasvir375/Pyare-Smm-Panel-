@@ -1,8 +1,12 @@
 import * as fs from "fs";
 import * as path from "path";
 import axios from "axios";
-import { setRestDoc, getRestDoc, getRestCollection } from "./api/_firestoreRest";
 import { setTursoDoc, getTursoDoc, listTursoDocs, acquireTursoPollingLease } from "./server/tursoDb";
+
+// 100% Exclusive Turso Cloud Database (Zero Firestore reads/writes)
+const getRestDoc = getTursoDoc;
+const setRestDoc = setTursoDoc;
+const getRestCollection = listTursoDocs;
 
 export interface BankAlert {
   id: string;

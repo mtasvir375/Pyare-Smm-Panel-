@@ -152,24 +152,7 @@ export const getCachedCourses = async (forceRefresh = false) => {
     console.warn("[CACHE] Direct Turso courses query error:", tursoErr);
   }
 
-  // 3. Direct Firestore SDK fallback
-  try {
-    const { collection, getDocs } = await import("firebase/firestore");
-    const { db } = await import("@/lib/firebase");
-    const snap = await getDocs(collection(db, "courses"));
-    if (snap && !snap.empty) {
-      const fsServices = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-      if (Array.isArray(fsServices) && fsServices.length > 0) {
-        cachedCourses = sortServicesList(mapServiceList(fsServices));
-        lastCoursesFetch = now;
-        try {
-          localStorage.setItem("cached_courses_time", now.toString());
-          localStorage.setItem("cached_courses", JSON.stringify(cachedCourses));
-        } catch(e) {}
-        return cachedCourses;
-      }
-    }
-  } catch (fsErr) {}
+
 
   // 4. Fallback to existing localStorage safety net (NEVER RETURN EMPTY IF LOCALSTORAGE HAS DATA)
   try {
@@ -278,36 +261,7 @@ export const getCachedSettings = async (forceRefresh = false) => {
     }
   } catch (tursoErr) {}
 
-  // 3. Direct Firestore fallback (ensures theme and settings persist even during serverless cold starts)
-  try {
-    const { doc, getDoc } = await import("firebase/firestore");
-    const { db } = await import("@/lib/firebase");
-    const snap = await getDoc(doc(db, "settings", "payment"));
-    if (snap.exists()) {
-      const fsData = snap.data();
-      if (fsData && typeof fsData === "object") {
-        const settingsData = {
-          ...DEFAULT_SETTINGS,
-          ...fsData,
-          upiId: (fsData.upiId && String(fsData.upiId).trim()) ? String(fsData.upiId).trim() : DEFAULT_SETTINGS.upiId,
-          merchantName: fsData.merchantName !== undefined ? fsData.merchantName : DEFAULT_SETTINGS.merchantName,
-          selectedTheme: (fsData.selectedTheme === "charcoal" || !fsData.selectedTheme) ? "amber" : fsData.selectedTheme,
-          selectedFestivalTheme: fsData.selectedFestivalTheme || "none",
-        };
-        cachedSettings = settingsData;
-        lastSettingsFetch = now;
-        try {
-          localStorage.setItem("cached_settings_time", now.toString());
-          localStorage.setItem("cached_settings", JSON.stringify(cachedSettings));
-          if (settingsData.selectedTheme) {
-            localStorage.setItem("cached_theme", settingsData.selectedTheme);
-            document.documentElement.setAttribute("data-theme", settingsData.selectedTheme);
-          }
-        } catch(e) {}
-        return cachedSettings;
-      }
-    }
-  } catch (fsErr) {}
+
 
   // Use localStorage cache if API proxy failed temporarily
   try {
@@ -390,24 +344,7 @@ export const getCachedProviders = async (forceRefresh = false) => {
     }
   } catch (tursoErr) {}
 
-  // 3. Direct Firestore SDK fallback
-  try {
-    const { collection, getDocs } = await import("firebase/firestore");
-    const { db } = await import("@/lib/firebase");
-    const snap = await getDocs(collection(db, "providers"));
-    if (snap && !snap.empty) {
-      const fsProviders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      if (Array.isArray(fsProviders) && fsProviders.length > 0) {
-        cachedProviders = fsProviders;
-        lastProvidersFetch = now;
-        try {
-          localStorage.setItem("cached_providers_time", now.toString());
-          localStorage.setItem("cached_providers", JSON.stringify(cachedProviders));
-        } catch(e) {}
-        return cachedProviders;
-      }
-    }
-  } catch (fsErr) {}
+
 
   // 3. Fallback to local backup (NEVER RETURN EMPTY IF LOCAL STORAGE HAD DATA)
   if (localBackup.length > 0) {

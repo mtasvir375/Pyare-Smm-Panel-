@@ -135,16 +135,32 @@ axios.defaults.httpAgent = keepAliveHttpAgent;
       adminApp = admin.apps[0];
     }
 
-let fdb: any = null;
-try {
-  fdb = getFirestore(adminApp || admin.app(), dbId);
-} catch (e1) {
-  try {
-    fdb = getFirestore();
-  } catch (e2) {
-    console.warn("[FIREBASE] getFirestore fallback:", e2);
-  }
-}
+// Firestore database fully disconnected per user request: Turso Cloud Database is the sole authoritative database
+const fdb: any = {
+  collection: (colName: string) => ({
+    doc: (docId: string) => ({
+      get: async () => ({ exists: false, data: () => null }),
+      set: async () => {},
+      update: async () => {},
+      delete: async () => {}
+    }),
+    where: () => ({
+      limit: () => ({
+        get: async () => ({ empty: true, docs: [] })
+      }),
+      get: async () => ({ empty: true, docs: [] })
+    }),
+    limit: () => ({
+      get: async () => ({ empty: true, docs: [] })
+    }),
+    orderBy: () => ({
+      limit: () => ({
+        get: async () => ({ empty: true, docs: [] })
+      })
+    }),
+    get: async () => ({ empty: true, docs: [] })
+  })
+};
 
 const PORT = 3000;
 

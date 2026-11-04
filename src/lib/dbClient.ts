@@ -1,17 +1,5 @@
 import axios from 'axios';
 import { formatApiUrl } from './apiConfig';
-import { db } from './firebase';
-import { 
-  doc, 
-  getDoc as getFirestoreDoc, 
-  setDoc as setFirestoreDoc, 
-  getDocs as getFirestoreDocs, 
-  collection, 
-  deleteDoc as deleteFirestoreDoc, 
-  limit as fsLimit, 
-  query as fsQuery,
-  orderBy as fsOrderBy
-} from 'firebase/firestore';
 
 export interface UserProfile {
   uid: string;
@@ -28,8 +16,11 @@ export interface UserProfile {
   isFallback?: boolean;
 }
 
+/**
+ * Primary Database Client - Powered 100% by Turso Cloud Database
+ * Zero Firestore Database Reads or Writes.
+ */
 export const dbClient = {
-  // Generic helpers - Dual API Gateway & Direct Firestore SDK for 100% synchronization across Default & Custom Domains
   async getDoc(table: string, id: string, options?: { fresh?: boolean }): Promise<any> {
     const forceFresh = !!options?.fresh;
     if (table === "settings" && id === "payment" && !forceFresh) {
@@ -40,7 +31,7 @@ export const dbClient = {
       } catch (e) {}
     }
 
-    // 0. Direct client-side Turso read from browser (100% direct database connection!)
+    // 1. Direct Turso read via verified proxy
     try {
       const { clientTursoGetDoc } = await import('./tursoClient');
       const tursoDoc = await clientTursoGetDoc(table, id);
@@ -49,7 +40,7 @@ export const dbClient = {
       }
     } catch (e) {}
 
-    // 1. Try API gateway
+    // 2. Direct API gateway endpoint
     try {
       const res = await axios.post(formatApiUrl('/api/db/get'), { collection: table, id, fresh: forceFresh }, { timeout: 4000 });
       if (res.data && res.data.success && res.data.data && Object.keys(res.data.data).length > 0) {
@@ -57,22 +48,13 @@ export const dbClient = {
       }
     } catch (proxyErr: any) {}
 
-    // 2. Direct Firestore fallback (Always works across custom domain and default URL!)
-    try {
-      const docRef = doc(db, table, id);
-      const snap = await getFirestoreDoc(docRef);
-      if (snap.exists()) {
-        return { id: snap.id, ...snap.data() };
-      }
-    } catch (fsErr: any) {}
-
     return null;
   },
 
   async getDocs(table: string, constraints: any[] = []): Promise<any[]> {
     const limitCount = table === 'courses' ? 100 : (table === 'providers' ? 50 : 30);
 
-    // 0. Direct client-side Turso read from browser (100% direct database connection!)
+    // 1. Direct Turso read
     try {
       const { clientTursoGetDocs } = await import('./tursoClient');
       const tursoDocs = await clientTursoGetDocs(table, limitCount);
@@ -81,7 +63,7 @@ export const dbClient = {
       }
     } catch (e) {}
 
-    // 1. For courses and providers, fetch directly from high-speed server cache endpoints (0 Firestore reads!)
+    // 2. For courses and providers, fetch directly from high-speed cache endpoints
     if (table === 'courses') {
       try {
         const { getCachedCourses } = await import('./cache');
@@ -97,25 +79,13 @@ export const dbClient = {
       } catch (e) {}
     }
 
-    // 2. Try API gateway
+    // 3. API gateway fallback
     try {
       const res = await axios.post(formatApiUrl('/api/db/list'), { collection: table, limit: limitCount }, { timeout: 4000 });
       if (res.data && res.data.success && Array.isArray(res.data.data) && res.data.data.length > 0) {
         return res.data.data;
       }
     } catch (proxyErr: any) {}
-
-    // 3. Direct Firestore fallback (Only for non-cached collections)
-    if (table !== 'courses' && table !== 'providers') {
-      try {
-        const colRef = collection(db, table);
-        const q = fsQuery(colRef, fsLimit(limitCount));
-        const snap = await getFirestoreDocs(q);
-        if (!snap.empty) {
-          return snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        }
-      } catch (fsErr: any) {}
-    }
 
     return [];
   },
@@ -142,32 +112,22 @@ export const dbClient = {
       } catch (e) {}
     }
 
-    // 0. Direct write to Turso Cloud Database (Guarantees Turso update on ANY domain including custom domain)
+    // 1. Direct write to Turso Cloud Database
     try {
       const { clientTursoSetDoc } = await import('./tursoClient');
       await clientTursoSetDoc(table, id, merged);
     } catch (e) {}
 
-    // 1. Send to API Gateway (awaited with retry)
+    // 2. Send to API Gateway (Turso backend persistence)
     try {
       await axios.post(formatApiUrl('/api/db/set'), { collection: table, id, data: merged }, { timeout: 8000 });
     } catch (e) {}
 
-    // 2. Also send to dedicated /api/settings if settings
+    // 3. Also send to dedicated /api/settings if settings
     if (table === 'settings' && id === 'payment') {
       try {
         await axios.post(formatApiUrl('/api/settings'), merged, { timeout: 8000 });
       } catch (e) {}
-    }
-
-    // 3. Write directly to Firestore SDK to ensure instant permanent sync across ALL domains (non-blocking)
-    try {
-      const docRef = doc(db, table, id);
-      setFirestoreDoc(docRef, merged, { merge: true }).catch((fsErr: any) => {
-        console.warn(`[DB-CLIENT-FS-WRITE-WARN] ${table}/${id}:`, fsErr.message);
-      });
-    } catch (fsErr: any) {
-      console.warn(`[DB-CLIENT-FS-WRITE-WARN] ${table}/${id}:`, fsErr.message);
     }
   },
 
@@ -189,13 +149,13 @@ export const dbClient = {
       } catch (e) {}
     }
 
-    // 0. Direct update to Turso Cloud Database with full data merging
+    // 1. Direct update to Turso Cloud Database
     try {
       const { clientTursoUpdateDoc } = await import('./tursoClient');
       await clientTursoUpdateDoc(table, id, merged);
     } catch (e) {}
 
-    // 1. Send to API Gateway
+    // 2. Send to API Gateway
     try {
       await axios.post(formatApiUrl('/api/db/update'), { collection: table, id, data: merged }, { timeout: 8000 });
     } catch (e) {}
@@ -203,18 +163,10 @@ export const dbClient = {
       await axios.post(formatApiUrl('/api/db/set'), { collection: table, id, data: merged }, { timeout: 8000 });
     } catch (e) {}
 
-    // 2. Clear cache
+    // 3. Clear cache
     if (table === 'courses' || table === 'settings' || table === 'providers') {
       axios.post(formatApiUrl('/api/clear-cache')).catch(() => {});
     }
-
-    // 3. Write directly to Firestore SDK
-    try {
-      const docRef = doc(db, table, id);
-      setFirestoreDoc(docRef, merged, { merge: true }).catch((fsErr: any) => {
-        console.warn(`[DB-CLIENT-FS-WRITE-WARN] ${table}/${id}:`, fsErr.message);
-      });
-    } catch (fsErr: any) {}
   },
 
   async addDoc(table: string, data: any): Promise<any> {
@@ -225,7 +177,7 @@ export const dbClient = {
     const autoId = data?.id || (prefix + Date.now() + "_" + Math.random().toString(36).substring(2, 7));
     const merged = { ...data, id: autoId };
 
-    // Write to Turso, API & Firestore
+    // Write directly to Turso
     await this.setDoc(table, autoId, merged);
     return merged;
   },
@@ -241,14 +193,10 @@ export const dbClient = {
     // Direct delete from Turso Cloud Database
     try {
       const { clientTursoDeleteDoc } = await import('./tursoClient');
-      clientTursoDeleteDoc(table, id).catch(() => {});
+      await clientTursoDeleteDoc(table, id);
     } catch (e) {}
 
     axios.post(formatApiUrl('/api/db/delete'), { collection: table, id }).catch(() => {});
-    try {
-      const docRef = doc(db, table, id);
-      deleteFirestoreDoc(docRef).catch(() => {});
-    } catch (fsErr: any) {}
   },
 
   // User specific
@@ -284,7 +232,6 @@ export const dbClient = {
     await this.updateDoc('users', uid, safeData);
   },
 
-  // Specialized queries
   async getPublishedCourses(): Promise<any[]> {
     return this.getCourses();
   },
@@ -330,13 +277,13 @@ export const dbClient = {
       if (Array.isArray(res.data) && res.data.length > 0) return res.data;
     } catch (e) {}
 
-    // Firestore fallback
+    // Turso fallback
     try {
-      const snap = await getFirestoreDocs(fsQuery(collection(db, 'deposits'), fsLimit(l)));
-      if (!snap.empty) {
-        return snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      }
+      const { clientTursoGetDocs } = await import('./tursoClient');
+      const docs = await clientTursoGetDocs('deposits', l);
+      if (Array.isArray(docs) && docs.length > 0) return docs;
     } catch (e) {}
+
     return [];
   },
 
@@ -364,7 +311,7 @@ export const dbClient = {
   },
 
   async getProviders(forceRefresh = false): Promise<any[]> {
-    // 0. Direct client-side Turso read from browser (100% direct database connection!)
+    // 1. Direct Turso read
     try {
       const { clientTursoGetDocs } = await import('./tursoClient');
       const docsList = await clientTursoGetDocs('providers', 50);
@@ -377,33 +324,20 @@ export const dbClient = {
       }
     } catch (e) {}
 
-    // 1. Try cache & API Gateway
+    // 2. Try cache & API Gateway
     try {
       const { getCachedProviders } = await import('@/lib/cache');
       const cached = await getCachedProviders(forceRefresh);
       if (Array.isArray(cached) && cached.length > 0) return cached;
     } catch (e) {}
 
-    // 2. Fallback to API Gateway directly
+    // 3. Fallback to API Gateway directly
     try {
       const res = await axios.get(formatApiUrl(`/api/providers?force=${forceRefresh}&t=${Date.now()}`), { timeout: 4000 });
       if (Array.isArray(res.data) && res.data.length > 0) return res.data;
     } catch (e) {}
 
-    // 3. Direct Firestore SDK fallback
-    try {
-      const snap = await getFirestoreDocs(collection(db, 'providers'));
-      if (snap && !snap.empty) {
-        const docsList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        try {
-          localStorage.setItem("cached_providers", JSON.stringify(docsList));
-          localStorage.setItem("cached_providers_time", Date.now().toString());
-        } catch (e) {}
-        return docsList;
-      }
-    } catch (e) {}
-
-    // 4. LocalStorage safety net (Never wipe out valid providers)
+    // 4. LocalStorage safety net
     try {
       const ls = localStorage.getItem("cached_providers");
       if (ls) {
@@ -463,7 +397,6 @@ export const dbClient = {
     return docs.length;
   },
 
-  // Order specific
   async createOrder(id: string, data: any): Promise<void> {
     await this.setDoc('orders', id, data);
   },
@@ -476,7 +409,7 @@ export const dbClient = {
       } catch (e) {}
     }
 
-    // 0. Direct client-side Turso read from browser (100% direct database connection!)
+    // 1. Direct Turso read
     try {
       const { clientTursoGetDocs } = await import('./tursoClient');
       const docsList = await clientTursoGetDocs('courses', 150);
@@ -489,30 +422,17 @@ export const dbClient = {
       }
     } catch (e) {}
 
-    // 1. Try cache & API Gateway (served from Express RAM - 0 Firestore Reads)
+    // 2. Try cache & API Gateway
     try {
       const { getCachedCourses } = await import('@/lib/cache');
       const cached = await getCachedCourses(forceRefresh);
       if (Array.isArray(cached) && cached.length > 0) return cached;
     } catch (e) {}
 
-    // 2. Fallback to API Gateway directly
+    // 3. Fallback to API Gateway directly
     try {
       const res = await axios.get(formatApiUrl(`/api/courses?force=${forceRefresh}&t=${Date.now()}`), { timeout: 4000 });
       if (Array.isArray(res.data) && res.data.length > 0) return res.data;
-    } catch (e) {}
-
-    // 3. Direct Firestore SDK fallback (only if API is completely offline)
-    try {
-      const snap = await getFirestoreDocs(collection(db, 'courses'));
-      if (snap && !snap.empty) {
-        const docsList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        try {
-          localStorage.setItem("cached_courses", JSON.stringify(docsList));
-          localStorage.setItem("cached_courses_time", Date.now().toString());
-        } catch (e) {}
-        return docsList;
-      }
     } catch (e) {}
 
     return [];
@@ -524,12 +444,11 @@ export const dbClient = {
       if (Array.isArray(response.data) && response.data.length > 0) return response.data;
     } catch (e) {}
 
-    // Firestore fallback
+    // Turso fallback
     try {
-      const snap = await getFirestoreDocs(fsQuery(collection(db, 'orders'), fsLimit(l)));
-      if (!snap.empty) {
-        return snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      }
+      const { clientTursoGetDocs } = await import('./tursoClient');
+      const docs = await clientTursoGetDocs('orders', l);
+      if (Array.isArray(docs) && docs.length > 0) return docs;
     } catch (e) {}
 
     return [];
@@ -544,32 +463,13 @@ export const dbClient = {
       }
     } catch (e) {}
 
-    // Turso Web client fallback if API had no users
+    // Turso direct read fallback if API had no users
     if (usersList.length === 0) {
       try {
-        const { getTursoWebClient } = await import('./tursoClient');
-        const client = getTursoWebClient();
-        if (client) {
-          const res = await client.execute("SELECT id, email, role, balance, data FROM smm_users;");
-          if (res && res.rows) {
-            usersList = res.rows.map((r: any) => {
-              const uId = String(r.id || "").trim();
-              const uEmail = String(r.email || "").trim().toLowerCase();
-              let parsed: any = {};
-              if (typeof r.data === "string") {
-                try { parsed = JSON.parse(r.data); } catch (e) {}
-              }
-              return {
-                ...parsed,
-                id: uId,
-                uid: uId,
-                email: uEmail || parsed.email,
-                userEmail: uEmail || parsed.email,
-                balance: Number(r.balance ?? parsed.balance ?? 0),
-                role: r.role || parsed.role || "user"
-              };
-            });
-          }
+        const { clientTursoGetDocs } = await import('./tursoClient');
+        const docs = await clientTursoGetDocs('users', l);
+        if (Array.isArray(docs) && docs.length > 0) {
+          usersList = docs;
         }
       } catch (e) {}
     }
@@ -602,6 +502,13 @@ export const dbClient = {
   },
 
   async getUserDeposits(userId: string, userEmail?: string): Promise<any[]> {
+    try {
+      const { clientTursoGetDocs } = await import('./tursoClient');
+      const docs = await clientTursoGetDocs('deposits', 50);
+      if (Array.isArray(docs)) {
+        return docs.filter((d: any) => d.userId === userId || (userEmail && d.userEmail?.toLowerCase() === userEmail.toLowerCase()));
+      }
+    } catch (e) {}
     return [];
   },
 

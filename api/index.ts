@@ -325,17 +325,6 @@ async function getRestDoc(collection: string, docId: string, fresh = false): Pro
     }
   } catch (e) {}
 
-  // 1. Firestore REST Fallback (Pull missing document from Firestore)
-  try {
-    const fsDoc = await fetchFirestoreRestDoc(collection, docId);
-    if (fsDoc && Object.keys(fsDoc).length > 0) {
-      // Direct auto-sync to Turso to preserve database synchronization and save future Firestore reads!
-      await setTursoDoc(collection, docId, fsDoc).catch(() => {});
-      setLocalDoc(collection, docId, fsDoc);
-      return fsDoc;
-    }
-  } catch (e) {}
-
   return getLocalDoc(collection, docId) || null;
 }
 
@@ -356,21 +345,6 @@ async function listRestDocs(collection: string, pageSize = 100, fresh = false): 
         if (item && item.id) setLocalDoc(collection, item.id, item);
       });
       return tursoList;
-    }
-  } catch (e) {}
-
-  // 1. Firestore REST Fallback (Pull missing collection lists from Firestore)
-  try {
-    const fsList = await fetchFirestoreRestCollection(collection);
-    if (fsList && Array.isArray(fsList) && fsList.length > 0) {
-      // Direct auto-sync of list to Turso Database to populate it on-the-fly!
-      for (const item of fsList) {
-        if (item && item.id) {
-          setLocalDoc(collection, item.id, item);
-          await setTursoDoc(collection, item.id, item).catch(() => {});
-        }
-      }
-      return fsList.slice(0, pageSize);
     }
   } catch (e) {}
 
