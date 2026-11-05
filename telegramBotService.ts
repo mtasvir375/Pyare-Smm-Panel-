@@ -56,7 +56,8 @@ export interface PaymentIntent {
 export type PaymentIntentCallback = (
   intent: PaymentIntent,
   utr?: string,
-  rawText?: string
+  rawText?: string,
+  alertId?: string
 ) => Promise<boolean>;
 
 export interface TelegramBotConfig {
@@ -385,21 +386,6 @@ export function findMatchingIntent(params: {
       // Check if user pre-mapped this UTR to their intent
       const matchByUtr = uncompleted.find((i) => i.utr && i.utr.toLowerCase() === num.toLowerCase());
       if (matchByUtr) return matchByUtr;
-    }
-  }
-
-  // 2. SMART AMOUNT MATCHING FOR RECENT ACTIVE INTENTS:
-  // When a user scans the QR code in Google Pay / PhonePe, the bank SMS contains the bank UTR (not the random tr reference).
-  // If there is an active pending intent for this EXACT amount created within the last 30 minutes, match it!
-  if (params.amount && params.amount > 0) {
-    const targetAmt = Number(Number(params.amount).toFixed(2));
-    const pendingWithExactAmount = uncompleted
-      .filter((i) => i.status === "pending" && Number(Number(i.amount).toFixed(2)) === targetAmt && (now - i.createdAt < 60 * 60 * 1000))
-      .sort((a, b) => b.createdAt - a.createdAt); // newest first
-
-    if (pendingWithExactAmount.length > 0) {
-      console.log(`[SMART-AUTO-MATCH] Matched pending intent ${pendingWithExactAmount[0].intentId} for amount ₹${targetAmt} (User: ${pendingWithExactAmount[0].userEmail || pendingWithExactAmount[0].userId}) with Bank UTR ${params.utr || "N/A"}`);
-      return pendingWithExactAmount[0];
     }
   }
 
@@ -936,40 +922,9 @@ export async function tryMatchAndCompleteIntent(params: {
           }
         }
 
-        if (!matchedIntent && detectedAmount > 0) {
-          const targetAmt = Number(Number(detectedAmount).toFixed(2));
-          const foundByAmt = uncompleted
-            .filter((i: any) => Number(Number(i.amount).toFixed(2)) === targetAmt)
-            .sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
-          if (foundByAmt.length > 0) {
-            memoryIntents.set(foundByAmt[0].intentId, foundByAmt[0]);
-            matchedIntent = foundByAmt[0];
-            console.log(`[TURSO-MATCH] Matched pending intent ${foundByAmt[0].intentId} for amount ₹${targetAmt} (User: ${foundByAmt[0].userEmail || foundByAmt[0].userId})`);
-          }
-        }
       }
     } catch (tursoErr: any) {
       console.warn("[TURSO-MATCH-WARN]", tursoErr.message);
-    }
-  }
-
-  // Fallback 2: Query remote pending payment intents from Firestore created in last 60m
-  if (!matchedIntent && detectedAmount > 0) {
-    try {
-      const remoteList = await getRestCollection("payment_intents");
-      const targetAmt = Number(Number(detectedAmount).toFixed(2));
-      const recentPending = remoteList.filter(
-        (i: any) => i && i.status === "pending" && Number(Number(i.amount).toFixed(2)) === targetAmt && (Date.now() - (i.createdAt || 0) < 60 * 60 * 1000)
-      );
-      if (recentPending.length > 0) {
-        recentPending.sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
-        const chosen = recentPending[0];
-        memoryIntents.set(chosen.intentId, chosen);
-        matchedIntent = chosen;
-        console.log(`[FIRESTORE-REMOTE-MATCH] Matched pending intent ${chosen.intentId} for amount ₹${targetAmt} (User: ${chosen.userEmail || chosen.userId})`);
-      }
-    } catch (rErr: any) {
-      console.warn("[FIRESTORE-REMOTE-QUERY-WARN]", rErr.message);
     }
   }
 
@@ -1024,7 +979,8 @@ export async function tryMatchAndCompleteIntent(params: {
 
       if (intentMatchCallback) {
         try {
-          await intentMatchCallback(matchedIntent, matchedIntent.utr, text);
+          const alertId = targetAlert?.id || matchedIntent.utr || matchedIntent.orderRef;
+          await intentMatchCallback(matchedIntent, matchedIntent.utr, text, alertId);
         } catch (cbErr: any) {
           console.error("[ZERO-UTR-CALLBACK-ERR]", cbErr.message);
         }
@@ -1142,7 +1098,6 @@ export async function reconcilePendingIntentsWithAlerts(): Promise<number> {
 
   for (const intent of uncompleted) {
     if (intent.status === "completed") continue;
-    const targetAmt = Number(Number(intent.amount).toFixed(2));
 
     const matchedAlert = memoryAlerts.find((alert) => {
       if (alert.isUsed) return false;
@@ -1152,10 +1107,6 @@ export async function reconcilePendingIntentsWithAlerts(): Promise<number> {
       if (alert.rawText && alert.rawText.includes(intent.orderRef)) return true;
       if (intent.utr && alert.utr === intent.utr) return true;
 
-      // 2. Amount match for intents created within 60 minutes:
-      if (Number(Number(alert.amount).toFixed(2)) === targetAmt && (now - intent.createdAt < 60 * 60 * 1000)) {
-        return true;
-      }
       return false;
     });
 

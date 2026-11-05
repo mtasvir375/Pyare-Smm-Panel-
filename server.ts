@@ -1067,15 +1067,15 @@ export async function startServer() {
   };
 
   // Register Zero-UTR Automatic Payment Intent Callback
-  registerPaymentIntentCallback(async (intent, utr, rawText) => {
+  registerPaymentIntentCallback(async (intent, utr, rawText, alertId) => {
     const cleanUtr = (utr || intent.orderRef || "").trim();
     const orderRef = (intent.orderRef || "").trim();
     const intentId = (intent.intentId || "").trim();
 
     // 0. Turso SQL Permanent Atomic Lock:
     const atomicClaim = await tryClaimPaymentInTurso(
-      [orderRef, cleanUtr, intentId],
-      { orderRef, utr: cleanUtr, intentId, userId: intent.userId, amount: intent.amount }
+      [orderRef, cleanUtr, intentId, alertId],
+      { orderRef, utr: cleanUtr, intentId, alertId, userId: intent.userId, amount: intent.amount }
     );
 
     if (!atomicClaim.claimed) {
@@ -2425,8 +2425,17 @@ export async function startServer() {
         console.warn(`[SECURITY] Blocked unauthorized add-balance attempt from IP: ${req.ip}`);
         return res.status(403).json({ success: false, error: "Access Denied." });
       }
-      const { userId, amount } = req.body || {};
+      const { userId, amount, reason } = req.body || {};
       if (!userId || !amount) return res.status(400).json({ success: false, error: "Missing userId or amount" });
+
+      const txId = `admin_add_${userId}_${Date.now()}`;
+      // 0. Turso SQL Permanent Atomic Lock:
+      const atomicLock = await tryClaimPaymentInTurso(
+        [txId],
+        { txId, userId, amount, reason, method: "admin-add-balance" }
+      );
+
+      if (!atomicLock.claimed) return res.status(400).json({ success: false, error: "Transaction already processed" });
 
       // Read current balance
       const userSnap = await getDocSafe("users", userId, req.headers.authorization as string, true);
@@ -2446,7 +2455,8 @@ export async function startServer() {
         createdAt: new Date().toISOString(),
         verifiedAt: new Date().toISOString(),
         processedBy: "admin",
-        paymentMethod: "Deposit by admin"
+        paymentMethod: "Deposit by admin",
+        reason: reason || "Manual correction"
       }, req.headers.authorization as string);
 
       return res.json({ success: true, balance: newBalance });
@@ -3973,6 +3983,17 @@ export async function startServer() {
       intent.utr = customUtr || intent.orderRef;
       intent.senderBank = "Admin Manual Approval";
 
+      // 0. Turso SQL Permanent Atomic Lock:
+      const atomicClaim = await tryClaimPaymentInTurso(
+        [intentId, intent.orderRef, intent.utr],
+        { intentId, orderRef: intent.orderRef, utr: intent.utr, userId: intent.userId, amount: intent.amount, method: "admin-manual-approve" }
+      );
+
+      if (!atomicClaim.claimed) {
+        console.log(`[ADMIN-APPROVE-BLOCKED] Payment ${intentId} was already claimed/processed.`);
+        return res.status(400).json({ success: false, error: "This payment has already been processed by another system." });
+      }
+
       // 1. Credit User Balance
       const adjusted = await adjustUserBalanceSafe(intent.userId, intent.amount);
       if (!adjusted) {
@@ -4332,6 +4353,16 @@ export async function startServer() {
     globalUtrLocks.add(cleanUtr);
 
     try {
+      // 0. Turso SQL Permanent Atomic Lock:
+      const atomicClaim = await tryClaimPaymentInTurso(
+        [cleanUtr],
+        { utr: cleanUtr, userId, amount: numAmount, method: "verify-utr" }
+      );
+
+      if (!atomicClaim.claimed) {
+        console.log(`[VERIFY-UTR-BLOCKED] UTR ${cleanUtr} was already claimed/processed.`);
+        return res.status(400).json({ success: false, error: "This transaction has already been verified and credited." });
+      }
       // 1. Check local disk bank_alerts.json FIRST (0 Firestore Reads!)
       const claimRes = verifyAndClaimAlert(cleanUtr, numAmount > 0 ? numAmount : undefined, userId, userEmail);
       if (claimRes.success && claimRes.alert) {
@@ -4869,6 +4900,19 @@ export async function startServer() {
       const secret = sS.data()?.razorpayKeySecret;
       const hmac = crypto.createHmac("sha256", secret).update(req.body.razorpay_order_id + "|" + req.body.razorpay_payment_id).digest("hex");
       if (hmac === req.body.razorpay_signature) {
+        const paymentId = req.body.razorpay_payment_id || req.body.id || `rzp_${Date.now()}`;
+        
+        // 0. Turso SQL Permanent Atomic Lock:
+        const atomicLock = await tryClaimPaymentInTurso(
+          [paymentId, req.body.razorpay_order_id],
+          { paymentId, orderId: req.body.razorpay_order_id, userId: req.body.user_id || req.body.userId, amount: Number(req.body.amount), method: "razorpay" }
+        );
+
+        if (!atomicLock.claimed) {
+          console.log(`[RAZORPAY-BLOCKED] Payment ${paymentId} already processed.`);
+          return res.json({ success: true, message: "Already processed" });
+        }
+
         await adjustUserBalanceSafe(req.body.user_id || req.body.userId, Number(req.body.amount), req.headers.authorization as string);
         await addDocSafe("deposits", { ...req.body, status: "approved", createdAt: new Date() });
         res.json({ success: true });

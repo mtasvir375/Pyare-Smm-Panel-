@@ -622,7 +622,8 @@ export default async function handler(req: any, res: any) {
         body?.email || 
         ""
       ).trim().toLowerCase();
-      return !email || email === "mtasvir375@gmail.com" || email.includes("admin") || true;
+      const secret = req.headers['x-admin-secret'] || body?.adminSecret;
+      return email === "mtasvir375@gmail.com" && secret === "smm_master_admin_mtasvir_secret_2026";
     };
 
     // 1. Health check: /api or /api/health
@@ -1576,15 +1577,14 @@ export default async function handler(req: any, res: any) {
             match = null;
           }
 
-          // Fallback: Check all bank alerts in memory / Turso for amount match
+          // Fallback: Check all bank alerts in memory / Turso for strict orderRef match
           if (!match) {
             try {
               const allAlerts = await listTursoDocs("bank_alerts", 50);
               const found = allAlerts.find((a: any) =>
-                !a.isUsed && (
+                !a.isUsed && a.status !== "claimed" && (
                   a.utr === intent.orderRef ||
-                  (a.rawText && a.rawText.includes(intent.orderRef)) ||
-                  (Number(Number(a.amount).toFixed(2)) === Number(Number(intent.amount).toFixed(2)))
+                  (a.rawText && a.rawText.includes(intent.orderRef))
                 )
               );
               if (found) {
@@ -1593,7 +1593,7 @@ export default async function handler(req: any, res: any) {
             } catch (e) {}
           }
 
-          // Fallback 2: Check Turso smm_documents bank_alerts for matching amount
+          // Fallback 2: Check Turso smm_documents bank_alerts for matching orderRef
           if (!match) {
             try {
               const tursoClient = getTursoClient();
@@ -1606,8 +1606,7 @@ export default async function handler(req: any, res: any) {
                   try { bData = typeof row.data === "string" ? JSON.parse(row.data) : row.data; } catch (e) {}
                   if (bData && !bData.isUsed && bData.status !== "claimed") {
                     const isRef = bData.utr === intent.orderRef || (bData.rawText && bData.rawText.includes(intent.orderRef));
-                    const isAmt = Math.abs(Number(bData.amount || 0) - Number(intent.amount || 0)) <= 0.05;
-                    if (isRef || isAmt) {
+                    if (isRef) {
                       match = bData;
                       break;
                     }
@@ -1631,8 +1630,8 @@ export default async function handler(req: any, res: any) {
 
             // Ironclad Atomic SQL Lock in Turso BEFORE updating balance:
             const atomicLock = await tryClaimPaymentInTurso(
-              [intent.orderRef, matchUtr, intent.intentId],
-              { orderRef: intent.orderRef, utr: matchUtr, userId: intent.userId, amount: creditAmt }
+              [intent.orderRef, matchUtr, intent.intentId, match.id, match.utr],
+              { orderRef: intent.orderRef, utr: matchUtr, userId: intent.userId, amount: creditAmt, alertId: match.id }
             );
 
             if (!atomicLock.claimed) {
@@ -1966,19 +1965,24 @@ export default async function handler(req: any, res: any) {
           ]);
         }
 
-        const isClaimed = alertDoc.isUsed === true || alertDoc.status === "claimed";
-        if (isClaimed) {
-          const claimedBy = alertDoc.usedBy || alertDoc.claimedBy;
-          if (claimedBy === userId) {
-            return res.status(200).json({
-              success: true,
-              amount: Number(alertDoc.amount || reqAmount || 0),
-              message: "You have already verified and claimed this UTR."
-            });
-          }
-          return res.status(400).json({
-            success: false,
-            error: `UTR ${cleanUtr} has already been claimed and credited to an account.`
+        // 4. Ironclad Atomic SQL Lock in Turso BEFORE updating balance:
+        const atomicLock = await tryClaimPaymentInTurso(
+          [cleanUtr, alertDoc.id, alertDoc.utr],
+          { utr: cleanUtr, alertId: alertDoc.id, userId, amount: Number(alertDoc.amount || reqAmount || 0) }
+        );
+
+        if (!atomicLock.claimed) {
+          console.log(`[VERIFY-UTR-DUPLICATE-BLOCKED] UTR ${cleanUtr} was already claimed (lock key: ${atomicLock.alreadyClaimedKey}). Returning success status without crediting balance again.`);
+          let uBal = 0;
+          try {
+            const u = (await getTursoDoc("users", userId)) || (await getRestDoc("users", userId));
+            uBal = Number(u?.balance ?? u?.walletBalance ?? 0);
+          } catch (e) {}
+          return res.status(200).json({
+            success: true,
+            amount: Number(alertDoc.amount || reqAmount || 0),
+            newBalance: uBal,
+            message: "This UTR has already been successfully verified and credited."
           });
         }
 
@@ -2793,6 +2797,26 @@ export default async function handler(req: any, res: any) {
         if (!userId) return res.status(400).json({ success: false, error: "Deposit is missing userId" });
         if (isNaN(amount) || amount <= 0) return res.status(400).json({ success: false, error: "Invalid deposit amount" });
 
+        // 0. Ironclad Atomic SQL Lock in Turso BEFORE updating balance:
+        const atomicLock = await tryClaimPaymentInTurso(
+          [depositId, depData.utr, depData.orderRef],
+          { depositId, userId, amount, action: "process-deposit" }
+        );
+
+        if (!atomicLock.claimed) {
+          console.log(`[PROCESS-DEPOSIT-BLOCKED] Deposit ${depositId} was already claimed/processed.`);
+          let u = await getRestDoc("users", userId);
+          return res.status(200).json({
+            success: true,
+            status: "approved",
+            depositId,
+            amount,
+            userId,
+            newBalance: Number(u?.balance ?? 0),
+            message: "This deposit has already been processed."
+          });
+        }
+
         // Credit user wallet balance in Firestore and memory
         let userDoc = await getRestDoc("users", userId);
         const currentBal = Number(userDoc?.balance ?? userDoc?.walletBalance ?? 0);
@@ -2931,6 +2955,17 @@ export default async function handler(req: any, res: any) {
       const { utr, userId, amount } = body || {};
       if (!utr || !userId) return res.status(400).json({ success: false, error: "Missing utr or userId" });
       const uDoc = await getRestDoc("users", userId);
+      
+      // Ironclad Atomic SQL Lock:
+      const atomicLock = await tryClaimPaymentInTurso(
+        [utr, `manual_${utr}_${Date.now()}`],
+        { utr, userId, amount, method: "manual-resolve" }
+      );
+
+      if (!atomicLock.claimed) {
+        return res.status(400).json({ success: false, error: "This UTR has already been claimed or processed." });
+      }
+
       const curBal = Number(uDoc?.balance || 0);
       const addAmt = Number(amount || 0);
       const newBal = Number((curBal + addAmt).toFixed(2));
@@ -2980,6 +3015,17 @@ export default async function handler(req: any, res: any) {
       if (!userId || creditAmt <= 0) return res.status(400).json({ success: false, error: "Invalid intent details" });
 
       const uDoc = await getRestDoc("users", userId);
+
+      // Ironclad Atomic SQL Lock:
+      const atomicLock = await tryClaimPaymentInTurso(
+        [targetId, intent.orderRef, intent.utr],
+        { intentId: targetId, userId, amount: creditAmt, action: "admin-approve" }
+      );
+
+      if (!atomicLock.claimed) {
+        return res.status(200).json({ success: true, message: "Intent already approved.", newBalance: Number(uDoc?.balance || 0) });
+      }
+
       const curBal = Number(uDoc?.balance || 0);
       const newBal = Number((curBal + creditAmt).toFixed(2));
 

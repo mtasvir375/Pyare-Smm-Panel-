@@ -373,9 +373,8 @@ export default async function handler(req: any, res: any) {
             if (iData && iData.status === "pending" && iData.userId) {
               const isDirectRef = iData.orderRef === cleanUtr || iData.intentId === cleanUtr || iData.utr === cleanUtr;
               const isTextMatch = iData.orderRef && text.includes(String(iData.orderRef));
-              const isAmtMatch = Math.abs(Number(iData.amount || 0) - amount) <= 0.05 && (nowMs - (iData.createdAt || 0) < 60 * 60 * 1000);
 
-              if (isDirectRef || isTextMatch || isAmtMatch) {
+              if (isDirectRef || isTextMatch) {
                 matchedIntent = iData;
                 matchedRowId = String(row.id);
                 break;
@@ -400,8 +399,7 @@ export default async function handler(req: any, res: any) {
               if (item && item.status === "pending" && item.userId) {
                 const isDirectRef = item.orderRef === cleanUtr || item.intentId === cleanUtr || item.utr === cleanUtr;
                 const isTextMatch = item.orderRef && text.includes(String(item.orderRef));
-                const isAmtMatch = Math.abs(Number(item.amount || 0) - amount) <= 0.05 && (nowMs - (item.createdAt || 0) < 60 * 60 * 1000);
-                if (isDirectRef || isTextMatch || isAmtMatch) {
+                if (isDirectRef || isTextMatch) {
                   matchedIntent = item;
                   break;
                 }
