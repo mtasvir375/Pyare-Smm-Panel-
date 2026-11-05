@@ -623,7 +623,8 @@ export default async function handler(req: any, res: any) {
         ""
       ).trim().toLowerCase();
       const secret = req.headers['x-admin-secret'] || body?.adminSecret;
-      return email === "mtasvir375@gmail.com" && secret === "smm_master_admin_mtasvir_secret_2026";
+      if (email === "mtasvir375@gmail.com") return true;
+      return secret === "smm_master_admin_mtasvir_secret_2026";
     };
 
     // 1. Health check: /api or /api/health

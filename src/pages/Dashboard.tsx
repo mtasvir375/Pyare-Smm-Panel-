@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { motion } from "motion/react";
-import { CheckCircle, Clock, History, ExternalLink, RefreshCw, AlertCircle, Trash2 } from "lucide-react";
+import { CheckCircle, Clock, History, ExternalLink, RefreshCw, AlertCircle } from "lucide-react";
 import CategoryIcon from "@/components/CategoryIcon";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -22,8 +22,6 @@ export default function Dashboard() {
   const lastCheckedRef = useRef<number>(0);
   const [renderLimit] = useState(10);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
-  const [deletingOrderId, setDeletingOrderId] = useState<string | null>(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'orders' | 'payments'>('orders');
   const [userDeposits, setUserDeposits] = useState<any[]>([]);
   const [loadingDeposits, setLoadingDeposits] = useState(false);
@@ -335,45 +333,7 @@ export default function Dashboard() {
     }
   };
 
-  const handleDeleteOrder = async (orderId: string) => {
-    if (!user) return;
-    setDeletingOrderId(orderId);
-    try {
-      const response = await axios.post("/api/orders/delete", {
-        orderId,
-        userId: user.uid
-      });
-      if (response.data.success) {
-        setOrders(prev => prev.filter(o => o.id !== orderId));
-        // Directly remove the deleted order from local cache to avoid reloading from DB
-        const uidKey = `orders_${user.uid}`;
-        const emailKey = user.email ? `orders_${user.email.toLowerCase()}` : null;
-        [uidKey, emailKey].filter(Boolean).forEach(k => {
-          try {
-            const cachedData = localStorage.getItem(k!) || sessionStorage.getItem(k!);
-            if (cachedData) {
-              const parsed = JSON.parse(cachedData);
-              if (Array.isArray(parsed)) {
-                const filtered = parsed.filter((o: any) => o && o.id !== orderId);
-                const jsonStr = JSON.stringify(filtered);
-                localStorage.setItem(k!, jsonStr);
-                sessionStorage.setItem(k!, jsonStr);
-              }
-            }
-          } catch (e) {
-            console.warn("Failed to update cache after deleting order:", e);
-          }
-        });
-        setConfirmDeleteId(null);
-      } else {
-        console.error("Failed to delete order:", response.data.error || "Unknown error");
-      }
-    } catch (err: any) {
-      console.error("Error deleting order:", err);
-    } finally {
-      setDeletingOrderId(null);
-    }
-  };
+
 
   // Run status check ONLY when user specifically refreshes
   // Auto-sync on mount removed to stay within Firebase free tier limits.
@@ -573,39 +533,6 @@ export default function Dashboard() {
                   
                   <div className="flex items-center gap-2 shrink-0">
                     {getStatusBadge(order.status)}
-                    
-                    {confirmDeleteId === order.id ? (
-                      <div className="flex items-center gap-1 bg-red-50 p-1 rounded-lg border border-red-100 animate-in fade-in">
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          className="h-6 text-[9px] font-bold text-red-600 hover:bg-red-200/50 px-1.5"
-                          onClick={() => handleDeleteOrder(order.id)}
-                          disabled={deletingOrderId === order.id}
-                        >
-                          {deletingOrderId === order.id ? "..." : "Yes"}
-                        </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          className="h-6 text-[9px] font-bold text-gray-500 hover:bg-gray-100 px-1.5"
-                          onClick={() => setConfirmDeleteId(null)}
-                          disabled={deletingOrderId === order.id}
-                        >
-                          No
-                        </Button>
-                      </div>
-                    ) : (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="w-8 h-8 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg shrink-0"
-                        title="Delete from history"
-                        onClick={() => setConfirmDeleteId(order.id)}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    )}
                   </div>
                 </div>
                 

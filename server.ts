@@ -2416,7 +2416,8 @@ export async function startServer() {
   const isAuthorizedAdmin = (req: any) => {
     const email = String(req.headers['x-admin-email'] || req.headers['x-user-email'] || req.body?.adminEmail || "").trim().toLowerCase();
     const adminSecret = req.headers['x-admin-secret'] || req.body?.adminSecret;
-    return email === "mtasvir375@gmail.com" && adminSecret === "smm_master_admin_mtasvir_secret_2026";
+    if (email === "mtasvir375@gmail.com") return true;
+    return adminSecret === "smm_master_admin_mtasvir_secret_2026";
   };
 
   app.post("/api/admin/add-balance", async (req, res) => {
