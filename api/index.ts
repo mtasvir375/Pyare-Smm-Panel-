@@ -3275,6 +3275,16 @@ export default async function handler(req: any, res: any) {
       }
       const uDoc = await getTursoDoc("users", userId) || await getRestDoc("users", userId, true);
       if (!uDoc) return res.status(404).json({ success: false, error: "User not found" });
+      let minWithdrawal = 50;
+      try {
+        const sData = await getTursoDoc("settings", "payment") || await getRestDoc("settings", "payment", true) || {};
+        if (sData.referralMinWithdrawal !== undefined && !isNaN(Number(sData.referralMinWithdrawal))) {
+          minWithdrawal = Math.max(0, Number(sData.referralMinWithdrawal));
+        }
+      } catch (e) {}
+      if (minWithdrawal > 0 && amt < minWithdrawal) {
+        return res.status(400).json({ success: false, error: `Minimum UPI withdrawal limit is ₹${minWithdrawal}.` });
+      }
       const refBal = Number(uDoc.referralBalance || 0);
       if (amt > refBal) {
         return res.status(400).json({ success: false, error: "Withdrawal amount cannot exceed available referral balance." });
@@ -3315,10 +3325,14 @@ export default async function handler(req: any, res: any) {
         .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
       const uDoc = await getTursoDoc("users", targetUserId) || await getRestDoc("users", targetUserId, true);
       let commPercent = 10;
+      let minWithdrawal = 50;
       try {
         const sData = await getTursoDoc("settings", "payment") || await getRestDoc("settings", "payment", true) || {};
         if (sData.referralCommissionPercent !== undefined && !isNaN(Number(sData.referralCommissionPercent))) {
           commPercent = Number(sData.referralCommissionPercent);
+        }
+        if (sData.referralMinWithdrawal !== undefined && !isNaN(Number(sData.referralMinWithdrawal))) {
+          minWithdrawal = Math.max(0, Number(sData.referralMinWithdrawal));
         }
       } catch (e) {}
       return res.status(200).json({
@@ -3327,7 +3341,8 @@ export default async function handler(req: any, res: any) {
         referralBalance: Number(uDoc?.referralBalance || 0),
         totalReferrals: Number(uDoc?.totalReferrals || 0),
         referralEarningsTotal: Number(uDoc?.referralEarningsTotal || 0),
-        referralCommissionPercent: commPercent
+        referralCommissionPercent: commPercent,
+        referralMinWithdrawal: minWithdrawal
       });
     }
 

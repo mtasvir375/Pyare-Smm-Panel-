@@ -97,12 +97,18 @@ export default function Profile() {
   const [userWithdrawals, setUserWithdrawals] = useState<any[]>([]);
   const [loadingWithdrawals, setLoadingWithdrawals] = useState(false);
   const [referralCommissionPercent, setReferralCommissionPercent] = useState<number>(10);
+  const [referralMinWithdrawal, setReferralMinWithdrawal] = useState<number>(50);
 
   const fetchReferralData = async () => {
     try {
       const settingsRes = await axios.get(`${formatApiUrl("/api/settings")}?fresh=1&_t=${Date.now()}`).catch(() => null);
-      if (settingsRes?.data && settingsRes.data.referralCommissionPercent !== undefined && !isNaN(Number(settingsRes.data.referralCommissionPercent))) {
-        setReferralCommissionPercent(Number(settingsRes.data.referralCommissionPercent));
+      if (settingsRes?.data) {
+        if (settingsRes.data.referralCommissionPercent !== undefined && !isNaN(Number(settingsRes.data.referralCommissionPercent))) {
+          setReferralCommissionPercent(Number(settingsRes.data.referralCommissionPercent));
+        }
+        if (settingsRes.data.referralMinWithdrawal !== undefined && !isNaN(Number(settingsRes.data.referralMinWithdrawal))) {
+          setReferralMinWithdrawal(Math.max(0, Number(settingsRes.data.referralMinWithdrawal)));
+        }
       }
     } catch (e) {}
 
@@ -116,6 +122,9 @@ export default function Profile() {
         setUserWithdrawals(Array.isArray(res.data.withdrawals) ? res.data.withdrawals : []);
         if (res.data.referralCommissionPercent !== undefined && !isNaN(Number(res.data.referralCommissionPercent))) {
           setReferralCommissionPercent(Number(res.data.referralCommissionPercent));
+        }
+        if (res.data.referralMinWithdrawal !== undefined && !isNaN(Number(res.data.referralMinWithdrawal))) {
+          setReferralMinWithdrawal(Math.max(0, Number(res.data.referralMinWithdrawal)));
         }
         if (updateUserProfileLocal) {
           updateUserProfileLocal({
@@ -143,6 +152,10 @@ export default function Profile() {
     const maxBal = Number(profile?.referralBalance || 0);
     if (!amt || amt <= 0) {
       toast.error("Please enter a valid withdrawal amount.");
+      return;
+    }
+    if (referralMinWithdrawal > 0 && amt < referralMinWithdrawal) {
+      toast.error(`Minimum UPI withdrawal limit is ₹${referralMinWithdrawal}.`);
       return;
     }
     if (amt > maxBal) {
@@ -1057,7 +1070,7 @@ export default function Profile() {
             </DialogTitle>
             <DialogDescription className="text-xs text-gray-600 leading-relaxed">
               Share your unique referral link with friends. When they sign up and make deposits, you earn{" "}
-              <span className="font-extrabold text-pink-600 bg-pink-50 px-1.5 py-0.5 rounded-md border border-pink-100">
+              <span className="inline-block whitespace-nowrap font-extrabold text-pink-600 bg-pink-50 px-1.5 py-0.5 rounded-md border border-pink-100">
                 {referralCommissionPercent}% commission
               </span>{" "}
               instantly on every deposit!
@@ -1162,25 +1175,32 @@ export default function Profile() {
             </div>
 
             <div className="border-t border-gray-100 pt-4 space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
                 <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center gap-1.5">
                   <Wallet className="w-4 h-4 text-pink-500" />
                   Withdraw to UPI ID / Phone Number
                 </h4>
-                {Number(profile?.referralBalance || 0) > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setWithdrawAmount(String(Number(profile?.referralBalance || 0)))}
-                    className="text-[11px] font-bold text-pink-600 hover:text-pink-700 bg-pink-50 px-2 py-0.5 rounded-lg"
-                  >
-                    Use Max (₹{Number(profile?.referralBalance || 0).toFixed(2)})
-                  </button>
-                )}
+                <div className="flex items-center gap-1.5">
+                  {referralMinWithdrawal > 0 && (
+                    <span className="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded-lg">
+                      Min ₹{referralMinWithdrawal}
+                    </span>
+                  )}
+                  {Number(profile?.referralBalance || 0) > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setWithdrawAmount(String(Number(profile?.referralBalance || 0)))}
+                      className="text-[11px] font-bold text-pink-600 hover:text-pink-700 bg-pink-50 px-2 py-0.5 rounded-lg"
+                    >
+                      Use Max (₹{Number(profile?.referralBalance || 0).toFixed(2)})
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <Input 
                   type="number"
-                  placeholder="Amount (₹)" 
+                  placeholder={referralMinWithdrawal > 0 ? `Amount (Min ₹${referralMinWithdrawal})` : "Amount (₹)"} 
                   value={withdrawAmount}
                   onChange={(e) => setWithdrawAmount(e.target.value)}
                   className="rounded-2xl bg-gray-50 text-xs h-11"

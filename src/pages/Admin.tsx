@@ -154,6 +154,7 @@ export default function Admin() {
   const [upiId, setUpiId] = useState("");
   const [merchantName, setMerchantName] = useState("");
   const [referralCommissionPercent, setReferralCommissionPercent] = useState("10");
+  const [referralMinWithdrawal, setReferralMinWithdrawal] = useState("50");
   const [providerApiUrl, setProviderApiUrl] = useState("");
   const [providerApiKey, setProviderApiKey] = useState("");
   const [backendApiUrl, setBackendApiUrl] = useState("");
@@ -589,6 +590,7 @@ export default function Admin() {
           setUpiId(settingsData.upiId || "");
           setMerchantName(settingsData.merchantName || "");
           setReferralCommissionPercent(String(settingsData.referralCommissionPercent ?? 10));
+          setReferralMinWithdrawal(String(settingsData.referralMinWithdrawal ?? 50));
           setProviderApiUrl(settingsData.providerApiUrl || settingsData.apiUrl || settingsData.api_url || settingsData.provider_api_url || "");
           setProviderApiKey(settingsData.providerApiKey || settingsData.apiKey || settingsData.api_key || settingsData.provider_api_key || "");
           setWhatsappLink(settingsData.whatsappLink || "");
@@ -864,6 +866,7 @@ export default function Admin() {
         upiId: upiId.trim(),
         merchantName: merchantName.trim(),
         referralCommissionPercent: referralCommissionPercent !== "" && !isNaN(Number(referralCommissionPercent)) ? Number(referralCommissionPercent) : 10,
+        referralMinWithdrawal: referralMinWithdrawal !== "" && !isNaN(Number(referralMinWithdrawal)) ? Math.max(0, Number(referralMinWithdrawal)) : 50,
         providerApiUrl: cleanUrl,
         providerApiKey: cleanKey,
         backendApiUrl: cleanBackend,
@@ -3529,6 +3532,17 @@ export default function Admin() {
                         placeholder="e.g. 10" 
                         value={referralCommissionPercent}
                         onChange={(e) => setReferralCommissionPercent(e.target.value)}
+                        className="rounded-xl h-12"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Min Referral Withdrawal (₹)</label>
+                      <Input 
+                        type="number"
+                        min="0"
+                        placeholder="e.g. 50 (0 for no limit)" 
+                        value={referralMinWithdrawal}
+                        onChange={(e) => setReferralMinWithdrawal(e.target.value)}
                         className="rounded-xl h-12"
                       />
                     </div>

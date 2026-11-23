@@ -4737,6 +4737,16 @@ export async function startServer() {
       }
       const uDoc = await getTursoDoc("users", userId) || serverCache.users.get(userId)?.data || (await getDocSafe("users", userId).catch(() => null))?.data();
       if (!uDoc) return res.status(404).json({ success: false, error: "User not found" });
+      let minWithdrawal = 50;
+      try {
+        const sData = await getTursoDoc("settings", "payment") || serverCache.settings?.data || (await getDocSafe("settings", "payment").catch(() => null))?.data() || {};
+        if (sData.referralMinWithdrawal !== undefined && !isNaN(Number(sData.referralMinWithdrawal))) {
+          minWithdrawal = Math.max(0, Number(sData.referralMinWithdrawal));
+        }
+      } catch (e) {}
+      if (minWithdrawal > 0 && amt < minWithdrawal) {
+        return res.status(400).json({ success: false, error: `Minimum UPI withdrawal limit is ₹${minWithdrawal}.` });
+      }
       const refBal = Number(uDoc.referralBalance || 0);
       if (amt > refBal) {
         return res.status(400).json({ success: false, error: "Withdrawal amount cannot exceed available referral balance." });
@@ -4790,10 +4800,14 @@ export async function startServer() {
         .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
       const uDoc = await getTursoDoc("users", targetUserId) || serverCache.users.get(targetUserId)?.data || (await getDocSafe("users", targetUserId).catch(() => null))?.data();
       let commPercent = 10;
+      let minWithdrawal = 50;
       try {
         const sData = await getTursoDoc("settings", "payment") || serverCache.settings?.data || (await getDocSafe("settings", "payment").catch(() => null))?.data() || {};
         if (sData.referralCommissionPercent !== undefined && !isNaN(Number(sData.referralCommissionPercent))) {
           commPercent = Number(sData.referralCommissionPercent);
+        }
+        if (sData.referralMinWithdrawal !== undefined && !isNaN(Number(sData.referralMinWithdrawal))) {
+          minWithdrawal = Math.max(0, Number(sData.referralMinWithdrawal));
         }
       } catch (e) {}
       return res.json({
@@ -4802,7 +4816,8 @@ export async function startServer() {
         referralBalance: Number(uDoc?.referralBalance || 0),
         totalReferrals: Number(uDoc?.totalReferrals || 0),
         referralEarningsTotal: Number(uDoc?.referralEarningsTotal || 0),
-        referralCommissionPercent: commPercent
+        referralCommissionPercent: commPercent,
+        referralMinWithdrawal: minWithdrawal
       });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
