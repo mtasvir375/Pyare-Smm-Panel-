@@ -223,6 +223,55 @@ export default function Admin() {
   const [selectedScreenshot, setSelectedScreenshot] = useState<string | null>(null);
   const [viewPaymentHistory, setViewPaymentHistory] = useState<any>(null);
   const [viewOrderHistory, setViewOrderHistory] = useState<{ user: any; orders: any[]; loading?: boolean } | null>(null);
+  const [withdrawalFilter, setWithdrawalFilter] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
+  const [processingWdId, setProcessingWdId] = useState<string | null>(null);
+  const [copiedUpiId, setCopiedUpiId] = useState<string | null>(null);
+
+  const fetchAdminWithdrawals = async () => {
+    const res = await axios.get(formatApiUrl("/api/admin/withdrawals"), {
+      headers: {
+        "x-admin-email": user?.email || "mtasvir375@gmail.com",
+        "x-admin-secret": "smm_master_admin_mtasvir_secret_2026"
+      }
+    });
+    if (res.data?.success && Array.isArray(res.data.withdrawals)) {
+      setWithdrawals(res.data.withdrawals);
+    }
+  };
+
+  const handleProcessWithdrawal = async (wdId: string, action: 'approved' | 'rejected') => {
+    setProcessingWdId(wdId);
+    try {
+      const res = await axios.post(
+        formatApiUrl("/api/admin/process-withdrawal"),
+        {
+          withdrawalId: wdId,
+          action,
+          adminEmail: user?.email || "mtasvir375@gmail.com"
+        },
+        {
+          headers: {
+            "x-admin-email": user?.email || "mtasvir375@gmail.com",
+            "x-admin-secret": "smm_master_admin_mtasvir_secret_2026"
+          }
+        }
+      );
+      if (res.data?.success) {
+        toast.success(
+          action === "approved"
+            ? "Withdrawal marked as Success / Paid!"
+            : "Withdrawal rejected & balance refunded to user!"
+        );
+        await fetchAdminWithdrawals();
+      } else {
+        toast.error(res.data?.error || "Failed to process withdrawal");
+      }
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || e.message || "Failed to process withdrawal");
+    } finally {
+      setProcessingWdId(null);
+    }
+  };
   const [uodSearch, setUodSearch] = useState("");
   const [uodStatusFilter, setUodStatusFilter] = useState("all");
   const [copiedOrderId, setCopiedOrderId] = useState<string | null>(null);
@@ -526,6 +575,8 @@ export default function Admin() {
       } else if (tab === "deposits") {
         const depositsList = await dbClient.getDepositsAdmin(25);
         setDeposits(depositsList);
+      } else if (tab === "withdrawals" && (isAdmin || isPaymentAdmin)) {
+        await fetchAdminWithdrawals();
       } else if (tab === "users" && isAdmin) {
         await handleSearchUser(force);
       } else if (tab === "providers" && isAdmin) {
@@ -812,7 +863,7 @@ export default function Admin() {
         paymentQrUrl: base64,
         upiId: upiId.trim(),
         merchantName: merchantName.trim(),
-        referralCommissionPercent: Number(referralCommissionPercent || 10),
+        referralCommissionPercent: referralCommissionPercent !== "" && !isNaN(Number(referralCommissionPercent)) ? Number(referralCommissionPercent) : 10,
         providerApiUrl: cleanUrl,
         providerApiKey: cleanKey,
         backendApiUrl: cleanBackend,
@@ -1945,6 +1996,7 @@ export default function Admin() {
           {(isAdmin || isPaymentAdmin) && (
             <>
               <TabsTrigger value="deposits" className="rounded-xl px-6">Deposits</TabsTrigger>
+              <TabsTrigger value="withdrawals" className="rounded-xl px-6">Withdrawals</TabsTrigger>
               <TabsTrigger value="telegram-bot" className="rounded-xl px-6 flex items-center gap-1.5 font-bold">
                 <Send className="w-3.5 h-3.5 text-blue-500" />
                 Telegram UPI Bot
@@ -4702,6 +4754,147 @@ export default function Admin() {
                 </CardContent>
               </Card>
                 </>
+              )}
+            </TabsContent>
+
+            <TabsContent value="withdrawals" className="space-y-4">
+              {!fetchedTabs.has("withdrawals") ? (
+                renderTabPlaceholder("withdrawals", "Withdrawals")
+              ) : (
+                <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+                    <div>
+                      <h2 className="text-lg font-bold">User Withdrawal Requests</h2>
+                      <p className="text-xs text-gray-500">Copy the user&apos;s UPI ID or Phone Number, send payment via UPI app, then click Approve / Success.</p>
+                    </div>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={async () => {
+                        try {
+                          await fetchAdminWithdrawals();
+                          toast.success("Withdrawals refreshed!");
+                        } catch (e) {
+                          toast.error("Failed to refresh withdrawals");
+                        }
+                      }}
+                      className="rounded-xl text-xs font-bold gap-2 self-start sm:self-auto"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      Refresh
+                    </Button>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {(['pending', 'approved', 'rejected', 'all'] as const).map((statusKey) => {
+                      const count = statusKey === 'all'
+                        ? withdrawals.length
+                        : withdrawals.filter((w: any) => (w.status || 'pending').toLowerCase() === statusKey).length;
+                      const labels: Record<string, string> = {
+                        pending: 'Pending',
+                        approved: 'Success / Paid',
+                        rejected: 'Rejected & Refunded',
+                        all: 'All'
+                      };
+                      return (
+                        <button
+                          key={statusKey}
+                          type="button"
+                          onClick={() => setWithdrawalFilter(statusKey)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors border ${
+                            withdrawalFilter === statusKey
+                              ? 'bg-gray-900 text-white border-gray-900'
+                              : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                          }`}
+                        >
+                          {labels[statusKey]} ({count})
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="space-y-3">
+                    {(() => {
+                      const filteredWds = withdrawalFilter === 'all'
+                        ? withdrawals
+                        : withdrawals.filter((w: any) => (w.status || 'pending').toLowerCase() === withdrawalFilter);
+                      if (filteredWds.length === 0) {
+                        return <div className="text-center py-12 text-gray-400 text-xs">No {withdrawalFilter === 'all' ? '' : withdrawalFilter} withdrawal requests found.</div>;
+                      }
+                      return filteredWds.map((wd: any) => {
+                        const st = String(wd.status || 'pending').toLowerCase();
+                        return (
+                          <div key={wd.id} className="p-4 rounded-2xl border border-gray-100 bg-gray-50/50 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                            <div className="space-y-1.5 min-w-0 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-black text-base text-gray-900">₹{Number(wd.amount || 0).toFixed(2)}</span>
+                                <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase ${
+                                  st === 'approved' ? 'bg-emerald-100 text-emerald-700' :
+                                  st === 'rejected' ? 'bg-red-100 text-red-700' :
+                                  'bg-amber-100 text-amber-700'
+                                }`}>
+                                  {st === 'approved' ? 'Success / Paid' : st === 'rejected' ? 'Rejected & Refunded' : 'Pending'}
+                                </span>
+                              </div>
+                              <p className="text-xs text-gray-600 font-medium break-all">
+                                <b>User:</b> {wd.userEmail || wd.userId}
+                              </p>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-xs text-primary font-mono font-bold bg-white px-2.5 py-1 rounded-xl border border-gray-200 select-all">
+                                  UPI / Phone: {wd.upiTarget}
+                                </span>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(String(wd.upiTarget || ""));
+                                    setCopiedUpiId(wd.id);
+                                    toast.success("UPI ID / Phone Number copied!");
+                                    setTimeout(() => setCopiedUpiId(null), 2000);
+                                  }}
+                                  className="h-7 px-2.5 rounded-xl text-[11px] font-bold gap-1"
+                                >
+                                  {copiedUpiId === wd.id ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                                  {copiedUpiId === wd.id ? "Copied" : "Copy UPI"}
+                                </Button>
+                              </div>
+                              <p className="text-[10px] text-gray-400">
+                                Requested on: {new Date(wd.createdAt || Date.now()).toLocaleString()}
+                                {wd.processedAt ? ` • Processed: ${new Date(wd.processedAt).toLocaleString()}` : ""}
+                              </p>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                              {st === 'pending' && (
+                                <>
+                                  <Button 
+                                    size="sm"
+                                    disabled={processingWdId === wd.id}
+                                    onClick={() => handleProcessWithdrawal(wd.id, 'approved')}
+                                    className="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-9 px-4"
+                                  >
+                                    <Check className="w-3.5 h-3.5 mr-1.5" />
+                                    {processingWdId === wd.id ? "Saving..." : "Approve / Success"}
+                                  </Button>
+                                  <Button 
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={processingWdId === wd.id}
+                                    onClick={() => handleProcessWithdrawal(wd.id, 'rejected')}
+                                    className="rounded-xl border-red-200 text-red-600 hover:bg-red-50 font-bold text-xs h-9 px-4"
+                                  >
+                                    Reject & Refund
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
               )}
             </TabsContent>
 

@@ -1066,6 +1066,70 @@ export async function startServer() {
     return adjustUserBalanceSafe(user_id, change, token);
   };
 
+  async function creditReferralCommissionInTurso(userId: string, depositAmount: number, uniqueTxKey: string) {
+    if (!userId || depositAmount <= 0 || !uniqueTxKey) return;
+    try {
+      const tursoClient = getTursoClient();
+      const lockId = `ref_comm_${String(uniqueTxKey).trim()}`;
+      if (tursoClient) {
+        const lockRes = await tursoClient.execute({
+          sql: `INSERT INTO smm_documents (collection, id, data, updated_at)
+                VALUES ('referral_claims', ?, ?, ?)
+                ON CONFLICT(collection, id) DO NOTHING;`,
+          args: [lockId, JSON.stringify({ userId, depositAmount, uniqueTxKey }), new Date().toISOString()]
+        }).catch(() => null);
+        if (!lockRes || lockRes.rowsAffected === 0) return;
+      }
+
+      const cachedDepositor = serverCache.users.get(userId)?.data;
+      const depositorDoc = await getTursoDoc("users", userId) || cachedDepositor || (await getDocSafe("users", userId).catch(() => null))?.data();
+      const referredBy = depositorDoc?.referredBy;
+      if (!referredBy || referredBy === userId) return;
+
+      const cachedReferrer = serverCache.users.get(referredBy)?.data;
+      const referrerDoc = await getTursoDoc("users", referredBy) || cachedReferrer || (await getDocSafe("users", referredBy).catch(() => null))?.data();
+      if (!referrerDoc) return;
+
+      let commPercent = 10;
+      try {
+        const sData = await getTursoDoc("settings", "payment") || serverCache.settings?.data || (await getDocSafe("settings", "payment").catch(() => null))?.data() || {};
+        if (sData.referralCommissionPercent !== undefined && !isNaN(Number(sData.referralCommissionPercent))) {
+          commPercent = Number(sData.referralCommissionPercent);
+        }
+      } catch (e) {}
+
+      if (commPercent <= 0) return;
+      const commAmount = Number(((depositAmount * commPercent) / 100).toFixed(2));
+      if (commAmount <= 0) return;
+
+      const refBal = Number((Number(referrerDoc.referralBalance || 0) + commAmount).toFixed(2));
+      const refEarnTotal = Number((Number(referrerDoc.referralEarningsTotal || 0) + commAmount).toFixed(2));
+      const updatedReferrer = {
+        ...referrerDoc,
+        id: referredBy,
+        uid: referredBy,
+        referralBalance: refBal,
+        referralEarningsTotal: refEarnTotal,
+        updatedAt: new Date().toISOString()
+      };
+
+      if (tursoClient) {
+        await tursoClient.execute({
+          sql: `INSERT INTO smm_users (id, email, role, balance, data, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP;`,
+          args: [referredBy, updatedReferrer.email || "", updatedReferrer.role || "student", Number(updatedReferrer.balance || 0), JSON.stringify(updatedReferrer)]
+        }).catch(() => {});
+      }
+      await setTursoDoc("users", referredBy, updatedReferrer).catch(() => {});
+      await setDocSafe("users", referredBy, updatedReferrer).catch(() => {});
+      serverCache.users.set(referredBy, { data: updatedReferrer, time: Date.now() });
+      savePersistentCache();
+      console.log(`[REFERRAL-COMMISSION] Credited ₹${commAmount} (${commPercent}%) to referrer ${referredBy} for ${userId}'s ₹${depositAmount} deposit`);
+    } catch (err: any) {
+      console.warn("[REFERRAL-COMMISSION-ERR]", err?.message || err);
+    }
+  }
+
   // Register Zero-UTR Automatic Payment Intent Callback
   registerPaymentIntentCallback(async (intent, utr, rawText, alertId) => {
     const cleanUtr = (utr || intent.orderRef || "").trim();
@@ -1211,6 +1275,7 @@ export async function startServer() {
         });
       } catch (e) {}
 
+      await creditReferralCommissionInTurso(intent.userId, intent.amount, cleanUtr || orderRef || depositId);
       console.log(`[ZERO-UTR-CREDITED-SUCCESS] Credited ₹${intent.amount} to user ${intent.userId} (New Balance: ₹${newBalance})`);
       return true;
     } catch (err: any) {
@@ -4033,6 +4098,7 @@ export async function startServer() {
         savePersistentCache();
       } catch (e) {}
 
+      await creditReferralCommissionInTurso(intent.userId, intent.amount, cleanUtr || intent.orderRef || depositId);
       console.log(`[ADMIN-INTENT-APPROVED] Credited ₹${intent.amount} to user ${intent.userId} (Ref: ${intent.orderRef})`);
 
       return res.json({
@@ -4429,6 +4495,7 @@ export async function startServer() {
           existingLog.claimedAt = new Date().toISOString();
         }
 
+        await creditReferralCommissionInTurso(userId, creditedAmount, cleanUtr || depositId);
         console.log(`[BOT-WALLET-VERIFIED] Credited ₹${creditedAmount} to user ${userId} for UTR ${cleanUtr}`);
 
         return res.json({
@@ -4530,6 +4597,8 @@ export async function startServer() {
           serverCache.deposits.set(depositId, { ...cached, ...updateData });
         }
 
+        await creditReferralCommissionInTurso(userId, amount, depData.utr || depositId);
+
         return res.json({ 
           success: true, 
           status: "approved",
@@ -4562,6 +4631,266 @@ export async function startServer() {
     } catch (err: any) {
       console.error(`[DEPOSIT-ACTION-ERR] Failed:`, err.message);
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Referral & Withdrawal Endpoints
+  app.post("/api/referral/register", async (req, res) => {
+    try {
+      const { userId, referrerId } = req.body || {};
+      if (!userId || !referrerId || userId === referrerId) {
+        return res.status(400).json({ success: false, error: "Invalid referral parameters" });
+      }
+      const tursoClient = getTursoClient();
+      if (tursoClient) {
+        const lockRes = await tursoClient.execute({
+          sql: `INSERT INTO smm_documents (collection, id, data, updated_at) VALUES ('referral_regs', ?, ?, ?) ON CONFLICT(collection, id) DO NOTHING;`,
+          args: [String(userId), JSON.stringify({ userId, referrerId, createdAt: new Date().toISOString() }), new Date().toISOString()]
+        }).catch(() => null);
+        if (!lockRes || lockRes.rowsAffected === 0) {
+          return res.status(200).json({ success: true, alreadyCounted: true });
+        }
+      }
+      const uDoc = await getTursoDoc("users", userId) || serverCache.users.get(userId)?.data || (await getDocSafe("users", userId).catch(() => null))?.data() || {};
+      if (uDoc.referredBy && uDoc.referredByCounted) {
+        return res.status(200).json({ success: true, alreadyCounted: true });
+      }
+      const updatedUser = { ...uDoc, id: userId, uid: userId, referredBy: uDoc.referredBy || referrerId, referredByCounted: true };
+      await setTursoDoc("users", userId, updatedUser).catch(() => {});
+      await setDocSafe("users", userId, updatedUser).catch(() => {});
+      serverCache.users.set(userId, { data: updatedUser, time: Date.now() });
+
+      const refDoc = await getTursoDoc("users", referrerId) || serverCache.users.get(referrerId)?.data || (await getDocSafe("users", referrerId).catch(() => null))?.data();
+      if (refDoc) {
+        const updatedRef = {
+          ...refDoc,
+          id: referrerId,
+          uid: referrerId,
+          totalReferrals: Number(refDoc.totalReferrals || 0) + 1,
+          updatedAt: new Date().toISOString()
+        };
+        if (tursoClient) {
+          await tursoClient.execute({
+            sql: `INSERT INTO smm_users (id, email, role, balance, data, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                  ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP;`,
+            args: [referrerId, updatedRef.email || "", updatedRef.role || "student", Number(updatedRef.balance || 0), JSON.stringify(updatedRef)]
+          }).catch(() => {});
+        }
+        await setTursoDoc("users", referrerId, updatedRef).catch(() => {});
+        await setDocSafe("users", referrerId, updatedRef).catch(() => {});
+        serverCache.users.set(referrerId, { data: updatedRef, time: Date.now() });
+      }
+      savePersistentCache();
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/referral/transfer", async (req, res) => {
+    try {
+      const { userId } = req.body || {};
+      if (!userId) return res.status(400).json({ success: false, error: "Missing userId" });
+      const uDoc = await getTursoDoc("users", userId) || serverCache.users.get(userId)?.data || (await getDocSafe("users", userId).catch(() => null))?.data();
+      if (!uDoc) return res.status(404).json({ success: false, error: "User not found" });
+      const refBal = Number(uDoc.referralBalance || 0);
+      if (refBal <= 0) {
+        return res.status(400).json({ success: false, error: "No referral balance available to transfer" });
+      }
+      const newBal = Number((Number(uDoc.balance ?? uDoc.walletBalance ?? 0) + refBal).toFixed(2));
+      const updatedUser = {
+        ...uDoc,
+        id: userId,
+        uid: userId,
+        balance: newBal,
+        referralBalance: 0,
+        updatedAt: new Date().toISOString()
+      };
+      const tursoClient = getTursoClient();
+      if (tursoClient) {
+        await tursoClient.execute({
+          sql: `INSERT INTO smm_users (id, email, role, balance, data, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET balance = excluded.balance, data = excluded.data, updated_at = CURRENT_TIMESTAMP;`,
+          args: [userId, updatedUser.email || "", updatedUser.role || "student", newBal, JSON.stringify(updatedUser)]
+        }).catch(() => {});
+      }
+      await setTursoDoc("users", userId, updatedUser).catch(() => {});
+      await setDocSafe("users", userId, updatedUser).catch(() => {});
+      serverCache.users.set(userId, { data: updatedUser, time: Date.now() });
+      savePersistentCache();
+      return res.json({ success: true, balance: newBal, referralBalance: 0, transferredAmount: refBal });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/referral/withdraw", async (req, res) => {
+    try {
+      const { userId, userEmail, amount, upiTarget } = req.body || {};
+      const amt = Number(amount || 0);
+      const cleanUpi = String(upiTarget || "").trim();
+      if (!userId || isNaN(amt) || amt <= 0) {
+        return res.status(400).json({ success: false, error: "Please enter a valid withdrawal amount." });
+      }
+      if (cleanUpi.length < 3) {
+        return res.status(400).json({ success: false, error: "Please enter a valid UPI ID or Phone Number." });
+      }
+      const uDoc = await getTursoDoc("users", userId) || serverCache.users.get(userId)?.data || (await getDocSafe("users", userId).catch(() => null))?.data();
+      if (!uDoc) return res.status(404).json({ success: false, error: "User not found" });
+      const refBal = Number(uDoc.referralBalance || 0);
+      if (amt > refBal) {
+        return res.status(400).json({ success: false, error: "Withdrawal amount cannot exceed available referral balance." });
+      }
+      const newRefBal = Number((refBal - amt).toFixed(2));
+      const updatedUser = {
+        ...uDoc,
+        id: userId,
+        uid: userId,
+        referralBalance: newRefBal,
+        updatedAt: new Date().toISOString()
+      };
+      const tursoClient = getTursoClient();
+      if (tursoClient) {
+        await tursoClient.execute({
+          sql: `INSERT INTO smm_users (id, email, role, balance, data, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP;`,
+          args: [userId, updatedUser.email || "", updatedUser.role || "student", Number(updatedUser.balance || 0), JSON.stringify(updatedUser)]
+        }).catch(() => {});
+      }
+      await setTursoDoc("users", userId, updatedUser).catch(() => {});
+      await setDocSafe("users", userId, updatedUser).catch(() => {});
+      serverCache.users.set(userId, { data: updatedUser, time: Date.now() });
+
+      const wdId = `wd_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const wdData = {
+        id: wdId,
+        userId,
+        userEmail: userEmail || uDoc.email || "",
+        amount: amt,
+        upiTarget: cleanUpi,
+        status: "pending",
+        createdAt: new Date().toISOString()
+      };
+      await setTursoDoc("withdrawals", wdId, wdData);
+      await setDocSafe("withdrawals", wdId, wdData).catch(() => {});
+      savePersistentCache();
+      return res.json({ success: true, withdrawal: wdData, referralBalance: newRefBal });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get("/api/referral/withdrawals", async (req, res) => {
+    try {
+      const targetUserId = String(req.query.userId || "").trim();
+      if (!targetUserId) return res.status(400).json({ success: false, error: "Missing userId" });
+      const allWds = await listTursoDocs("withdrawals", 200);
+      const userWds = allWds
+        .filter((w: any) => w && w.userId === targetUserId)
+        .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      const uDoc = await getTursoDoc("users", targetUserId) || serverCache.users.get(targetUserId)?.data || (await getDocSafe("users", targetUserId).catch(() => null))?.data();
+      let commPercent = 10;
+      try {
+        const sData = await getTursoDoc("settings", "payment") || serverCache.settings?.data || (await getDocSafe("settings", "payment").catch(() => null))?.data() || {};
+        if (sData.referralCommissionPercent !== undefined && !isNaN(Number(sData.referralCommissionPercent))) {
+          commPercent = Number(sData.referralCommissionPercent);
+        }
+      } catch (e) {}
+      return res.json({
+        success: true,
+        withdrawals: userWds,
+        referralBalance: Number(uDoc?.referralBalance || 0),
+        totalReferrals: Number(uDoc?.totalReferrals || 0),
+        referralEarningsTotal: Number(uDoc?.referralEarningsTotal || 0),
+        referralCommissionPercent: commPercent
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get("/api/admin/withdrawals", async (req, res) => {
+    try {
+      if (!isAuthorizedAdmin(req)) {
+        return res.status(403).json({ success: false, error: "Access Denied: Admin authorization required." });
+      }
+      let allWds = await listTursoDocs("withdrawals", 200);
+      if (allWds.length === 0) {
+        const snap = await listDocsSafe("withdrawals", req.headers.authorization as string, true).catch(() => ({ docs: [] }));
+        allWds = (snap?.docs || []).map((d: any) => (typeof d.data === "function" ? d.data() : d.data || d));
+      }
+      allWds.sort((a: any, b: any) => {
+        const aPending = (a.status || "pending") === "pending" ? 1 : 0;
+        const bPending = (b.status || "pending") === "pending" ? 1 : 0;
+        if (aPending !== bPending) return bPending - aPending;
+        return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+      });
+      return res.json({ success: true, withdrawals: allWds });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/admin/process-withdrawal", async (req, res) => {
+    try {
+      if (!isAuthorizedAdmin(req)) {
+        return res.status(403).json({ success: false, error: "Access Denied: Admin authorization required." });
+      }
+      const { withdrawalId, action, adminEmail } = req.body || {};
+      if (!withdrawalId || !["approved", "rejected"].includes(action)) {
+        return res.status(400).json({ success: false, error: "Invalid withdrawalId or action" });
+      }
+      const wd = await getTursoDoc("withdrawals", withdrawalId) || (await getDocSafe("withdrawals", withdrawalId).catch(() => null))?.data();
+      if (!wd) return res.status(404).json({ success: false, error: "Withdrawal request not found" });
+
+      const curStatus = String(wd.status || "pending").toLowerCase();
+      if (curStatus === action) {
+        return res.json({ success: true, message: `Withdrawal already marked as ${action}`, withdrawal: wd });
+      }
+      if (curStatus === "approved" && action === "rejected") {
+        return res.status(400).json({ success: false, error: "Already approved withdrawal cannot be rejected." });
+      }
+      if (curStatus === "rejected" && action === "approved") {
+        return res.status(400).json({ success: false, error: "Already rejected & refunded withdrawal cannot be approved." });
+      }
+
+      const updatedWd = {
+        ...wd,
+        status: action,
+        processedAt: new Date().toISOString(),
+        processedBy: adminEmail || "mtasvir375@gmail.com"
+      };
+      await setTursoDoc("withdrawals", withdrawalId, updatedWd);
+      await setDocSafe("withdrawals", withdrawalId, updatedWd).catch(() => {});
+
+      if (action === "rejected" && wd.userId && Number(wd.amount || 0) > 0) {
+        const uDoc = await getTursoDoc("users", wd.userId) || serverCache.users.get(wd.userId)?.data || (await getDocSafe("users", wd.userId).catch(() => null))?.data();
+        if (uDoc) {
+          const refundedRefBal = Number((Number(uDoc.referralBalance || 0) + Number(wd.amount)).toFixed(2));
+          const updatedUser = {
+            ...uDoc,
+            id: wd.userId,
+            uid: wd.userId,
+            referralBalance: refundedRefBal,
+            updatedAt: new Date().toISOString()
+          };
+          const tursoClient = getTursoClient();
+          if (tursoClient) {
+            await tursoClient.execute({
+              sql: `INSERT INTO smm_users (id, email, role, balance, data, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP;`,
+              args: [wd.userId, updatedUser.email || "", updatedUser.role || "student", Number(updatedUser.balance || 0), JSON.stringify(updatedUser)]
+            }).catch(() => {});
+          }
+          await setTursoDoc("users", wd.userId, updatedUser).catch(() => {});
+          await setDocSafe("users", wd.userId, updatedUser).catch(() => {});
+          serverCache.users.set(wd.userId, { data: updatedUser, time: Date.now() });
+        }
+      }
+      savePersistentCache();
+      return res.json({ success: true, withdrawal: updatedWd });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
     }
   });
 
@@ -5746,6 +6075,7 @@ export async function startServer() {
     // Remove from webhook cache once used
     serverCache.received_gateway_payments.delete(cleanUtr);
 
+    await creditReferralCommissionInTurso(userId, Number(amount), cleanUtr || depositId);
     console.log(`[AUTO-DEPOSIT-SUCCESS] Verified and credited ₹${amount} for user ${userId} (UTR: ${cleanUtr})`);
 
     globalClaimedUtrs.add(cleanUtr);

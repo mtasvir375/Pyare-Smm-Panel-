@@ -8,6 +8,7 @@ import { auth } from '@/lib/firebase';
 import { dbClient, UserProfile } from '@/lib/dbClient';
 import { toast } from 'sonner';
 import axios from 'axios';
+import { formatApiUrl } from '@/lib/apiConfig';
 
 interface AuthContextType {
   user: FirebaseUser | null;
@@ -150,6 +151,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               
               try {
                 await dbClient.createUserProfile(firebaseUser.uid, newProfile);
+                if (newProfile.referredBy) {
+                  axios.post(formatApiUrl('/api/referral/register'), {
+                    userId: firebaseUser.uid,
+                    userEmail: firebaseUser.email || '',
+                    referrerId: newProfile.referredBy
+                  }).catch(() => {});
+                }
                 profile = { ...newProfile, createdAt: new Date() };
                 toast.success("🎉 स्वागत है! पहले लॉगिन पर ₹1 का टेस्ट बोनस मिला है।");
               } catch (createErr) {

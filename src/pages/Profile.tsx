@@ -18,7 +18,10 @@ import {
   RefreshCw,
   Zap,
   AlertCircle,
-  Share2
+  Share2,
+  Clock,
+  CheckCircle2,
+  XCircle
 } from "lucide-react";
 
 import axios from "axios";
@@ -46,6 +49,7 @@ import {
 } from "@/components/ui/dialog";
 import { useAuth } from "@/context/AuthContext";
 import { dbClient } from "@/lib/dbClient";
+import { formatApiUrl } from "@/lib/apiConfig";
 import { useNavigate, Link } from "react-router-dom";
 import { toast } from "sonner";
 import { useState, useEffect } from "react";
@@ -86,6 +90,100 @@ export default function Profile() {
   const [amount, setAmount] = useState("");
   const [apiKey, setApiKey] = useState<string | null>(null);
   const [generatingApiKey, setGeneratingApiKey] = useState(false);
+  const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [upiTarget, setUpiTarget] = useState("");
+  const [isSubmittingWd, setIsSubmittingWd] = useState(false);
+  const [isTransferring, setIsTransferring] = useState(false);
+  const [userWithdrawals, setUserWithdrawals] = useState<any[]>([]);
+  const [loadingWithdrawals, setLoadingWithdrawals] = useState(false);
+  const [referralCommissionPercent, setReferralCommissionPercent] = useState<number>(10);
+
+  const fetchReferralData = async () => {
+    try {
+      const settingsRes = await axios.get(`${formatApiUrl("/api/settings")}?fresh=1&_t=${Date.now()}`).catch(() => null);
+      if (settingsRes?.data && settingsRes.data.referralCommissionPercent !== undefined && !isNaN(Number(settingsRes.data.referralCommissionPercent))) {
+        setReferralCommissionPercent(Number(settingsRes.data.referralCommissionPercent));
+      }
+    } catch (e) {}
+
+    if (!user?.uid) return;
+    setLoadingWithdrawals(true);
+    try {
+      const res = await axios.get(
+        `${formatApiUrl("/api/referral/withdrawals")}?userId=${encodeURIComponent(user.uid)}&_t=${Date.now()}`
+      );
+      if (res.data?.success) {
+        setUserWithdrawals(Array.isArray(res.data.withdrawals) ? res.data.withdrawals : []);
+        if (res.data.referralCommissionPercent !== undefined && !isNaN(Number(res.data.referralCommissionPercent))) {
+          setReferralCommissionPercent(Number(res.data.referralCommissionPercent));
+        }
+        if (updateUserProfileLocal) {
+          updateUserProfileLocal({
+            referralBalance: Number(res.data.referralBalance ?? profile?.referralBalance ?? 0),
+            totalReferrals: Number(res.data.totalReferrals ?? profile?.totalReferrals ?? 0),
+            referralEarningsTotal: Number(res.data.referralEarningsTotal ?? profile?.referralEarningsTotal ?? 0)
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to fetch referral withdrawals:", e);
+    } finally {
+      setLoadingWithdrawals(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isReferralOpen && user?.uid) {
+      fetchReferralData();
+    }
+  }, [isReferralOpen, user?.uid]);
+
+  const handleRequestWithdrawal = async () => {
+    const amt = Number(withdrawAmount);
+    const maxBal = Number(profile?.referralBalance || 0);
+    if (!amt || amt <= 0) {
+      toast.error("Please enter a valid withdrawal amount.");
+      return;
+    }
+    if (amt > maxBal) {
+      toast.error("Withdrawal amount cannot exceed your available referral balance.");
+      return;
+    }
+    if (upiTarget.trim().length < 3) {
+      toast.error("Please enter your valid UPI ID or Phone Number.");
+      return;
+    }
+
+    setIsSubmittingWd(true);
+    try {
+      const res = await axios.post(formatApiUrl("/api/referral/withdraw"), {
+        userId: user.uid,
+        userEmail: user.email || profile?.email || "",
+        amount: amt,
+        upiTarget: upiTarget.trim()
+      });
+
+      if (res.data?.success) {
+        const newRefBal = Number(res.data.referralBalance ?? Math.max(0, maxBal - amt));
+        if (updateUserProfileLocal) {
+          updateUserProfileLocal({ referralBalance: newRefBal });
+        }
+        if (res.data.withdrawal) {
+          setUserWithdrawals((prev) => [res.data.withdrawal, ...prev]);
+        }
+        await refreshUserProfile?.();
+        setWithdrawAmount("");
+        setUpiTarget("");
+        toast.success("Withdrawal request submitted! Admin will send payment to your UPI shortly.");
+      } else {
+        toast.error(res.data?.error || "Failed to submit withdrawal request");
+      }
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || e.message || "Failed to submit withdrawal request");
+    } finally {
+      setIsSubmittingWd(false);
+    }
+  };
 
   useEffect(() => {
     if (user) {
@@ -951,14 +1049,18 @@ export default function Profile() {
       </Button>
 
       <Dialog open={isReferralOpen} onOpenChange={setIsReferralOpen}>
-        <DialogContent className="rounded-3xl max-w-md p-6 space-y-6">
+        <DialogContent className="rounded-3xl max-w-md w-[95vw] max-h-[90vh] overflow-y-auto p-6 space-y-5">
           <DialogHeader>
             <DialogTitle className="text-xl font-bold flex items-center gap-2">
               <Gift className="w-6 h-6 text-pink-500" />
               Refer & Earn
             </DialogTitle>
-            <DialogDescription className="text-xs text-gray-500 leading-relaxed">
-              Share your unique referral link with friends. When they sign up and make deposits, you earn commission instantly!
+            <DialogDescription className="text-xs text-gray-600 leading-relaxed">
+              Share your unique referral link with friends. When they sign up and make deposits, you earn{" "}
+              <span className="font-extrabold text-pink-600 bg-pink-50 px-1.5 py-0.5 rounded-md border border-pink-100">
+                {referralCommissionPercent}% commission
+              </span>{" "}
+              instantly on every deposit!
             </DialogDescription>
           </DialogHeader>
 
@@ -1009,7 +1111,7 @@ export default function Profile() {
               </Button>
             </div>
 
-            <div className="grid grid-cols-3 gap-3 pt-2">
+            <div className="grid grid-cols-3 gap-3 pt-1">
               <div className="bg-pink-50 p-3 rounded-2xl border border-pink-100 text-center">
                 <p className="text-[10px] text-pink-600 font-bold uppercase">Referrals</p>
                 <p className="text-lg font-black text-pink-700 mt-0.5">{profile?.totalReferrals || 0}</p>
@@ -1024,28 +1126,147 @@ export default function Profile() {
               </div>
             </div>
 
-            <div className="pt-2">
+            <div className="pt-1">
               <Button 
-                disabled={!profile?.referralBalance || profile?.referralBalance <= 0}
+                disabled={isTransferring || !profile?.referralBalance || profile?.referralBalance <= 0}
                 onClick={async () => {
                   const amt = Number(profile?.referralBalance || 0);
-                  if (amt <= 0) return;
-                  const newBal = Number((Number(profile?.balance || 0) + amt).toFixed(2));
+                  if (amt <= 0 || !user?.uid) return;
+                  setIsTransferring(true);
                   try {
-                    await dbClient.updateUserProfile(user.uid, {
-                      balance: newBal,
-                      referralBalance: 0
+                    const res = await axios.post(formatApiUrl("/api/referral/transfer"), {
+                      userId: user.uid
                     });
-                    refreshUserProfile();
-                    toast.success(`🎉 Successfully transferred ₹${amt} to your main wallet balance!`);
+                    if (res.data?.success) {
+                      if (updateUserProfileLocal) {
+                        updateUserProfileLocal({
+                          balance: Number(res.data.balance ?? (Number(profile?.balance || 0) + amt)),
+                          referralBalance: 0
+                        });
+                      }
+                      await refreshUserProfile?.();
+                      toast.success(`Transferred ₹${Number(res.data.transferredAmount ?? amt).toFixed(2)} to your main wallet balance!`);
+                    } else {
+                      toast.error(res.data?.error || "Failed to transfer balance");
+                    }
                   } catch (e: any) {
-                    toast.error(e.message || "Failed to transfer balance");
+                    toast.error(e.response?.data?.error || e.message || "Failed to transfer balance");
+                  } finally {
+                    setIsTransferring(false);
                   }
                 }}
                 className="w-full h-12 rounded-2xl bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 text-white font-bold shadow-md shadow-pink-500/20"
               >
-                Transfer ₹{Number(profile?.referralBalance || 0).toFixed(2)} to Wallet
+                {isTransferring ? "Transferring..." : `Transfer ₹${Number(profile?.referralBalance || 0).toFixed(2)} to Wallet`}
               </Button>
+            </div>
+
+            <div className="border-t border-gray-100 pt-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center gap-1.5">
+                  <Wallet className="w-4 h-4 text-pink-500" />
+                  Withdraw to UPI ID / Phone Number
+                </h4>
+                {Number(profile?.referralBalance || 0) > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setWithdrawAmount(String(Number(profile?.referralBalance || 0)))}
+                    className="text-[11px] font-bold text-pink-600 hover:text-pink-700 bg-pink-50 px-2 py-0.5 rounded-lg"
+                  >
+                    Use Max (₹{Number(profile?.referralBalance || 0).toFixed(2)})
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <Input 
+                  type="number"
+                  placeholder="Amount (₹)" 
+                  value={withdrawAmount}
+                  onChange={(e) => setWithdrawAmount(e.target.value)}
+                  className="rounded-2xl bg-gray-50 text-xs h-11"
+                />
+                <Input 
+                  placeholder="UPI ID (name@upi) or Phone No." 
+                  value={upiTarget}
+                  onChange={(e) => setUpiTarget(e.target.value)}
+                  className="rounded-2xl bg-gray-50 text-xs h-11"
+                />
+              </div>
+              <Button 
+                disabled={isSubmittingWd || !withdrawAmount || !upiTarget.trim()}
+                onClick={handleRequestWithdrawal}
+                className="w-full h-11 rounded-2xl bg-gray-900 hover:bg-black text-white font-bold text-xs shadow-sm"
+              >
+                {isSubmittingWd ? "Submitting Request..." : "Request UPI Withdrawal"}
+              </Button>
+            </div>
+
+            <div className="border-t border-gray-100 pt-4 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center gap-1.5">
+                  <History className="w-4 h-4 text-purple-500" />
+                  My Withdrawal History
+                </h4>
+                <button
+                  type="button"
+                  onClick={fetchReferralData}
+                  disabled={loadingWithdrawals}
+                  className="text-[11px] font-bold text-gray-500 hover:text-gray-800 flex items-center gap-1"
+                >
+                  <RefreshCw className={`w-3 h-3 ${loadingWithdrawals ? "animate-spin" : ""}`} />
+                  Refresh
+                </button>
+              </div>
+              {loadingWithdrawals && userWithdrawals.length === 0 ? (
+                <div className="text-center py-4 text-xs text-gray-400">Loading history...</div>
+              ) : userWithdrawals.length === 0 ? (
+                <div className="text-center py-4 text-xs text-gray-400 bg-gray-50 rounded-2xl border border-gray-100">
+                  No withdrawal requests yet.
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
+                  {userWithdrawals.map((wd: any) => {
+                    const st = String(wd.status || "pending").toLowerCase();
+                    return (
+                      <div key={wd.id} className="p-3 rounded-2xl bg-gray-50 border border-gray-100 flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-xs text-gray-900">₹{Number(wd.amount || 0).toFixed(2)}</span>
+                            <span className="text-[11px] font-mono text-gray-600 truncate">{wd.upiTarget}</span>
+                          </div>
+                          <p className="text-[10px] text-gray-400 mt-0.5">
+                            {new Date(wd.createdAt || Date.now()).toLocaleString()}
+                          </p>
+                        </div>
+                        <span className={`shrink-0 inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-full uppercase ${
+                          st === "approved"
+                            ? "bg-emerald-100 text-emerald-700"
+                            : st === "rejected"
+                            ? "bg-red-100 text-red-700"
+                            : "bg-amber-100 text-amber-700"
+                        }`}>
+                          {st === "approved" ? (
+                            <>
+                              <CheckCircle2 className="w-3 h-3" />
+                              Success
+                            </>
+                          ) : st === "rejected" ? (
+                            <>
+                              <XCircle className="w-3 h-3" />
+                              Rejected
+                            </>
+                          ) : (
+                            <>
+                              <Clock className="w-3 h-3" />
+                              Pending
+                            </>
+                          )}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         </DialogContent>

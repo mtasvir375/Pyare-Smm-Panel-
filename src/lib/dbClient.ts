@@ -10,6 +10,10 @@ export interface UserProfile {
   role: 'student' | 'instructor' | 'admin' | 'payment_admin';
   balance: number;
   bonusCredited?: boolean;
+  referredBy?: string | null;
+  referralBalance?: number;
+  totalReferrals?: number;
+  referralEarningsTotal?: number;
   createdAt: any;
   latestOrders?: any[];
   latestDeposits?: any[];
