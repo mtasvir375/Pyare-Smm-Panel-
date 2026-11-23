@@ -226,6 +226,144 @@ async function sendTelegramReply(token: string, chatId: string | number, text: s
   }
 }
 
+async function creditReferralCommissionInTurso(client: any, userId: string, depositAmount: number, uniqueTxKey: string, depositorHint?: any) {
+  if (!userId || depositAmount <= 0 || !uniqueTxKey) return;
+  try {
+    let referredBy = depositorHint?.referredBy;
+
+    // 1. Resolve depositorDoc from Turso / Firestore if referredBy is not yet known
+    if (!referredBy && client) {
+      try {
+        const uRes = await client.execute({ sql: `SELECT data FROM smm_users WHERE id = ? LIMIT 1;`, args: [userId] });
+        if (uRes.rows.length > 0 && typeof uRes.rows[0].data === "string") {
+          const parsed = JSON.parse(uRes.rows[0].data);
+          if (parsed?.referredBy) referredBy = parsed.referredBy;
+        }
+      } catch (e) {}
+    }
+    if (!referredBy && client) {
+      try {
+        const regRes = await client.execute({ sql: `SELECT data FROM smm_documents WHERE collection = 'referral_regs' AND id = ? LIMIT 1;`, args: [userId] });
+        if (regRes.rows.length > 0 && typeof regRes.rows[0].data === "string") {
+          const parsedReg = JSON.parse(regRes.rows[0].data);
+          if (parsedReg?.referrerId) referredBy = parsedReg.referrerId;
+        }
+      } catch (e) {}
+    }
+    if (!referredBy) {
+      const fsDep = await getRestDoc("users", userId).catch(() => null);
+      if (fsDep?.referredBy) referredBy = fsDep.referredBy;
+    }
+
+    if (!referredBy || referredBy === userId) return;
+
+    // 2. Read live referralCommissionPercent from Turso smm_settings / smm_documents / Firestore
+    let commPercent = 10;
+    try {
+      let sData: any = null;
+      if (client) {
+        const sRes = await client.execute({ sql: `SELECT value FROM smm_settings WHERE key = 'payment' LIMIT 1;` });
+        if (sRes.rows.length > 0 && typeof sRes.rows[0].value === "string") {
+          sData = JSON.parse(sRes.rows[0].value);
+        }
+        if (!sData) {
+          const sdRes = await client.execute({ sql: `SELECT data FROM smm_documents WHERE collection = 'settings' AND id = 'payment' LIMIT 1;` });
+          if (sdRes.rows.length > 0 && typeof sdRes.rows[0].data === "string") {
+            sData = JSON.parse(sdRes.rows[0].data);
+          }
+        }
+      }
+      if (!sData) sData = await getRestDoc("settings", "payment").catch(() => null);
+      if (sData && sData.referralCommissionPercent !== undefined && !isNaN(Number(sData.referralCommissionPercent))) {
+        commPercent = Number(sData.referralCommissionPercent);
+      }
+    } catch (e) {}
+
+    if (commPercent <= 0) return;
+    const commAmount = Number(((depositAmount * commPercent) / 100).toFixed(2));
+    if (commAmount <= 0) return;
+
+    // 3. Fetch Referrer Document from Turso & Firestore
+    let referrerDoc: any = null;
+    if (client) {
+      try {
+        const rRes = await client.execute({ sql: `SELECT id, email, role, balance, data FROM smm_users WHERE id = ? LIMIT 1;`, args: [referredBy] });
+        if (rRes.rows.length > 0) {
+          const row = rRes.rows[0];
+          const parsed = typeof row.data === "string" ? JSON.parse(row.data) : (row.data || {});
+          referrerDoc = {
+            ...parsed,
+            id: row.id,
+            uid: row.id,
+            email: row.email || parsed.email || "",
+            role: row.role || parsed.role || "student",
+            balance: Number(row.balance !== undefined ? row.balance : (parsed.balance || 0))
+          };
+        }
+      } catch (e) {}
+      if (!referrerDoc) {
+        try {
+          const rdRes = await client.execute({ sql: `SELECT data FROM smm_documents WHERE collection = 'users' AND id = ? LIMIT 1;`, args: [referredBy] });
+          if (rdRes.rows.length > 0 && typeof rdRes.rows[0].data === "string") {
+            referrerDoc = JSON.parse(rdRes.rows[0].data);
+          }
+        } catch (e) {}
+      }
+    }
+    if (!referrerDoc) {
+      referrerDoc = await getRestDoc("users", referredBy).catch(() => null);
+    }
+    if (!referrerDoc) return;
+
+    // 4. Acquire atomic lock ONLY after confirming referrer & commAmount > 0
+    const lockId = `ref_comm_${String(uniqueTxKey).trim()}`;
+    if (client) {
+      const lockRes = await client.execute({
+        sql: `INSERT INTO smm_documents (collection, id, data, updated_at)
+              VALUES ('referral_claims', ?, ?, ?)
+              ON CONFLICT(collection, id) DO NOTHING;`,
+        args: [lockId, JSON.stringify({ userId, referredBy, depositAmount, commAmount, commPercent, uniqueTxKey, creditedAt: new Date().toISOString() }), new Date().toISOString()]
+      }).catch(() => null);
+      if (!lockRes || lockRes.rowsAffected === 0) return;
+    }
+
+    const refBal = Number((Number(referrerDoc.referralBalance || 0) + commAmount).toFixed(2));
+    const refEarnTotal = Number((Number(referrerDoc.referralEarningsTotal || 0) + commAmount).toFixed(2));
+    const nowIso = new Date().toISOString();
+    const updatedReferrer = {
+      ...referrerDoc,
+      id: referredBy,
+      uid: referredBy,
+      referralBalance: refBal,
+      referralEarningsTotal: refEarnTotal,
+      updatedAt: nowIso
+    };
+    const updatedReferrerJson = JSON.stringify(updatedReferrer);
+
+    if (client) {
+      await client.execute({
+        sql: `INSERT INTO smm_users (id, email, role, balance, data, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?)
+              ON CONFLICT(id) DO UPDATE SET
+                email = COALESCE(NULLIF(excluded.email, ''), smm_users.email),
+                data = excluded.data,
+                updated_at = excluded.updated_at;`,
+        args: [referredBy, updatedReferrer.email || "", updatedReferrer.role || "student", Number(updatedReferrer.balance || 0), updatedReferrerJson, nowIso]
+      }).catch(() => {});
+      await client.execute({
+        sql: `INSERT INTO smm_documents (collection, id, data, updated_at)
+              VALUES ('users', ?, ?, ?)
+              ON CONFLICT(collection, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at;`,
+        args: [referredBy, updatedReferrerJson, nowIso]
+      }).catch(() => {});
+    }
+    await setRestDoc("users", referredBy, updatedReferrer).catch(() => {});
+    console.log(`[TG-REFERRAL-COMMISSION] Credited ₹${commAmount} (${commPercent}%) to ${referredBy} for ${userId}'s ₹${depositAmount} deposit`);
+  } catch (err: any) {
+    console.warn("[TG-REFERRAL-COMMISSION-ERR]", err?.message || err);
+  }
+}
+
 export default async function handler(req: any, res: any) {
   // CORS Headers
   const reqOrigin = req.headers.origin || "*";
@@ -416,11 +554,26 @@ export default async function handler(req: any, res: any) {
         const uId = String(matchedIntent.userId);
         console.log(`[AUTO-MATCH-INTENT] Matched UTR ${cleanUtr} (Amount ₹${amount}) with user ${uId}`);
 
-        // A. Prevent double claim
+        // A. Prevent double claim atomically in BOTH Turso and Firestore
         const doubleCheck = await getRestDoc("claimed_payments", cleanUtr).catch(() => null);
         if (doubleCheck && doubleCheck.credited) {
           console.log(`[DOUBLE-CLAIM-PREVENTED] UTR ${cleanUtr} already claimed`);
           return res.status(200).json({ ok: true, reason: "Already claimed" });
+        }
+        if (client) {
+          const lockKeys = Array.from(new Set([cleanUtr, matchedIntent.orderRef, matchedIntent.intentId].filter(Boolean).map(String)));
+          for (const lk of lockKeys) {
+            const cRes = await client.execute({
+              sql: `INSERT INTO smm_documents (collection, id, data, updated_at)
+                    VALUES ('claimed_payments', ?, ?, ?)
+                    ON CONFLICT(collection, id) DO NOTHING;`,
+              args: [lk, JSON.stringify({ orderRef: matchedIntent.orderRef || cleanUtr, utr: cleanUtr, userId: uId, amount, credited: true, claimedAt: nowIso }), nowIso]
+            }).catch(() => null);
+            if (!cRes || cRes.rowsAffected === 0) {
+              console.log(`[TG-TURSO-DOUBLE-CLAIM-BLOCKED] Lock key ${lk} already claimed.`);
+              return res.status(200).json({ ok: true, reason: "Already claimed" });
+            }
+          }
         }
 
         // B. Fetch authoritative user data and highest existing balance
@@ -613,7 +766,10 @@ export default async function handler(req: any, res: any) {
         }
         await setRestDoc("bank_alerts", cleanUtr, claimedAlert).catch(() => {});
 
-        // G. SEND TELEGRAM CONFIRMATION
+        // G. CREDIT REFERRAL COMMISSION TO REFERRER
+        await creditReferralCommissionInTurso(client, uId, amount, cleanUtr || depId, updatedUser);
+
+        // H. SEND TELEGRAM CONFIRMATION
         if (incomingChatId) {
           await sendTelegramReply(
             token,

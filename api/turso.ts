@@ -281,24 +281,53 @@ export async function setTursoDoc(collection: string, id: string, data: any): Pr
         }
       }
     } else if (collection === "users") {
+      let userBalance = data.balance !== undefined ? Number(data.balance) : (data.walletBalance !== undefined ? Number(data.walletBalance) : null);
+      let userRole = data.role || null;
+      let userEmail = data.email || data.userEmail || null;
+      let mergedData = { ...data };
+      try {
+        const exRes = await client.execute({ sql: `SELECT balance, role, email, data FROM smm_users WHERE id = ? LIMIT 1;`, args: [id] });
+        if (exRes.rows.length > 0) {
+          const row = exRes.rows[0];
+          if (userBalance === null) userBalance = Number(row.balance || 0);
+          if (!userRole) userRole = String(row.role || "user");
+          if (!userEmail) userEmail = String(row.email || "");
+          let exJson: any = {};
+          if (typeof row.data === "string") { try { exJson = JSON.parse(row.data); } catch (e) {} }
+          mergedData = { ...exJson, ...data };
+        }
+      } catch (e) {}
+      if (userBalance === null) userBalance = 0;
+      mergedData.balance = userBalance;
+      if (userEmail) {
+        mergedData.email = userEmail;
+        mergedData.userEmail = mergedData.userEmail || userEmail;
+      }
+      if (userRole) mergedData.role = userRole;
+      const finalJson = JSON.stringify(mergedData);
+
       await client.execute({
         sql: `INSERT INTO smm_users (id, email, role, balance, data, updated_at)
               VALUES (?, ?, ?, ?, ?, ?)
               ON CONFLICT(id) DO UPDATE SET
-                email = excluded.email,
-                role = excluded.role,
+                email = COALESCE(NULLIF(excluded.email, ''), smm_users.email),
+                role = COALESCE(NULLIF(excluded.role, ''), smm_users.role),
                 balance = excluded.balance,
                 data = excluded.data,
                 updated_at = excluded.updated_at;`,
         args: [
           id,
-          data.email || data.userEmail || "",
-          data.role || "user",
-          Number(data.balance || 0),
-          dataJson,
+          userEmail || "",
+          userRole || "user",
+          userBalance,
+          finalJson,
           now
         ]
       });
+      await client.execute({
+        sql: `INSERT INTO smm_documents (collection, id, data, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(collection, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at;`,
+        args: [collection, id, finalJson, now]
+      }).catch(() => {});
     } else if (collection === "settings") {
       await client.execute({
         sql: `INSERT INTO smm_settings (key, value, updated_at)

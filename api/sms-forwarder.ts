@@ -106,6 +106,83 @@ async function setRestDoc(collection: string, docId: string, data: any): Promise
   }
 }
 
+async function creditReferralCommissionInTurso(client: any, userId: string, depositAmount: number, uniqueTxKey: string, depositorHint?: any) {
+  if (!userId || depositAmount <= 0 || !uniqueTxKey || !client) return;
+  try {
+    let referredBy = depositorHint?.referredBy;
+    if (!referredBy) {
+      const uRes = await client.execute({ sql: `SELECT data FROM smm_users WHERE id = ? LIMIT 1;`, args: [userId] }).catch(() => null);
+      if (uRes?.rows?.length && typeof uRes.rows[0].data === "string") {
+        try { referredBy = JSON.parse(uRes.rows[0].data)?.referredBy; } catch (e) {}
+      }
+    }
+    if (!referredBy) {
+      const regRes = await client.execute({ sql: `SELECT data FROM smm_documents WHERE collection = 'referral_regs' AND id = ? LIMIT 1;`, args: [userId] }).catch(() => null);
+      if (regRes?.rows?.length && typeof regRes.rows[0].data === "string") {
+        try { referredBy = JSON.parse(regRes.rows[0].data)?.referrerId; } catch (e) {}
+      }
+    }
+    if (!referredBy) {
+      const fsDep = await getRestDoc("users", userId).catch(() => null);
+      if (fsDep?.referredBy) referredBy = fsDep.referredBy;
+    }
+    if (!referredBy || referredBy === userId) return;
+
+    let commPercent = 10;
+    try {
+      let sData: any = null;
+      const sRes = await client.execute({ sql: `SELECT value FROM smm_settings WHERE key = 'payment' LIMIT 1;` }).catch(() => null);
+      if (sRes?.rows?.length && typeof sRes.rows[0].value === "string") sData = JSON.parse(sRes.rows[0].value);
+      if (!sData) sData = await getRestDoc("settings", "payment").catch(() => null);
+      if (sData?.referralCommissionPercent !== undefined && !isNaN(Number(sData.referralCommissionPercent))) {
+        commPercent = Number(sData.referralCommissionPercent);
+      }
+    } catch (e) {}
+
+    if (commPercent <= 0) return;
+    const commAmount = Number(((depositAmount * commPercent) / 100).toFixed(2));
+    if (commAmount <= 0) return;
+
+    let referrerDoc: any = null;
+    const rRes = await client.execute({ sql: `SELECT id, email, role, balance, data FROM smm_users WHERE id = ? LIMIT 1;`, args: [referredBy] }).catch(() => null);
+    if (rRes?.rows?.length) {
+      const row = rRes.rows[0];
+      const parsed = typeof row.data === "string" ? JSON.parse(row.data) : (row.data || {});
+      referrerDoc = { ...parsed, id: row.id, uid: row.id, email: row.email || parsed.email || "", role: row.role || parsed.role || "student", balance: Number(row.balance ?? parsed.balance ?? 0) };
+    }
+    if (!referrerDoc) referrerDoc = await getRestDoc("users", referredBy).catch(() => null);
+    if (!referrerDoc) return;
+
+    const lockId = `ref_comm_${String(uniqueTxKey).trim()}`;
+    const lockRes = await client.execute({
+      sql: `INSERT INTO smm_documents (collection, id, data, updated_at) VALUES ('referral_claims', ?, ?, ?) ON CONFLICT(collection, id) DO NOTHING;`,
+      args: [lockId, JSON.stringify({ userId, referredBy, depositAmount, commAmount, commPercent, uniqueTxKey, creditedAt: new Date().toISOString() }), new Date().toISOString()]
+    }).catch(() => null);
+    if (!lockRes || lockRes.rowsAffected === 0) return;
+
+    const nowIso = new Date().toISOString();
+    const updatedReferrer = {
+      ...referrerDoc,
+      id: referredBy,
+      uid: referredBy,
+      referralBalance: Number((Number(referrerDoc.referralBalance || 0) + commAmount).toFixed(2)),
+      referralEarningsTotal: Number((Number(referrerDoc.referralEarningsTotal || 0) + commAmount).toFixed(2)),
+      updatedAt: nowIso
+    };
+    const updatedJson = JSON.stringify(updatedReferrer);
+    await client.execute({
+      sql: `INSERT INTO smm_users (id, email, role, balance, data, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET email = COALESCE(NULLIF(excluded.email, ''), smm_users.email), data = excluded.data, updated_at = excluded.updated_at;`,
+      args: [referredBy, updatedReferrer.email || "", updatedReferrer.role || "student", Number(updatedReferrer.balance || 0), updatedJson, nowIso]
+    }).catch(() => {});
+    await client.execute({
+      sql: `INSERT INTO smm_documents (collection, id, data, updated_at) VALUES ('users', ?, ?, ?) ON CONFLICT(collection, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at;`,
+      args: [referredBy, updatedJson, nowIso]
+    }).catch(() => {});
+    await setRestDoc("users", referredBy, updatedReferrer).catch(() => {});
+  } catch (err) {}
+}
+
 export default async function handler(req: any, res: any) {
   // CORS Headers
   const reqOrigin = req.headers.origin || "*";
@@ -222,6 +299,23 @@ export default async function handler(req: any, res: any) {
             const isMatch = iData.orderRef === cleanUtr || iData.intentId === cleanUtr || (Math.abs(Number(iData.amount || 0) - amount) <= 0.05 && (nowMs - (iData.createdAt || 0) < 3600000));
             if (isMatch) {
               const uId = String(iData.userId);
+              // Atomic claim lock in Turso to prevent double crediting
+              let claimBlocked = false;
+              const lockKeys = Array.from(new Set([cleanUtr, iData.orderRef, iData.intentId].filter(Boolean).map(String)));
+              for (const lk of lockKeys) {
+                const cRes = await client.execute({
+                  sql: `INSERT INTO smm_documents (collection, id, data, updated_at) VALUES ('claimed_payments', ?, ?, ?) ON CONFLICT(collection, id) DO NOTHING;`,
+                  args: [lk, JSON.stringify({ orderRef: iData.orderRef || cleanUtr, utr: cleanUtr, userId: uId, amount, credited: true, claimedAt: nowIso }), nowIso]
+                }).catch(() => null);
+                if (!cRes || cRes.rowsAffected === 0) {
+                  claimBlocked = true;
+                  break;
+                }
+              }
+              if (claimBlocked) {
+                return res.status(200).json({ success: true, alreadyClaimed: true, message: "Already claimed" });
+              }
+
               let curBal = 0;
               let uData: any = {};
 
@@ -231,6 +325,21 @@ export default async function handler(req: any, res: any) {
                 try { uData = typeof uRes.rows[0].data === "string" ? JSON.parse(uRes.rows[0].data) : (uRes.rows[0].data || {}); } catch (e) {}
               }
               const newBal = Number((curBal + amount).toFixed(2));
+              const depId = `dep_${cleanUtr}_${nowMs}`;
+              const depObj = {
+                id: depId,
+                userId: uId,
+                userEmail: iData.userEmail || uData.email || "",
+                amount,
+                utr: cleanUtr,
+                orderRef: iData.orderRef || cleanUtr,
+                status: "approved",
+                method: "Instant UPI QR",
+                gateway: "SMS Forwarder App",
+                createdAt: nowIso
+              };
+              const existingDeposits = Array.isArray(uData.latestDeposits) ? uData.latestDeposits : [];
+              uData.latestDeposits = [depObj, ...existingDeposits.filter((d: any) => d && d.utr !== cleanUtr && d.orderRef !== iData.orderRef)].slice(0, 10);
               uData.balance = newBal;
               uData.updatedAt = nowIso;
               const uJson = JSON.stringify(uData);
@@ -245,6 +354,17 @@ export default async function handler(req: any, res: any) {
                       ON CONFLICT(collection, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at;`,
                 args: [uId, uJson, nowIso]
               });
+              await client.execute({
+                sql: `INSERT INTO smm_deposits (id, user_id, amount, status, transaction_id, data, created_at)
+                      VALUES (?, ?, ?, 'approved', ?, ?, CURRENT_TIMESTAMP)
+                      ON CONFLICT(id) DO UPDATE SET status = 'approved', data = excluded.data;`,
+                args: [depId, uId, amount, cleanUtr, JSON.stringify(depObj)]
+              }).catch(() => {});
+              await client.execute({
+                sql: `INSERT INTO smm_documents (collection, id, data, updated_at) VALUES ('deposits', ?, ?, ?)
+                      ON CONFLICT(collection, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at;`,
+                args: [depId, JSON.stringify(depObj), nowIso]
+              }).catch(() => {});
 
               iData.status = "completed";
               iData.utr = cleanUtr;
@@ -265,8 +385,11 @@ export default async function handler(req: any, res: any) {
               }
 
               await setRestDoc("users", uId, uData).catch(() => {});
+              await setRestDoc("deposits", depId, depObj).catch(() => {});
               await setRestDoc("payment_intents", iData.intentId, iData).catch(() => {});
               if (iData.orderRef) await setRestDoc("payment_intents", iData.orderRef, iData).catch(() => {});
+
+              await creditReferralCommissionInTurso(client, uId, amount, cleanUtr || depId, uData);
 
               return res.status(200).json({ success: true, matched: true, userId: uId, amount, newBalance: newBal });
             }

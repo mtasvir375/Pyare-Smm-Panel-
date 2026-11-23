@@ -439,22 +439,25 @@ export async function tursoSetDoc(collection: string, id: string, data: any): Pr
       let userEmail = data.email || data.userEmail || null;
       let mergedData = { ...data };
 
-      if (userBalance === null) {
-        try {
-          const exRes = await client.execute({ sql: `SELECT balance, role, email, data FROM smm_users WHERE id = ? LIMIT 1;`, args: [id] });
-          if (exRes.rows.length > 0) {
-            const row = exRes.rows[0];
-            userBalance = Number(row.balance || 0);
-            if (!userRole) userRole = String(row.role || "user");
-            if (!userEmail) userEmail = String(row.email || "");
-            let exJson: any = {};
-            if (typeof row.data === "string") { try { exJson = JSON.parse(row.data); } catch(e) {} }
-            mergedData = { ...exJson, ...data, balance: userBalance };
-          }
-        } catch(e) {}
-        if (userBalance === null) userBalance = 0;
-      }
+      try {
+        const exRes = await client.execute({ sql: `SELECT balance, role, email, data FROM smm_users WHERE id = ? LIMIT 1;`, args: [id] });
+        if (exRes.rows.length > 0) {
+          const row = exRes.rows[0];
+          if (userBalance === null) userBalance = Number(row.balance || 0);
+          if (!userRole) userRole = String(row.role || "user");
+          if (!userEmail) userEmail = String(row.email || "");
+          let exJson: any = {};
+          if (typeof row.data === "string") { try { exJson = JSON.parse(row.data); } catch(e) {} }
+          mergedData = { ...exJson, ...data };
+        }
+      } catch(e) {}
+      if (userBalance === null) userBalance = 0;
       mergedData.balance = userBalance;
+      if (userEmail) {
+        mergedData.email = userEmail;
+        mergedData.userEmail = mergedData.userEmail || userEmail;
+      }
+      if (userRole) mergedData.role = userRole;
       const finalJson = JSON.stringify(mergedData);
 
       await client.execute({

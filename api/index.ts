@@ -98,22 +98,25 @@ async function setTursoDoc(collection: string, id: string, data: any): Promise<b
       let userEmail = data.email || data.userEmail || null;
       let mergedData = { ...data };
 
-      if (userBalance === null) {
-        try {
-          const exRes = await client.execute({ sql: `SELECT balance, role, email, data FROM smm_users WHERE id = ? LIMIT 1;`, args: [id] });
-          if (exRes.rows.length > 0) {
-            const row = exRes.rows[0];
-            userBalance = Number(row.balance || 0);
-            if (!userRole) userRole = String(row.role || "student");
-            if (!userEmail) userEmail = String(row.email || "");
-            let exJson: any = {};
-            if (typeof row.data === "string") { try { exJson = JSON.parse(row.data); } catch(e) {} }
-            mergedData = { ...exJson, ...data, balance: userBalance };
-          }
-        } catch(e) {}
-        if (userBalance === null) userBalance = 0;
-      }
+      try {
+        const exRes = await client.execute({ sql: `SELECT balance, role, email, data FROM smm_users WHERE id = ? LIMIT 1;`, args: [id] });
+        if (exRes.rows.length > 0) {
+          const row = exRes.rows[0];
+          if (userBalance === null) userBalance = Number(row.balance || 0);
+          if (!userRole) userRole = String(row.role || "student");
+          if (!userEmail) userEmail = String(row.email || "");
+          let exJson: any = {};
+          if (typeof row.data === "string") { try { exJson = JSON.parse(row.data); } catch(e) {} }
+          mergedData = { ...exJson, ...data };
+        }
+      } catch(e) {}
+      if (userBalance === null) userBalance = 0;
       mergedData.balance = userBalance;
+      if (userEmail) {
+        mergedData.email = userEmail;
+        mergedData.userEmail = mergedData.userEmail || userEmail;
+      }
+      if (userRole) mergedData.role = userRole;
       const finalJson = JSON.stringify(mergedData);
 
       await client.execute({
@@ -208,19 +211,17 @@ async function creditReferralCommissionInTurso(userId: string, depositAmount: nu
   if (!userId || depositAmount <= 0 || !uniqueTxKey) return;
   try {
     const tursoClient = getTursoClient();
-    const lockId = `ref_comm_${String(uniqueTxKey).trim()}`;
-    if (tursoClient) {
-      const lockRes = await tursoClient.execute({
-        sql: `INSERT INTO smm_documents (collection, id, data, updated_at)
-              VALUES ('referral_claims', ?, ?, ?)
-              ON CONFLICT(collection, id) DO NOTHING;`,
-        args: [lockId, JSON.stringify({ userId, depositAmount, uniqueTxKey }), new Date().toISOString()]
-      }).catch(() => null);
-      if (!lockRes || lockRes.rowsAffected === 0) return;
-    }
-
+    const cleanTxKey = String(uniqueTxKey).trim();
     const depositorDoc = await getTursoDoc("users", userId) || await getRestDoc("users", userId, true);
-    const referredBy = depositorDoc?.referredBy;
+    let referredBy = depositorDoc?.referredBy;
+
+    // Fallback to referral_regs lock table if referredBy was missing on user doc
+    if (!referredBy) {
+      const regDoc = await getTursoDoc("referral_regs", userId) || await getRestDoc("referral_regs", userId, true);
+      if (regDoc?.referrerId) {
+        referredBy = regDoc.referrerId;
+      }
+    }
     if (!referredBy || referredBy === userId) return;
 
     const referrerDoc = await getTursoDoc("users", referredBy) || await getRestDoc("users", referredBy, true);
@@ -228,7 +229,7 @@ async function creditReferralCommissionInTurso(userId: string, depositAmount: nu
 
     let commPercent = 10;
     try {
-      const sData = await getTursoDoc("settings", "payment") || await getRestDoc("settings", "payment") || {};
+      const sData = await getTursoDoc("settings", "payment") || await getRestDoc("settings", "payment", true) || {};
       if (sData.referralCommissionPercent !== undefined && !isNaN(Number(sData.referralCommissionPercent))) {
         commPercent = Number(sData.referralCommissionPercent);
       }
@@ -237,6 +238,18 @@ async function creditReferralCommissionInTurso(userId: string, depositAmount: nu
     if (commPercent <= 0) return;
     const commAmount = Number(((depositAmount * commPercent) / 100).toFixed(2));
     if (commAmount <= 0) return;
+
+    // Acquire atomic lock ONLY after confirming referredBy, referrerDoc, and commAmount > 0
+    const lockId = `ref_comm_${cleanTxKey}`;
+    if (tursoClient) {
+      const lockRes = await tursoClient.execute({
+        sql: `INSERT INTO smm_documents (collection, id, data, updated_at)
+              VALUES ('referral_claims', ?, ?, ?)
+              ON CONFLICT(collection, id) DO NOTHING;`,
+        args: [lockId, JSON.stringify({ userId, referredBy, depositAmount, commAmount, commPercent, uniqueTxKey: cleanTxKey, creditedAt: new Date().toISOString() }), new Date().toISOString()]
+      }).catch(() => null);
+      if (!lockRes || lockRes.rowsAffected === 0) return;
+    }
 
     const refBal = Number((Number(referrerDoc.referralBalance || 0) + commAmount).toFixed(2));
     const refEarnTotal = Number((Number(referrerDoc.referralEarningsTotal || 0) + commAmount).toFixed(2));
@@ -252,12 +265,16 @@ async function creditReferralCommissionInTurso(userId: string, depositAmount: nu
     if (tursoClient) {
       await tursoClient.execute({
         sql: `INSERT INTO smm_users (id, email, role, balance, data, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-              ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP;`,
+              ON CONFLICT(id) DO UPDATE SET
+                email = COALESCE(NULLIF(excluded.email, ''), smm_users.email),
+                data = excluded.data,
+                updated_at = CURRENT_TIMESTAMP;`,
         args: [referredBy, updatedReferrer.email || "", updatedReferrer.role || "student", Number(updatedReferrer.balance || 0), JSON.stringify(updatedReferrer)]
       });
     }
     await setTursoDoc("users", referredBy, updatedReferrer).catch(() => {});
     await setRestDoc("users", referredBy, updatedReferrer).catch(() => {});
+    memAllUsersCache = null;
   } catch (err) {
     console.warn("[REFERRAL-COMMISSION-ERR]", err);
   }
@@ -2537,6 +2554,53 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json({ success: true, users: usersList });
     }
 
+    if (pathname === "/api/admin/add-balance") {
+      if (!isReqAdmin()) {
+        return res.status(403).json({ success: false, error: "Access Denied: Only administrator (mtasvir375@gmail.com) can add balance." });
+      }
+      const { userId, id, amount, reason } = body || {};
+      const targetId = String(userId || id || "").trim();
+      const addAmt = Number(amount || 0);
+      if (!targetId || isNaN(addAmt) || addAmt <= 0) {
+        return res.status(400).json({ success: false, error: "Invalid userId or amount" });
+      }
+      const txId = `admin_add_${targetId}_${Date.now()}`;
+      const uDoc = await getTursoDoc("users", targetId) || await getRestDoc("users", targetId, true);
+      if (!uDoc) return res.status(404).json({ success: false, error: "User not found" });
+      const currentBal = Number(uDoc.balance ?? uDoc.walletBalance ?? 0);
+      const newBal = Number((currentBal + addAmt).toFixed(2));
+      const nowIso = new Date().toISOString();
+      await setTursoDoc("users", targetId, { ...uDoc, balance: newBal, updatedAt: nowIso });
+      await setRestDoc("users", targetId, { ...uDoc, balance: newBal, updatedAt: nowIso }).catch(() => {});
+      const depObj = {
+        id: txId,
+        userId: targetId,
+        userEmail: uDoc.email || "",
+        amount: addAmt,
+        utr: txId,
+        status: "approved",
+        createdAt: nowIso,
+        verifiedAt: nowIso,
+        processedBy: "admin",
+        paymentMethod: "Deposit by admin",
+        reason: reason || "Manual credit"
+      };
+      await setTursoDoc("deposits", txId, depObj).catch(() => {});
+      await setRestDoc("deposits", txId, depObj).catch(() => {});
+      try {
+        const client = getTursoClient();
+        if (client) {
+          await client.execute({
+            sql: `INSERT INTO smm_deposits (id, user_id, amount, status, transaction_id, data, created_at) VALUES (?, ?, ?, 'approved', ?, ?, CURRENT_TIMESTAMP);`,
+            args: [txId, targetId, addAmt, txId, JSON.stringify(depObj)]
+          }).catch(() => {});
+        }
+      } catch (e) {}
+      await creditReferralCommissionInTurso(targetId, addAmt, txId);
+      memAllUsersCache = null;
+      return res.status(200).json({ success: true, balance: newBal });
+    }
+
     if (pathname === "/api/admin/update-balance") {
       if (!isReqAdmin()) {
         return res.status(403).json({ success: false, error: "Access Denied: Only administrator (mtasvir375@gmail.com) can update user balances." });
@@ -2546,16 +2610,10 @@ export default async function handler(req: any, res: any) {
       if (!targetId) return res.status(400).json({ success: false, error: "Missing userId" });
       const numBal = Number(balance || 0);
       memAllUsersCache = null; // Invalidate cache so updated balance is visible immediately
-      await setRestDoc("users", targetId, { balance: numBal, updatedAt: new Date().toISOString() });
-      try {
-        const client = getTursoClient();
-        if (client) {
-          await client.execute({
-            sql: `UPDATE smm_users SET balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;`,
-            args: [numBal, targetId]
-          });
-        }
-      } catch (e) {}
+      const existingUser = (await getTursoDoc("users", targetId)) || (await getRestDoc("users", targetId, true)) || {};
+      const mergedUser = { ...existingUser, id: targetId, uid: targetId, balance: numBal, updatedAt: new Date().toISOString() };
+      await setTursoDoc("users", targetId, mergedUser);
+      await setRestDoc("users", targetId, mergedUser).catch(() => {});
       return res.status(200).json({ success: true, balance: numBal });
     }
 
@@ -3020,7 +3078,7 @@ export default async function handler(req: any, res: any) {
       }
       const { utr, userId, amount } = body || {};
       if (!utr || !userId) return res.status(400).json({ success: false, error: "Missing utr or userId" });
-      const uDoc = await getRestDoc("users", userId);
+      const uDoc = await getTursoDoc("users", userId) || await getRestDoc("users", userId, true);
       
       // Ironclad Atomic SQL Lock:
       const atomicLock = await tryClaimPaymentInTurso(
@@ -3035,8 +3093,32 @@ export default async function handler(req: any, res: any) {
       const curBal = Number(uDoc?.balance || 0);
       const addAmt = Number(amount || 0);
       const newBal = Number((curBal + addAmt).toFixed(2));
-      await setRestDoc("users", userId, { ...(uDoc || {}), balance: newBal, updatedAt: new Date().toISOString() });
-      await setRestDoc("bank_alerts", utr, { utr, amount: addAmt, isUsed: true, status: "claimed", usedBy: userId, resolvedAt: new Date().toISOString() });
+      const nowIso = new Date().toISOString();
+      const depId = `dep_manual_${utr}_${Date.now()}`;
+      const depObj = {
+        id: depId,
+        userId,
+        userEmail: uDoc?.email || "",
+        amount: addAmt,
+        utr: String(utr),
+        status: "approved",
+        method: "Manual UTR Resolve",
+        createdAt: nowIso
+      };
+      await setTursoDoc("users", userId, { ...(uDoc || {}), balance: newBal, updatedAt: nowIso });
+      await setRestDoc("users", userId, { ...(uDoc || {}), balance: newBal, updatedAt: nowIso }).catch(() => {});
+      await setTursoDoc("deposits", depId, depObj).catch(() => {});
+      await setRestDoc("bank_alerts", utr, { utr, amount: addAmt, isUsed: true, status: "claimed", usedBy: userId, resolvedAt: nowIso });
+      try {
+        const client = getTursoClient();
+        if (client) {
+          await client.execute({
+            sql: `INSERT INTO smm_deposits (id, user_id, amount, status, transaction_id, data, created_at) VALUES (?, ?, ?, 'approved', ?, ?, CURRENT_TIMESTAMP);`,
+            args: [depId, userId, addAmt, String(utr), JSON.stringify(depObj)]
+          }).catch(() => {});
+        }
+      } catch (e) {}
+      await creditReferralCommissionInTurso(userId, addAmt, String(utr || depId));
       return res.status(200).json({ success: true, message: `Resolved UTR ${utr} with ₹${addAmt}`, newBalance: newBal });
     }
 
@@ -3073,14 +3155,14 @@ export default async function handler(req: any, res: any) {
       const { intentId, orderRef, adminEmail } = body || {};
       const targetId = intentId || orderRef;
       if (!targetId) return res.status(400).json({ success: false, error: "Missing intentId" });
-      const intent = await getRestDoc("payment_intents", targetId);
+      const intent = await getTursoDoc("payment_intents", targetId) || await getRestDoc("payment_intents", targetId, true);
       if (!intent) return res.status(404).json({ success: false, error: "Intent not found" });
 
       const userId = intent.userId;
       const creditAmt = Number(intent.amount || intent.baseAmount || 0);
       if (!userId || creditAmt <= 0) return res.status(400).json({ success: false, error: "Invalid intent details" });
 
-      const uDoc = await getRestDoc("users", userId);
+      const uDoc = await getTursoDoc("users", userId) || await getRestDoc("users", userId, true);
 
       // Ironclad Atomic SQL Lock:
       const atomicLock = await tryClaimPaymentInTurso(
@@ -3094,9 +3176,35 @@ export default async function handler(req: any, res: any) {
 
       const curBal = Number(uDoc?.balance || 0);
       const newBal = Number((curBal + creditAmt).toFixed(2));
+      const nowIso = new Date().toISOString();
+      const depId = `dep_intent_${intent.orderRef || targetId}_${Date.now()}`;
+      const depObj = {
+        id: depId,
+        userId,
+        userEmail: intent.userEmail || uDoc?.email || "",
+        amount: creditAmt,
+        utr: intent.utr || intent.orderRef || targetId,
+        orderRef: intent.orderRef || targetId,
+        status: "approved",
+        method: "Admin Intent Approval",
+        createdAt: nowIso
+      };
 
-      await setRestDoc("users", userId, { ...(uDoc || {}), balance: newBal, updatedAt: new Date().toISOString() });
-      await setRestDoc("payment_intents", targetId, { ...(intent || {}), status: "completed", approvedBy: adminEmail || "admin", completedAt: Date.now() });
+      await setTursoDoc("users", userId, { ...(uDoc || {}), balance: newBal, updatedAt: nowIso });
+      await setRestDoc("users", userId, { ...(uDoc || {}), balance: newBal, updatedAt: nowIso }).catch(() => {});
+      await setTursoDoc("payment_intents", targetId, { ...(intent || {}), status: "completed", approvedBy: adminEmail || "admin", completedAt: Date.now() });
+      await setRestDoc("payment_intents", targetId, { ...(intent || {}), status: "completed", approvedBy: adminEmail || "admin", completedAt: Date.now() }).catch(() => {});
+      await setTursoDoc("deposits", depId, depObj).catch(() => {});
+      try {
+        const client = getTursoClient();
+        if (client) {
+          await client.execute({
+            sql: `INSERT INTO smm_deposits (id, user_id, amount, status, transaction_id, data, created_at) VALUES (?, ?, ?, 'approved', ?, ?, CURRENT_TIMESTAMP);`,
+            args: [depId, userId, creditAmt, String(depObj.utr), JSON.stringify(depObj)]
+          }).catch(() => {});
+        }
+      } catch (e) {}
+      await creditReferralCommissionInTurso(userId, creditAmt, String(intent.utr || intent.orderRef || depId));
       memAdminDepositsCache = null;
 
       return res.status(200).json({ success: true, message: `Approved intent and credited ₹${creditAmt}`, newBalance: newBal });
@@ -3319,6 +3427,60 @@ export default async function handler(req: any, res: any) {
     if (pathname === "/api/referral/withdrawals") {
       const targetUserId = String(queryObj?.userId || req.query?.userId || body?.userId || "").trim();
       if (!targetUserId) return res.status(400).json({ success: false, error: "Missing userId" });
+
+      // Idempotent catch-up sync: ensure any approved deposit made by a referred user after signup has its commission credited
+      try {
+        const tursoClient = getTursoClient();
+        if (tursoClient) {
+          const regRes = await tursoClient.execute({
+            sql: `SELECT id, data FROM smm_documents WHERE collection = 'referral_regs' AND data LIKE ? LIMIT 100;`,
+            args: [`%"${targetUserId}"%`]
+          }).catch(() => null);
+          const regMap = new Map<string, number>();
+          if (regRes?.rows) {
+            for (const r of regRes.rows) {
+              try {
+                const parsed = typeof r.data === "string" ? JSON.parse(r.data) : r.data;
+                if (parsed?.referrerId === targetUserId && parsed?.userId && parsed.userId !== targetUserId) {
+                  regMap.set(String(parsed.userId), new Date(parsed.createdAt || 0).getTime() || 0);
+                }
+              } catch (e) {}
+            }
+          }
+          if (regMap.size > 0) {
+            const refUids = Array.from(regMap.keys());
+            const placeholders = refUids.map(() => "?").join(",");
+            const depRes = await tursoClient.execute({
+              sql: `SELECT id, user_id, amount, status, transaction_id, data, created_at FROM smm_deposits WHERE user_id IN (${placeholders}) AND status = 'approved' AND amount > 0 ORDER BY created_at DESC LIMIT 50;`,
+              args: refUids
+            }).catch(() => null);
+            if (depRes?.rows) {
+              for (const dr of depRes.rows) {
+                const depUid = String(dr.user_id || "");
+                const regTime = regMap.get(depUid) || 0;
+                const rawCreated = String(dr.created_at || "");
+                const isoCreated = rawCreated.includes("T") ? rawCreated : rawCreated.replace(" ", "T") + "Z";
+                const depTime = new Date(isoCreated).getTime() || 0;
+                if (regTime > 0 && depTime > 0 && depTime < regTime - 120000) continue;
+                let parsedDep: any = {};
+                try { parsedDep = typeof dr.data === "string" ? JSON.parse(dr.data) : (dr.data || {}); } catch (e) {}
+                if (parsedDep.method === "welcome_bonus" || parsedDep.paymentMethod === "welcome_bonus") continue;
+                const txKey = String(dr.transaction_id || parsedDep.utr || parsedDep.orderRef || dr.id || "").trim();
+                const depIdKey = String(dr.id || "").trim();
+                if (!txKey) continue;
+                const claimCheck = await tursoClient.execute({
+                  sql: `SELECT id FROM smm_documents WHERE collection = 'referral_claims' AND id IN (?, ?) LIMIT 1;`,
+                  args: [`ref_comm_${txKey}`, `ref_comm_${depIdKey}`]
+                }).catch(() => null);
+                if (!claimCheck || claimCheck.rows.length === 0) {
+                  await creditReferralCommissionInTurso(depUid, Number(dr.amount || 0), txKey);
+                }
+              }
+            }
+          }
+        }
+      } catch (syncErr) {}
+
       const allWds = await listTursoDocs("withdrawals", 200);
       const userWds = allWds
         .filter((w: any) => w && w.userId === targetUserId)
