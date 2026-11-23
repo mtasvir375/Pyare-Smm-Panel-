@@ -2830,6 +2830,59 @@ export default async function handler(req: any, res: any) {
         };
         await setRestDoc("users", userId, updatedUser);
 
+        // Process Referral Commission
+        try {
+          const referredBy = userDoc?.referredBy;
+          if (referredBy && referredBy !== userId) {
+            let referrerDoc: any = null;
+            try {
+              const tursoClient = getTursoClient();
+              if (tursoClient) {
+                const rRes = await tursoClient.execute({ sql: `SELECT data FROM smm_users WHERE id = ? LIMIT 1;`, args: [referredBy] });
+                if (rRes.rows?.[0]?.data) {
+                  referrerDoc = typeof rRes.rows[0].data === "string" ? JSON.parse(rRes.rows[0].data) : rRes.rows[0].data;
+                }
+              }
+            } catch (e) {}
+            if (!referrerDoc) {
+              referrerDoc = await getRestDoc("users", referredBy);
+            }
+            if (referrerDoc) {
+              let commPercent = 10;
+              try {
+                const sData = await getRestDoc("settings", "payment") || {};
+                if (sData.referralCommissionPercent !== undefined) {
+                  commPercent = Number(sData.referralCommissionPercent);
+                }
+              } catch (e) {}
+
+              const commAmount = Number(((amount * commPercent) / 100).toFixed(2));
+              if (commAmount > 0) {
+                const refBal = Number(referrerDoc.referralBalance || 0) + commAmount;
+                const refEarnTotal = Number(referrerDoc.referralEarningsTotal || 0) + commAmount;
+                const updatedReferrer = {
+                  ...referrerDoc,
+                  id: referredBy,
+                  uid: referredBy,
+                  referralBalance: refBal,
+                  referralEarningsTotal: refEarnTotal,
+                  updatedAt: new Date().toISOString()
+                };
+                const tursoClient = getTursoClient();
+                if (tursoClient) {
+                  await tursoClient.execute({
+                    sql: `INSERT INTO smm_users (id, email, role, balance, data, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP;`,
+                    args: [referredBy, updatedReferrer.email || "", updatedReferrer.role || "student", updatedReferrer.balance || 0, JSON.stringify(updatedReferrer)]
+                  });
+                }
+                await setRestDoc("users", referredBy, updatedReferrer);
+              }
+            }
+          }
+        } catch (refErr) {
+          console.warn("[REFERRAL-COMMISSION-ERR]", refErr);
+        }
+
         // Update deposit status
         const updateData = {
           ...(depData || {}),

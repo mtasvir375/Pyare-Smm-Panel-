@@ -66,6 +66,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const ref = params.get("ref");
+      if (ref) {
+        localStorage.setItem("referred_by", ref);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
     // Add request interceptor to automatically inject the user's ID token in the Authorization header
     const interceptor = axios.interceptors.request.use(async (config) => {
       const currentUser = auth.currentUser;
@@ -122,6 +132,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           
           if (!profile) {
             const isAdminEmail = (firebaseUser.email || '').trim().toLowerCase() === 'mtasvir375@gmail.com';
+            const refParam = typeof window !== 'undefined' ? localStorage.getItem("referred_by") : null;
             const newProfile: any = {
                 uid: firebaseUser.uid,
                 email: firebaseUser.email || '',
@@ -130,6 +141,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 role: isAdminEmail ? 'admin' : 'student',
                 balance: 1.00, // ₹1.00 test bonus on first login
                 bonusCredited: true,
+                referredBy: (refParam && refParam !== firebaseUser.uid) ? refParam : null,
+                referralBalance: 0,
+                totalReferrals: 0,
+                referralEarningsTotal: 0,
                 createdAt: new Date()
               };
               

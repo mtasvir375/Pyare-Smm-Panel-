@@ -17,7 +17,8 @@ import {
   Gift,
   RefreshCw,
   Zap,
-  AlertCircle
+  AlertCircle,
+  Share2
 } from "lucide-react";
 
 import axios from "axios";
@@ -79,6 +80,7 @@ export default function Profile() {
   const navigate = useNavigate();
   const [isAddFundsOpen, setIsAddFundsOpen] = useState(false);
   const [isSuccessPopupOpen, setIsSuccessPopupOpen] = useState(false);
+  const [isReferralOpen, setIsReferralOpen] = useState(false);
   const [successDetails, setSuccessDetails] = useState<{ amount: number; balance: number } | null>(null);
   const [paymentStep, setPaymentStep] = useState<"amount" | "payment">("amount");
   const [amount, setAmount] = useState("");
@@ -490,7 +492,12 @@ export default function Profile() {
         }
       } 
     },
-    { icon: Shield, label: "Privacy & Security", color: "text-purple-500" },
+    { 
+      icon: Gift, 
+      label: "Refer & Earn", 
+      color: "text-pink-500", 
+      onClick: () => setIsReferralOpen(true) 
+    },
   ];
 
   if (authLoading) {
@@ -942,6 +949,107 @@ export default function Profile() {
         <LogOut className="w-5 h-5 mr-2" />
         Log Out
       </Button>
+
+      <Dialog open={isReferralOpen} onOpenChange={setIsReferralOpen}>
+        <DialogContent className="rounded-3xl max-w-md p-6 space-y-6">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold flex items-center gap-2">
+              <Gift className="w-6 h-6 text-pink-500" />
+              Refer & Earn
+            </DialogTitle>
+            <DialogDescription className="text-xs text-gray-500 leading-relaxed">
+              Share your unique referral link with friends. When they sign up and make deposits, you earn commission instantly!
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Your Referral Link</label>
+              <div className="flex items-center gap-2">
+                <Input 
+                  readOnly 
+                  value={`${window.location.origin}/?ref=${user?.uid || ''}`}
+                  className="rounded-2xl bg-gray-50 text-xs font-mono select-all h-11"
+                />
+                <Button 
+                  onClick={() => {
+                    navigator.clipboard.writeText(`${window.location.origin}/?ref=${user?.uid || ''}`);
+                    toast.success("Referral link copied to clipboard!");
+                  }}
+                  className="rounded-2xl shrink-0 h-11 px-4 bg-pink-500 hover:bg-pink-600 text-white font-bold"
+                >
+                  <Copy className="w-4 h-4 mr-1.5" />
+                  Copy
+                </Button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <Button 
+                variant="outline"
+                onClick={() => {
+                  const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(`🚀 Join Pyare SMM Panel using my referral link and get started with best social media services: ${window.location.origin}/?ref=${user?.uid || ''}`)}`;
+                  window.open(url, "_blank");
+                }}
+                className="rounded-2xl h-11 border-green-200 text-green-700 bg-green-50 hover:bg-green-100 font-bold text-xs"
+              >
+                <WhatsAppIcon className="w-4 h-4 mr-2" />
+                WhatsApp
+              </Button>
+              <Button 
+                variant="outline"
+                onClick={() => {
+                  const url = `https://t.me/share/url?url=${encodeURIComponent(`${window.location.origin}/?ref=${user?.uid || ''}`)}&text=${encodeURIComponent(`🚀 Join Pyare SMM Panel using my referral link and get started!`)}`;
+                  window.open(url, "_blank");
+                }}
+                className="rounded-2xl h-11 border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 font-bold text-xs"
+              >
+                <Share2 className="w-4 h-4 mr-2" />
+                Telegram
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3 pt-2">
+              <div className="bg-pink-50 p-3 rounded-2xl border border-pink-100 text-center">
+                <p className="text-[10px] text-pink-600 font-bold uppercase">Referrals</p>
+                <p className="text-lg font-black text-pink-700 mt-0.5">{profile?.totalReferrals || 0}</p>
+              </div>
+              <div className="bg-purple-50 p-3 rounded-2xl border border-purple-100 text-center">
+                <p className="text-[10px] text-purple-600 font-bold uppercase">Lifetime</p>
+                <p className="text-lg font-black text-purple-700 mt-0.5">₹{Number(profile?.referralEarningsTotal || 0).toFixed(2)}</p>
+              </div>
+              <div className="bg-emerald-50 p-3 rounded-2xl border border-emerald-100 text-center">
+                <p className="text-[10px] text-emerald-600 font-bold uppercase">Balance</p>
+                <p className="text-lg font-black text-emerald-700 mt-0.5">₹{Number(profile?.referralBalance || 0).toFixed(2)}</p>
+              </div>
+            </div>
+
+            <div className="pt-2">
+              <Button 
+                disabled={!profile?.referralBalance || profile?.referralBalance <= 0}
+                onClick={async () => {
+                  const amt = Number(profile?.referralBalance || 0);
+                  if (amt <= 0) return;
+                  const newBal = Number((Number(profile?.balance || 0) + amt).toFixed(2));
+                  try {
+                    await dbClient.updateUserProfile(user.uid, {
+                      balance: newBal,
+                      referralBalance: 0
+                    });
+                    refreshUserProfile();
+                    toast.success(`🎉 Successfully transferred ₹${amt} to your main wallet balance!`);
+                  } catch (e: any) {
+                    toast.error(e.message || "Failed to transfer balance");
+                  }
+                }}
+                className="w-full h-12 rounded-2xl bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 text-white font-bold shadow-md shadow-pink-500/20"
+              >
+                Transfer ₹{Number(profile?.referralBalance || 0).toFixed(2)} to Wallet
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

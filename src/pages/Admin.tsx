@@ -153,6 +153,7 @@ export default function Admin() {
   const [qrUrl, setQrUrl] = useState("");
   const [upiId, setUpiId] = useState("");
   const [merchantName, setMerchantName] = useState("");
+  const [referralCommissionPercent, setReferralCommissionPercent] = useState("10");
   const [providerApiUrl, setProviderApiUrl] = useState("");
   const [providerApiKey, setProviderApiKey] = useState("");
   const [backendApiUrl, setBackendApiUrl] = useState("");
@@ -536,6 +537,7 @@ export default function Admin() {
           setQrUrl(settingsData.paymentQrUrl || "");
           setUpiId(settingsData.upiId || "");
           setMerchantName(settingsData.merchantName || "");
+          setReferralCommissionPercent(String(settingsData.referralCommissionPercent ?? 10));
           setProviderApiUrl(settingsData.providerApiUrl || settingsData.apiUrl || settingsData.api_url || settingsData.provider_api_url || "");
           setProviderApiKey(settingsData.providerApiKey || settingsData.apiKey || settingsData.api_key || settingsData.provider_api_key || "");
           setWhatsappLink(settingsData.whatsappLink || "");
@@ -810,6 +812,7 @@ export default function Admin() {
         paymentQrUrl: base64,
         upiId: upiId.trim(),
         merchantName: merchantName.trim(),
+        referralCommissionPercent: Number(referralCommissionPercent || 10),
         providerApiUrl: cleanUrl,
         providerApiKey: cleanKey,
         backendApiUrl: cleanBackend,
@@ -3464,6 +3467,16 @@ export default function Admin() {
                         placeholder="e.g. SMM Panel Pro" 
                         value={merchantName}
                         onChange={(e) => setMerchantName(e.target.value)}
+                        className="rounded-xl h-12"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Referral Commission (%)</label>
+                      <Input 
+                        type="number"
+                        placeholder="e.g. 10" 
+                        value={referralCommissionPercent}
+                        onChange={(e) => setReferralCommissionPercent(e.target.value)}
                         className="rounded-xl h-12"
                       />
                     </div>
