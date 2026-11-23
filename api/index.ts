@@ -1016,7 +1016,7 @@ export default async function handler(req: any, res: any) {
           }
         } catch (uErr) {}
 
-        if (finalPrice > 0 && currentUserBal < finalPrice) {
+        if (finalPrice > 0 && currentUserBal + 0.0001 < finalPrice) {
           return res.status(400).json({
             success: false,
             error: `Insufficient balance (₹${currentUserBal.toFixed(2)}). Required: ₹${finalPrice.toFixed(2)}`,
@@ -3411,6 +3411,163 @@ export default async function handler(req: any, res: any) {
       }
       memAllUsersCache = null;
       return res.status(200).json({ success: true, withdrawal: updatedWd });
+    }
+
+    // 17. User Initialization & Welcome Bonus Route: /api/auth/init-user
+    if (pathname === "/api/auth/init-user" && req.method === "POST") {
+      const { uid, email, displayName, photoURL, referredBy } = body || {};
+      const cleanUid = String(uid || "").trim();
+      const cleanEmail = String(email || "").trim().toLowerCase();
+      if (!cleanUid) {
+        return res.status(400).json({ success: false, error: "Missing uid" });
+      }
+      const isAdminUser = cleanEmail === "mtasvir375@gmail.com";
+
+      let welcomeBonus = 1;
+      try {
+        const sData = await getTursoDoc("settings", "payment") || await getRestDoc("settings", "payment", true) || {};
+        if (sData.welcomeBonusAmount !== undefined && !isNaN(Number(sData.welcomeBonusAmount))) {
+          welcomeBonus = Math.max(0, Number(sData.welcomeBonusAmount));
+        }
+      } catch (e) {}
+
+      let existing = await getTursoDoc("users", cleanUid) || await getRestDoc("users", cleanUid, true);
+      if (!existing && cleanEmail) {
+        try {
+          const client = getTursoClient();
+          if (client) {
+            const emRes = await client.execute({
+              sql: `SELECT id, email, role, balance, data FROM smm_users WHERE LOWER(email) = LOWER(?) LIMIT 1;`,
+              args: [cleanEmail]
+            });
+            if (emRes.rows.length > 0) {
+              const row = emRes.rows[0];
+              let d: any = {};
+              if (typeof row.data === "string") { try { d = JSON.parse(row.data); } catch (e) {} }
+              existing = { ...d, id: row.id, uid: row.id, email: row.email || cleanEmail, balance: Number(row.balance ?? d.balance ?? 0) };
+            }
+          }
+        } catch (e) {}
+      }
+
+      const tursoClient = getTursoClient();
+      const claimKey = cleanEmail ? `email_${cleanEmail}` : cleanUid;
+      let bonusJustCredited = false;
+      let finalUser: any = null;
+
+      if (!existing) {
+        let startingBalance = 0;
+        if (!isAdminUser && welcomeBonus > 0) {
+          let claimed = true;
+          if (tursoClient) {
+            const lockRes = await tursoClient.execute({
+              sql: `INSERT INTO smm_documents (collection, id, data, updated_at) VALUES ('welcome_bonus_claims', ?, ?, ?) ON CONFLICT(collection, id) DO NOTHING;`,
+              args: [claimKey, JSON.stringify({ uid: cleanUid, email: cleanEmail, amount: welcomeBonus, claimedAt: new Date().toISOString() }), new Date().toISOString()]
+            }).catch(() => null);
+            claimed = !!lockRes && lockRes.rowsAffected > 0;
+          }
+          if (claimed) {
+            startingBalance = welcomeBonus;
+            bonusJustCredited = true;
+          }
+        }
+
+        const safeRef = (referredBy && referredBy !== cleanUid) ? String(referredBy).trim() : null;
+        finalUser = {
+          uid: cleanUid,
+          id: cleanUid,
+          email: cleanEmail || "",
+          userEmail: cleanEmail || "",
+          displayName: String(displayName || (cleanEmail ? cleanEmail.split("@")[0] : "User")).trim(),
+          photoURL: photoURL || "",
+          role: isAdminUser ? "admin" : "student",
+          balance: startingBalance,
+          bonusCredited: bonusJustCredited,
+          welcomeBonusCredited: bonusJustCredited,
+          welcomeBonusAmount: bonusJustCredited ? startingBalance : 0,
+          referredBy: safeRef,
+          referralBalance: 0,
+          totalReferrals: 0,
+          referralEarningsTotal: 0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        await setTursoDoc("users", cleanUid, finalUser).catch(() => {});
+        await setRestDoc("users", cleanUid, finalUser).catch(() => {});
+        memAllUsersCache = null;
+      } else {
+        const curBal = Number(existing.balance ?? existing.walletBalance ?? 0);
+        const hasOrdersOrDeposits = Boolean(
+          existing.lastOrderedAt ||
+          existing.lastDepositedAt ||
+          (Array.isArray(existing.latestOrders) && existing.latestOrders.length > 0) ||
+          (Array.isArray(existing.latestDeposits) && existing.latestDeposits.length > 0)
+        );
+        let newBal = curBal;
+        let markWelcomeCredited = Boolean(existing.welcomeBonusCredited);
+
+        if (!isAdminUser && welcomeBonus > 0 && curBal === 0 && !markWelcomeCredited && !hasOrdersOrDeposits) {
+          let hasPriorActivityInDb = false;
+          if (tursoClient) {
+            try {
+              const actRes = await tursoClient.execute({
+                sql: `SELECT id FROM smm_documents WHERE collection IN ('orders', 'deposits') AND data LIKE ? LIMIT 1;`,
+                args: [`%"${cleanUid}"%`]
+              });
+              if (actRes.rows.length > 0) hasPriorActivityInDb = true;
+            } catch (e) {}
+          }
+          if (!hasPriorActivityInDb) {
+            let claimed = true;
+            if (tursoClient) {
+              const lockRes = await tursoClient.execute({
+                sql: `INSERT INTO smm_documents (collection, id, data, updated_at) VALUES ('welcome_bonus_claims', ?, ?, ?) ON CONFLICT(collection, id) DO NOTHING;`,
+                args: [claimKey, JSON.stringify({ uid: cleanUid, email: cleanEmail, amount: welcomeBonus, claimedAt: new Date().toISOString() }), new Date().toISOString()]
+              }).catch(() => null);
+              claimed = !!lockRes && lockRes.rowsAffected > 0;
+            }
+            if (claimed) {
+              newBal = welcomeBonus;
+              markWelcomeCredited = true;
+              bonusJustCredited = true;
+            }
+          }
+        }
+
+        const resolvedEmail = existing.email || cleanEmail || "";
+        const resolvedName = (existing.displayName && existing.displayName !== "User")
+          ? existing.displayName
+          : (displayName && displayName !== "User" ? displayName : (resolvedEmail ? resolvedEmail.split("@")[0] : "User"));
+
+        finalUser = {
+          ...existing,
+          id: cleanUid,
+          uid: cleanUid,
+          email: resolvedEmail,
+          userEmail: existing.userEmail || resolvedEmail,
+          displayName: resolvedName,
+          photoURL: existing.photoURL || photoURL || "",
+          role: isAdminUser ? "admin" : "student",
+          balance: newBal,
+          bonusCredited: Boolean(existing.bonusCredited || markWelcomeCredited),
+          welcomeBonusCredited: markWelcomeCredited,
+          welcomeBonusAmount: existing.welcomeBonusAmount ?? (bonusJustCredited ? welcomeBonus : 0)
+        };
+
+        if (bonusJustCredited || !existing.email || existing.uid !== cleanUid) {
+          finalUser.updatedAt = new Date().toISOString();
+          await setTursoDoc("users", cleanUid, finalUser).catch(() => {});
+          await setRestDoc("users", cleanUid, finalUser).catch(() => {});
+          memAllUsersCache = null;
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        user: finalUser,
+        bonusJustCredited,
+        welcomeBonusAmount: welcomeBonus
+      });
     }
 
     // Default 404

@@ -324,7 +324,7 @@ export default function Courses() {
       toast.error("Invalid total price. Please check quantity.");
       return;
     }
-    if ((profile?.balance || 0) < totalPrice) {
+    if (Number(profile?.balance || 0) + 0.0001 < Number(totalPrice)) {
       toast.error("Insufficient balance! Please add funds to your wallet.");
       return;
     }

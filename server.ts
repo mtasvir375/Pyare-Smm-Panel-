@@ -2815,7 +2815,7 @@ export async function startServer() {
       const user = userSnap.data();
 
       const balance = Number(user.balance || 0);
-      if (balance < charge) {
+      if (balance + 0.0001 < charge) {
         return res.status(400).json({ error: "Insufficient balance. Please add funds." });
       }
 
@@ -4909,6 +4909,169 @@ export async function startServer() {
     }
   });
 
+  // User Initialization & Server-Authoritative Welcome Bonus
+  app.post("/api/auth/init-user", async (req, res) => {
+    try {
+      const { uid, email, displayName, photoURL, referredBy } = req.body || {};
+      const cleanUid = String(uid || "").trim();
+      const cleanEmail = String(email || "").trim().toLowerCase();
+      if (!cleanUid) {
+        return res.status(400).json({ success: false, error: "Missing uid" });
+      }
+      const isAdminUser = cleanEmail === "mtasvir375@gmail.com";
+
+      let welcomeBonus = 1;
+      try {
+        const sData = await getTursoDoc("settings", "payment") || serverCache.settings?.data || (await getDocSafe("settings", "payment").catch(() => null))?.data() || {};
+        if (sData.welcomeBonusAmount !== undefined && !isNaN(Number(sData.welcomeBonusAmount))) {
+          welcomeBonus = Math.max(0, Number(sData.welcomeBonusAmount));
+        }
+      } catch (e) {}
+
+      let existing = await getTursoDoc("users", cleanUid) || serverCache.users.get(cleanUid)?.data || (await getDocSafe("users", cleanUid).catch(() => null))?.data();
+      if (!existing && cleanEmail) {
+        try {
+          const client = getTursoClient();
+          if (client) {
+            const emRes = await client.execute({
+              sql: `SELECT id, email, role, balance, data FROM smm_users WHERE LOWER(email) = LOWER(?) LIMIT 1;`,
+              args: [cleanEmail]
+            });
+            if (emRes.rows.length > 0) {
+              const row: any = emRes.rows[0];
+              let d: any = {};
+              if (typeof row.data === "string") { try { d = JSON.parse(row.data); } catch (e) {} }
+              existing = { ...d, id: row.id, uid: row.id, email: row.email || cleanEmail, balance: Number(row.balance ?? d.balance ?? 0) };
+            }
+          }
+        } catch (e) {}
+      }
+
+      const tursoClient = getTursoClient();
+      const claimKey = cleanEmail ? `email_${cleanEmail}` : cleanUid;
+      let bonusJustCredited = false;
+      let finalUser: any = null;
+
+      if (!existing) {
+        let startingBalance = 0;
+        if (!isAdminUser && welcomeBonus > 0) {
+          let claimed = true;
+          if (tursoClient) {
+            const lockRes = await tursoClient.execute({
+              sql: `INSERT INTO smm_documents (collection, id, data, updated_at) VALUES ('welcome_bonus_claims', ?, ?, ?) ON CONFLICT(collection, id) DO NOTHING;`,
+              args: [claimKey, JSON.stringify({ uid: cleanUid, email: cleanEmail, amount: welcomeBonus, claimedAt: new Date().toISOString() }), new Date().toISOString()]
+            }).catch(() => null);
+            claimed = !!lockRes && lockRes.rowsAffected > 0;
+          }
+          if (claimed) {
+            startingBalance = welcomeBonus;
+            bonusJustCredited = true;
+          }
+        }
+
+        const safeRef = (referredBy && referredBy !== cleanUid) ? String(referredBy).trim() : null;
+        finalUser = {
+          uid: cleanUid,
+          id: cleanUid,
+          email: cleanEmail || "",
+          userEmail: cleanEmail || "",
+          displayName: String(displayName || (cleanEmail ? cleanEmail.split("@")[0] : "User")).trim(),
+          photoURL: photoURL || "",
+          role: isAdminUser ? "admin" : "student",
+          balance: startingBalance,
+          bonusCredited: bonusJustCredited,
+          welcomeBonusCredited: bonusJustCredited,
+          welcomeBonusAmount: bonusJustCredited ? startingBalance : 0,
+          referredBy: safeRef,
+          referralBalance: 0,
+          totalReferrals: 0,
+          referralEarningsTotal: 0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        await setTursoDoc("users", cleanUid, finalUser).catch(() => {});
+        await setDocSafe("users", cleanUid, finalUser).catch(() => {});
+        serverCache.users.set(cleanUid, { data: finalUser, time: Date.now() });
+        savePersistentCache();
+      } else {
+        const curBal = Number(existing.balance ?? existing.walletBalance ?? 0);
+        const hasOrdersOrDeposits = Boolean(
+          existing.lastOrderedAt ||
+          existing.lastDepositedAt ||
+          (Array.isArray(existing.latestOrders) && existing.latestOrders.length > 0) ||
+          (Array.isArray(existing.latestDeposits) && existing.latestDeposits.length > 0)
+        );
+        let newBal = curBal;
+        let markWelcomeCredited = Boolean(existing.welcomeBonusCredited);
+
+        if (!isAdminUser && welcomeBonus > 0 && curBal === 0 && !markWelcomeCredited && !hasOrdersOrDeposits) {
+          let hasPriorActivityInDb = false;
+          if (tursoClient) {
+            try {
+              const actRes = await tursoClient.execute({
+                sql: `SELECT id FROM smm_documents WHERE collection IN ('orders', 'deposits') AND data LIKE ? LIMIT 1;`,
+                args: [`%"${cleanUid}"%`]
+              });
+              if (actRes.rows.length > 0) hasPriorActivityInDb = true;
+            } catch (e) {}
+          }
+          if (!hasPriorActivityInDb) {
+            let claimed = true;
+            if (tursoClient) {
+              const lockRes = await tursoClient.execute({
+                sql: `INSERT INTO smm_documents (collection, id, data, updated_at) VALUES ('welcome_bonus_claims', ?, ?, ?) ON CONFLICT(collection, id) DO NOTHING;`,
+                args: [claimKey, JSON.stringify({ uid: cleanUid, email: cleanEmail, amount: welcomeBonus, claimedAt: new Date().toISOString() }), new Date().toISOString()]
+              }).catch(() => null);
+              claimed = !!lockRes && lockRes.rowsAffected > 0;
+            }
+            if (claimed) {
+              newBal = welcomeBonus;
+              markWelcomeCredited = true;
+              bonusJustCredited = true;
+            }
+          }
+        }
+
+        const resolvedEmail = existing.email || cleanEmail || "";
+        const resolvedName = (existing.displayName && existing.displayName !== "User")
+          ? existing.displayName
+          : (displayName && displayName !== "User" ? displayName : (resolvedEmail ? resolvedEmail.split("@")[0] : "User"));
+
+        finalUser = {
+          ...existing,
+          id: cleanUid,
+          uid: cleanUid,
+          email: resolvedEmail,
+          userEmail: existing.userEmail || resolvedEmail,
+          displayName: resolvedName,
+          photoURL: existing.photoURL || photoURL || "",
+          role: isAdminUser ? "admin" : "student",
+          balance: newBal,
+          bonusCredited: Boolean(existing.bonusCredited || markWelcomeCredited),
+          welcomeBonusCredited: markWelcomeCredited,
+          welcomeBonusAmount: existing.welcomeBonusAmount ?? (bonusJustCredited ? welcomeBonus : 0)
+        };
+
+        if (bonusJustCredited || !existing.email || existing.uid !== cleanUid) {
+          finalUser.updatedAt = new Date().toISOString();
+          await setTursoDoc("users", cleanUid, finalUser).catch(() => {});
+          await setDocSafe("users", cleanUid, finalUser).catch(() => {});
+          serverCache.users.set(cleanUid, { data: finalUser, time: Date.now() });
+          savePersistentCache();
+        }
+      }
+
+      return res.json({
+        success: true,
+        user: finalUser,
+        bonusJustCredited,
+        welcomeBonusAmount: welcomeBonus
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   app.post("/api/admin/restore-all-balances", async (req, res) => {
     try {
       if (!isAuthorizedAdmin(req)) {
@@ -6985,7 +7148,7 @@ export async function startServer() {
 
       // ATOMIC BALANCE VERIFICATION & DIRECT DEDUCTION IN FIREBASE BEFORE PROVIDER TRANSMISSION
       if (!isAlreadyDeducted && orderAmount > 0) {
-        if (liveBalance < orderAmount) {
+        if (liveBalance + 0.0001 < orderAmount) {
           console.log(`[ORDER-REJECT-BALANCE] User ${userId} has insufficient live balance in Firebase: ₹${liveBalance} < required ₹${orderAmount}`);
           const lowBalErr: any = new Error(`Insufficient balance! Your wallet balance is ₹${liveBalance.toFixed(2)}, but this order requires ₹${orderAmount.toFixed(2)}. Please recharge your wallet.`);
           lowBalErr.currentBalance = liveBalance;

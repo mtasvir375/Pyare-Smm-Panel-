@@ -116,8 +116,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } catch (e) {}
 
         try {
-          // Fetch authoritative user profile from backend/database
-          let profile = await dbClient.getUserProfile(firebaseUser.uid);
+          const isAdminEmail = (firebaseUser.email || '').trim().toLowerCase() === 'mtasvir375@gmail.com';
+          const refParam = typeof window !== 'undefined' ? localStorage.getItem("referred_by") : null;
+          let profile: any = null;
+
+          // Authoritative server-side init (creates user if new + safely credits configured welcome bonus in DB)
+          try {
+            const initRes = await axios.post(formatApiUrl('/api/auth/init-user'), {
+              uid: firebaseUser.uid,
+              email: firebaseUser.email || '',
+              displayName: firebaseUser.displayName || 'User',
+              photoURL: firebaseUser.photoURL || '',
+              referredBy: (refParam && refParam !== firebaseUser.uid) ? refParam : null
+            }, { timeout: 10000 });
+
+            if (initRes.data?.success && initRes.data.user) {
+              profile = initRes.data.user;
+              if (profile.referredBy) {
+                axios.post(formatApiUrl('/api/referral/register'), {
+                  userId: firebaseUser.uid,
+                  userEmail: firebaseUser.email || '',
+                  referrerId: profile.referredBy
+                }).catch(() => {});
+              }
+              if (initRes.data.bonusJustCredited) {
+                const creditedAmt = Number(initRes.data.welcomeBonusAmount ?? profile.balance ?? 1);
+                toast.success(`🎉 स्वागत है! पहले लॉगिन पर ₹${creditedAmt} का वेलकम बोनस मिला है।`);
+              }
+            }
+          } catch (initErr) {
+            console.warn("[AUTH-INIT-FALLBACK]", initErr);
+          }
+
+          if (!profile) {
+            // Fallback: Fetch authoritative user profile from backend/database
+            profile = await dbClient.getUserProfile(firebaseUser.uid);
+          }
 
           // Fallback: If not found by uid, check if user exists by email in Turso database!
           if (!profile && firebaseUser.email) {
@@ -130,43 +164,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               }
             } catch (emErr) {}
           }
-          
+
           if (!profile) {
-            const isAdminEmail = (firebaseUser.email || '').trim().toLowerCase() === 'mtasvir375@gmail.com';
-            const refParam = typeof window !== 'undefined' ? localStorage.getItem("referred_by") : null;
             const newProfile: any = {
-                uid: firebaseUser.uid,
-                email: firebaseUser.email || '',
-                displayName: firebaseUser.displayName || 'User',
-                photoURL: firebaseUser.photoURL || '',
-                role: isAdminEmail ? 'admin' : 'student',
-                balance: 1.00, // ₹1.00 test bonus on first login
-                bonusCredited: true,
-                referredBy: (refParam && refParam !== firebaseUser.uid) ? refParam : null,
-                referralBalance: 0,
-                totalReferrals: 0,
-                referralEarningsTotal: 0,
-                createdAt: new Date()
-              };
-              
-              try {
-                await dbClient.createUserProfile(firebaseUser.uid, newProfile);
-                if (newProfile.referredBy) {
-                  axios.post(formatApiUrl('/api/referral/register'), {
-                    userId: firebaseUser.uid,
-                    userEmail: firebaseUser.email || '',
-                    referrerId: newProfile.referredBy
-                  }).catch(() => {});
-                }
-                profile = { ...newProfile, createdAt: new Date() };
-                toast.success("🎉 स्वागत है! पहले लॉगिन पर ₹1 का टेस्ट बोनस मिला है।");
-              } catch (createErr) {
-                profile = { ...newProfile, createdAt: new Date() };
-              }
-            }
+              uid: firebaseUser.uid,
+              email: firebaseUser.email || '',
+              displayName: firebaseUser.displayName || 'User',
+              photoURL: firebaseUser.photoURL || '',
+              role: isAdminEmail ? 'admin' : 'student',
+              balance: 0,
+              referredBy: (refParam && refParam !== firebaseUser.uid) ? refParam : null,
+              referralBalance: 0,
+              totalReferrals: 0,
+              referralEarningsTotal: 0,
+              createdAt: new Date()
+            };
+            await dbClient.createUserProfile(firebaseUser.uid, newProfile).catch(() => {});
+            profile = newProfile;
+          }
 
           if (profile) {
-            const isAdminEmail = firebaseUser.email === 'mtasvir375@gmail.com';
             if (isAdminEmail) {
               profile.role = 'admin';
             } else {
@@ -176,13 +193,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Clean up any stale legacy test balance from previous development (except real admin balance)
             if (profile.balance === 17702.85 || profile.balance === 16751.25) {
               profile.balance = 2.90;
-            }
-
-            // First time login bonus for existing zero-balance users who haven't received bonus yet
-            if ((profile.balance === 0 || profile.balance === undefined) && !profile.bonusCredited && !isAdminEmail) {
-              profile.balance = 1.00;
-              profile.bonusCredited = true;
-              dbClient.updateUserProfile(firebaseUser.uid, { balance: 1.00, bonusCredited: true }).catch(() => {});
             }
 
             // Ensure email is always linked in profile if available from Firebase Auth
