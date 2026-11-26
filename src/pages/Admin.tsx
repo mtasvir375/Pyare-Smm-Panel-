@@ -2537,7 +2537,17 @@ export default function Admin() {
                             )}>
                               {order.status}
                             </Badge>
-                            <p className="text-sm font-bold text-primary">₹{Number(order.totalPrice || order.total_price || 0).toFixed(2)}</p>
+                            <p className="text-sm font-bold text-primary">
+                              ₹{(() => {
+                                const stLower = String(order.status || "").toLowerCase();
+                                const rawPrice = Number(order.totalPrice || order.total_price || 0);
+                                if (["canceled", "cancelled", "refunded"].includes(stLower)) return "0.00";
+                                if (stLower === "partial" && Number(order.refundedAmount || 0) > 0) {
+                                  return Math.max(0, rawPrice - Number(order.refundedAmount)).toFixed(2);
+                                }
+                                return rawPrice.toFixed(2);
+                              })()}
+                            </p>
                           </div>
                         </div>
 
@@ -5459,7 +5469,13 @@ export default function Admin() {
 
               return filtered.map((ord: any, idx: number) => {
                 const orderId = String(ord.id || ord.orderId || `ORD-${idx + 1}`);
-                const amount = Number(ord.totalPrice || ord.charge || ord.amount || 0);
+                const rawAmount = Number(ord.totalPrice || ord.charge || ord.amount || 0);
+                const ordStLower = String(ord.status || "").toLowerCase();
+                const amount = ["canceled", "cancelled", "refunded"].includes(ordStLower)
+                  ? 0
+                  : ordStLower === "partial" && Number(ord.refundedAmount || 0) > 0
+                  ? Math.max(0, Number((rawAmount - Number(ord.refundedAmount)).toFixed(2)))
+                  : rawAmount;
                 const targetLink = String(ord.targetLink || ord.link || ord.target_link || "").trim();
                 const createdAtStr = ord.createdAt || ord.created_at || ord.updatedAt || ord.date;
                 let formattedDate = "N/A";

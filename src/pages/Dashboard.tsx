@@ -255,11 +255,14 @@ export default function Dashboard() {
               } catch (storageErr) {}
             });
 
-            // Auto-sync live provider statuses for any non-terminal orders
+            // Auto-sync live provider statuses for active or recent unrefunded canceled/refunded orders
+            const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
             const hasActive = freshParsed.some((o: any) => {
               const st = (o.status || "").toLowerCase();
               const pId = String(o.providerOrderId || o.provider_order_id || "").trim();
-              return pId && !["pending", "n/a", "success"].includes(pId.toLowerCase()) && !["completed", "complete", "canceled", "cancelled", "refunded", "partial", "failed"].includes(st);
+              const needsStatusSync = pId && !["pending", "n/a", "success", "sent_no_id"].includes(pId.toLowerCase()) && !["completed", "complete", "canceled", "cancelled", "refunded", "partial", "failed"].includes(st);
+              const needsRefundSync = ["canceled", "cancelled", "refunded", "partial"].includes(st) && !o.balanceRefunded && Number(o.totalPrice || o.total_price || 0) > 0 && getTimestampMs(o.createdAt || o.created_at) > thirtyDaysAgo;
+              return needsStatusSync || needsRefundSync;
             });
             if (hasActive) {
               checkOrdersStatus(false, freshParsed);
@@ -308,15 +311,21 @@ export default function Dashboard() {
       return;
     }
 
+    const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
     const ordersToProcess = sourceList
       .filter((order: any) => {
         const currentStatus = (order?.status || "").toLowerCase();
         const pOrderId = String(order?.providerOrderId || order?.provider_order_id || "").trim();
-        return (
+        const needsStatusSync =
           pOrderId &&
           !["pending", "n/a", "success", "sent_no_id"].includes(pOrderId.toLowerCase()) &&
-          !["completed", "complete", "canceled", "cancelled", "refunded", "partial", "failed"].includes(currentStatus)
-        );
+          !["completed", "complete", "canceled", "cancelled", "refunded", "partial", "failed"].includes(currentStatus);
+        const needsRefundSync =
+          ["canceled", "cancelled", "refunded", "partial"].includes(currentStatus) &&
+          !order?.balanceRefunded &&
+          Number(order?.totalPrice || order?.total_price || 0) > 0 &&
+          getTimestampMs(order?.createdAt || order?.created_at) > thirtyDaysAgo;
+        return needsStatusSync || needsRefundSync;
       })
       .slice(0, 15);
 
@@ -665,7 +674,17 @@ export default function Dashboard() {
                   </div>
                   <div className="space-y-1 text-center">
                     <p className="text-gray-400 uppercase font-bold">Order Details</p>
-                    <p className="font-medium">Qty: {order.quantity} | ₹{order.totalPrice || order.total_price}</p>
+                    <p className="font-medium">
+                      Qty: {order.quantity} | ₹{(() => {
+                        const stLower = String(order.status || "").toLowerCase();
+                        const rawPrice = Number(order.totalPrice || order.total_price || 0);
+                        if (["canceled", "cancelled", "refunded"].includes(stLower)) return 0;
+                        if (stLower === "partial" && Number(order.refundedAmount || 0) > 0) {
+                          return Math.max(0, Number((rawPrice - Number(order.refundedAmount)).toFixed(2)));
+                        }
+                        return rawPrice;
+                      })()}
+                    </p>
                   </div>
                   <div className="space-y-1 text-right">
                     <p className="text-gray-400 uppercase font-bold">Date & Time</p>
