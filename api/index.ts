@@ -793,6 +793,21 @@ async function loadOrderRecord(orderId: string): Promise<any | null> {
   return order;
 }
 
+const userWalletLockMap = new Map<string, Promise<any>>();
+function withUserWalletLock<T>(uid: string, fn: () => Promise<T>): Promise<T> {
+  const key = String(uid || "").trim();
+  if (!key) return fn();
+  const prev = userWalletLockMap.get(key) || Promise.resolve();
+  const next = prev.catch(() => {}).then(fn);
+  const tracked = next.finally(() => {
+    if (userWalletLockMap.get(key) === tracked) {
+      userWalletLockMap.delete(key);
+    }
+  });
+  userWalletLockMap.set(key, tracked);
+  return next;
+}
+
 async function persistSyncedOrderStatus(order: any, nextStatus: string, meta?: { remains?: any; start_count?: any }) {
   const orderId = String(order.id);
   const nowIso = new Date().toISOString();
@@ -819,22 +834,55 @@ async function persistSyncedOrderStatus(order: any, nextStatus: string, meta?: {
 
   const uid = String(order.userId || order.user_id || "").trim();
   if (uid) {
-    try {
-      const uDoc = await getTursoDoc("users", uid) || await getRestDoc("users", uid);
-      if (uDoc && Array.isArray(uDoc.latestOrders)) {
-        let changedUser = false;
-        const updatedLatest = uDoc.latestOrders.map((lo: any) => {
-          if (lo && (String(lo.id) === orderId || (order.providerOrderId && String(lo.providerOrderId) === String(order.providerOrderId)))) {
-            changedUser = true;
-            return { ...lo, status: nextStatus, providerStatus: nextStatus, updatedAt: nowIso };
+    await withUserWalletLock(uid, async () => {
+      try {
+        if (client) {
+          const uRes = await client.execute({ sql: `SELECT balance, email, role, data FROM smm_users WHERE id = ? LIMIT 1;`, args: [uid] });
+          if (uRes.rows.length > 0) {
+            const row = uRes.rows[0];
+            let parsed: any = {};
+            if (typeof row.data === "string") { try { parsed = JSON.parse(row.data); } catch (e) {} }
+            if (Array.isArray(parsed.latestOrders)) {
+              let changed = false;
+              const updatedLatest = parsed.latestOrders.map((lo: any) => {
+                if (lo && (String(lo.id) === orderId || (order.providerOrderId && String(lo.providerOrderId) === String(order.providerOrderId)))) {
+                  changed = true;
+                  return { ...lo, status: nextStatus, providerStatus: nextStatus, updatedAt: nowIso };
+                }
+                return lo;
+              });
+              if (changed) {
+                const liveBal = Number(row.balance !== undefined ? row.balance : (parsed.balance || 0));
+                const nextJson = JSON.stringify({ ...parsed, balance: liveBal, latestOrders: updatedLatest, updatedAt: nowIso });
+                await client.execute({
+                  sql: `UPDATE smm_users SET data = ?, updated_at = ? WHERE id = ?;`,
+                  args: [nextJson, nowIso, uid]
+                }).catch(() => {});
+                await client.execute({
+                  sql: `INSERT INTO smm_documents (collection, id, data, updated_at) VALUES ('users', ?, ?, ?) ON CONFLICT(collection, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at;`,
+                  args: [uid, nextJson, nowIso]
+                }).catch(() => {});
+              }
+            }
+            return;
           }
-          return lo;
-        });
-        if (changedUser) {
-          await setTursoDoc("users", uid, { ...uDoc, latestOrders: updatedLatest, updatedAt: nowIso }).catch(() => {});
         }
-      }
-    } catch (e) {}
+        const uDoc = await getTursoDoc("users", uid) || await getRestDoc("users", uid);
+        if (uDoc && Array.isArray(uDoc.latestOrders)) {
+          let changedUser = false;
+          const updatedLatest = uDoc.latestOrders.map((lo: any) => {
+            if (lo && (String(lo.id) === orderId || (order.providerOrderId && String(lo.providerOrderId) === String(order.providerOrderId)))) {
+              changedUser = true;
+              return { ...lo, status: nextStatus, providerStatus: nextStatus, updatedAt: nowIso };
+            }
+            return lo;
+          });
+          if (changedUser) {
+            await setTursoDoc("users", uid, { latestOrders: updatedLatest, updatedAt: nowIso }).catch(() => {});
+          }
+        }
+      } catch (e) {}
+    });
   }
 
   return updatedOrder;
@@ -873,76 +921,128 @@ async function refundOrderIfEligible(
 
   if (refundAmt <= 0) return { refunded: false, amount: 0 };
 
-  const nowIso = new Date().toISOString();
-  const client = getTursoClient();
+  return await withUserWalletLock(uid, async () => {
+    if (memOrderRefundLocks.has(orderId)) {
+      return { refunded: false, amount: 0 };
+    }
 
-  if (client) {
-    try {
-      const lockRes = await client.execute({
-        sql: `INSERT INTO smm_documents (collection, id, data, updated_at)
-              VALUES ('order_refunds', ?, ?, ?)
-              ON CONFLICT(collection, id) DO NOTHING;`,
-        args: [
-          orderId,
-          JSON.stringify({ orderId, userId: uid, amount: refundAmt, reason: nextStatus, refundedAt: nowIso }),
-          nowIso
-        ]
-      });
-      if (!lockRes || lockRes.rowsAffected === 0) {
-        memOrderRefundLocks.add(orderId);
-        return { refunded: false, amount: 0 };
+    const nowIso = new Date().toISOString();
+    const client = getTursoClient();
+
+    if (client) {
+      try {
+        const lockRes = await client.execute({
+          sql: `INSERT INTO smm_documents (collection, id, data, updated_at)
+                VALUES ('order_refunds', ?, ?, ?)
+                ON CONFLICT(collection, id) DO NOTHING;`,
+          args: [
+            orderId,
+            JSON.stringify({ orderId, userId: uid, amount: refundAmt, reason: nextStatus, refundedAt: nowIso }),
+            nowIso
+          ]
+        });
+        if (!lockRes || lockRes.rowsAffected === 0) {
+          memOrderRefundLocks.add(orderId);
+          return { refunded: false, amount: 0 };
+        }
+      } catch (e) {}
+    }
+
+    memOrderRefundLocks.add(orderId);
+
+    let newBal: number | undefined = undefined;
+
+    if (client) {
+      // Atomic database-level increment prevents any lost update across concurrent requests
+      const updRes = await client.execute({
+        sql: `UPDATE smm_users SET balance = ROUND(COALESCE(balance, 0) + ?, 2), updated_at = ? WHERE id = ?;`,
+        args: [refundAmt, nowIso, uid]
+      }).catch(() => null);
+
+      const uRes = await client.execute({
+        sql: `SELECT balance, email, role, data FROM smm_users WHERE id = ? LIMIT 1;`,
+        args: [uid]
+      }).catch(() => null);
+
+      if (uRes && uRes.rows.length > 0 && updRes && updRes.rowsAffected > 0) {
+        const row = uRes.rows[0];
+        newBal = Number(row.balance || 0);
+        let parsed: any = {};
+        if (typeof row.data === "string") { try { parsed = JSON.parse(row.data); } catch (e) {} }
+        const updatedLatest = Array.isArray(parsed.latestOrders)
+          ? parsed.latestOrders.map((lo: any) =>
+              lo && (String(lo.id) === orderId || (order.providerOrderId && String(lo.providerOrderId) === String(order.providerOrderId)))
+                ? { ...lo, status: normalizeProviderStatus(nextStatus) || nextStatus, balanceRefunded: true, refundedAmount: refundAmt, updatedAt: nowIso }
+                : lo
+            )
+          : parsed.latestOrders;
+        const nextUserObj = {
+          ...parsed,
+          id: uid,
+          uid,
+          balance: newBal,
+          ...(Array.isArray(updatedLatest) ? { latestOrders: updatedLatest } : {}),
+          updatedAt: nowIso
+        };
+        const nextJson = JSON.stringify(nextUserObj);
+        await client.execute({
+          sql: `UPDATE smm_users SET data = ?, updated_at = ? WHERE id = ?;`,
+          args: [nextJson, nowIso, uid]
+        }).catch(() => {});
+        await client.execute({
+          sql: `INSERT INTO smm_documents (collection, id, data, updated_at) VALUES ('users', ?, ?, ?) ON CONFLICT(collection, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at;`,
+          args: [uid, nextJson, nowIso]
+        }).catch(() => {});
+        setLocalDoc("users", uid, nextUserObj);
       }
-    } catch (e) {}
-  }
+    }
 
-  memOrderRefundLocks.add(orderId);
+    if (newBal === undefined) {
+      const uDoc = await getTursoDoc("users", uid) || await getRestDoc("users", uid);
+      const currentBal = Number(uDoc?.balance ?? 0);
+      newBal = Number((currentBal + refundAmt).toFixed(2));
+      const updatedLatest = Array.isArray(uDoc?.latestOrders)
+        ? uDoc.latestOrders.map((lo: any) =>
+            lo && (String(lo.id) === orderId || (order.providerOrderId && String(lo.providerOrderId) === String(order.providerOrderId)))
+              ? { ...lo, status: normalizeProviderStatus(nextStatus) || nextStatus, balanceRefunded: true, refundedAmount: refundAmt, updatedAt: nowIso }
+              : lo
+          )
+        : uDoc?.latestOrders;
+      const updatedUser = {
+        ...(uDoc || {}),
+        id: uid,
+        uid,
+        balance: newBal,
+        ...(Array.isArray(updatedLatest) ? { latestOrders: updatedLatest } : {}),
+        updatedAt: nowIso
+      };
+      await setTursoDoc("users", uid, updatedUser).catch(() => {});
+      await setRestDoc("users", uid, updatedUser).catch(() => {});
+    }
 
-  let uDoc = await getTursoDoc("users", uid) || await getRestDoc("users", uid);
-  const currentBal = Number(uDoc?.balance ?? 0);
-  const newBal = Number((currentBal + refundAmt).toFixed(2));
+    memAllUsersCache = null;
 
-  const updatedOrder = {
-    ...order,
-    status: normalizeProviderStatus(nextStatus) || nextStatus,
-    balanceRefunded: true,
-    refundedAmount: refundAmt,
-    refundedAt: nowIso,
-    updatedAt: nowIso
-  };
-
-  setLocalDoc("orders", orderId, updatedOrder);
-  await setTursoDoc("orders", orderId, updatedOrder).catch(() => {});
-
-  if (client) {
-    await client.execute({
-      sql: `UPDATE smm_orders SET status = ?, data = ? WHERE id = ?;`,
-      args: [updatedOrder.status, JSON.stringify(updatedOrder), orderId]
-    }).catch(() => {});
-  }
-
-  if (uDoc) {
-    const updatedLatest = Array.isArray(uDoc.latestOrders)
-      ? uDoc.latestOrders.map((lo: any) =>
-          lo && (String(lo.id) === orderId || (order.providerOrderId && String(lo.providerOrderId) === String(order.providerOrderId)))
-            ? { ...lo, status: updatedOrder.status, balanceRefunded: true, refundedAmount: refundAmt, updatedAt: nowIso }
-            : lo
-        )
-      : uDoc.latestOrders;
-
-    const updatedUser = {
-      ...uDoc,
-      id: uid,
-      uid,
-      balance: newBal,
-      ...(Array.isArray(updatedLatest) ? { latestOrders: updatedLatest } : {}),
+    const updatedOrder = {
+      ...order,
+      status: normalizeProviderStatus(nextStatus) || nextStatus,
+      balanceRefunded: true,
+      refundedAmount: refundAmt,
+      refundedAt: nowIso,
       updatedAt: nowIso
     };
-    await setTursoDoc("users", uid, updatedUser).catch(() => {});
-    await setRestDoc("users", uid, updatedUser).catch(() => {});
-    memAllUsersCache = null;
-  }
 
-  return { refunded: true, amount: refundAmt, newBalance: newBal, order: updatedOrder };
+    setLocalDoc("orders", orderId, updatedOrder);
+    await setTursoDoc("orders", orderId, updatedOrder).catch(() => {});
+
+    if (client) {
+      await client.execute({
+        sql: `UPDATE smm_orders SET status = ?, data = ? WHERE id = ?;`,
+        args: [updatedOrder.status, JSON.stringify(updatedOrder), orderId]
+      }).catch(() => {});
+    }
+
+    return { refunded: true, amount: refundAmt, newBalance: newBal, order: updatedOrder };
+  });
 }
 
 async function syncSingleOrderStatus(orderOrId: string | any): Promise<{ success: boolean; status: string; updated: boolean; upToDate?: boolean; refundedAmount?: number; newBalance?: number; order?: any; error?: string }> {
@@ -3658,11 +3758,14 @@ export default async function handler(req: any, res: any) {
       const refundedOrders: Record<string, number> = {};
       let updatedCount = 0;
       let refundedTotal = 0;
+      let latestNewBalance: number | undefined = undefined;
+      let syncedUid = "";
 
       results.forEach((resItem, idx) => {
         if (resItem.status === "fulfilled" && resItem.value?.status) {
           const rawItem = itemsToSync[idx];
           const id = typeof rawItem === "string" ? rawItem : String(rawItem?.id || "");
+          if (resItem.value.order?.userId) syncedUid = String(resItem.value.order.userId);
           if (id) {
             updates[id] = resItem.value.status;
             if (resItem.value.refundedAmount && resItem.value.refundedAmount > 0) {
@@ -3676,7 +3779,21 @@ export default async function handler(req: any, res: any) {
         }
       });
 
-      return res.status(200).json({ success: true, updates, updatedCount, refundedTotal, refundedOrders });
+      if (refundedTotal > 0 && syncedUid) {
+        const freshUser = await getTursoDoc("users", syncedUid);
+        if (freshUser && freshUser.balance !== undefined) {
+          latestNewBalance = Number(freshUser.balance);
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        updates,
+        updatedCount,
+        refundedTotal,
+        refundedOrders,
+        ...(latestNewBalance !== undefined ? { newBalance: latestNewBalance } : {})
+      });
     }
 
     // 18.2 Admin / Server Order Refund: /api/orders/refund

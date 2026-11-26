@@ -15,7 +15,7 @@ import axios from "axios";
 import { toast } from "sonner";
 
 export default function Dashboard() {
-  const { user, userProfile, loading: authLoading, refreshUserProfile } = useAuth();
+  const { user, userProfile, loading: authLoading, refreshUserProfile, updateUserProfileLocal } = useAuth();
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [checkingStatus, setCheckingStatus] = useState(false);
@@ -343,6 +343,7 @@ export default function Dashboard() {
       const refundedOrders: Record<string, number> = {};
       let refundedTotal = 0;
 
+      let syncedNewBalance: number | undefined = undefined;
       try {
         const batchRes = await axios.post(
           formatApiUrl("/api/sync-orders"),
@@ -357,27 +358,31 @@ export default function Dashboard() {
           if (Number(batchRes.data.refundedTotal || 0) > 0) {
             refundedTotal = Number(batchRes.data.refundedTotal);
           }
+          if (batchRes.data.newBalance !== undefined) {
+            syncedNewBalance = Number(batchRes.data.newBalance);
+          }
         }
       } catch (batchErr) {
-        // Fallback to single order sync calls if batch endpoint unavailable
-        await Promise.allSettled(
-          ordersToProcess.map(async (order: any) => {
-            try {
-              const res = await axios.post(
-                formatApiUrl("/api/sync-order-status"),
-                { orderId: order.id },
-                { timeout: 10000 }
-              );
-              if (res.data?.success && res.data?.status) {
-                updates[order.id] = res.data.status;
-                if (Number(res.data.refundedAmount || 0) > 0) {
-                  refundedOrders[order.id] = Number(res.data.refundedAmount);
-                  refundedTotal = Number((refundedTotal + Number(res.data.refundedAmount)).toFixed(2));
-                }
+        // Fallback to single order sync calls sequentially if batch endpoint unavailable
+        for (const order of ordersToProcess) {
+          try {
+            const res = await axios.post(
+              formatApiUrl("/api/sync-order-status"),
+              { orderId: order.id },
+              { timeout: 10000 }
+            );
+            if (res.data?.success && res.data?.status) {
+              updates[order.id] = res.data.status;
+              if (Number(res.data.refundedAmount || 0) > 0) {
+                refundedOrders[order.id] = Number(res.data.refundedAmount);
+                refundedTotal = Number((refundedTotal + Number(res.data.refundedAmount)).toFixed(2));
               }
-            } catch (e) {}
-          })
-        );
+              if (res.data.newBalance !== undefined) {
+                syncedNewBalance = Number(res.data.newBalance);
+              }
+            }
+          } catch (e) {}
+        }
       }
 
       if (Object.keys(updates).length > 0) {
@@ -398,6 +403,9 @@ export default function Dashboard() {
         });
 
         if (refundedTotal > 0) {
+          if (syncedNewBalance !== undefined && updateUserProfileLocal) {
+            updateUserProfileLocal({ balance: syncedNewBalance });
+          }
           refreshUserProfile().catch(() => {});
           toast.success(`Order canceled/partial — ₹${refundedTotal.toFixed(2)} aapke wallet me wapas aa gaya!`);
         }

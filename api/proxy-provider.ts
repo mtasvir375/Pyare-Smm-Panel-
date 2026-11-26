@@ -270,15 +270,25 @@ export default async function handler(req: any, res: any) {
         updatedAt: new Date().toISOString()
       };
 
-      // Update Turso database: deduct balance & record order
+      // Update Turso database: atomically deduct balance & record order
       try {
         const client = getTurso();
         if (client) {
-          if (finalUserId) {
+          if (finalUserId && finalPrice > 0) {
             await client.execute({
-              sql: `UPDATE smm_users SET balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;`,
-              args: [newBal, finalUserId]
+              sql: `UPDATE smm_users SET balance = MAX(0, ROUND(COALESCE(balance, 0) - ?, 2)), updated_at = CURRENT_TIMESTAMP WHERE id = ?;`,
+              args: [finalPrice, finalUserId]
             });
+            const balCheck = await client.execute({
+              sql: `SELECT balance, data FROM smm_users WHERE id = ? LIMIT 1;`,
+              args: [finalUserId]
+            }).catch(() => null);
+            if (balCheck && balCheck.rows.length > 0) {
+              newBal = Number(balCheck.rows[0].balance ?? newBal);
+              try {
+                existingUserDoc = typeof balCheck.rows[0].data === "string" ? JSON.parse(balCheck.rows[0].data) : (balCheck.rows[0].data || existingUserDoc);
+              } catch (e) {}
+            }
           }
 
           // Save into smm_documents for users and orders

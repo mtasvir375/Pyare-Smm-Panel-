@@ -992,74 +992,125 @@ export async function startServer() {
     return runQueryREST(payload);
   };
 
+  const serverUserWalletLockMap = new Map<string, Promise<any>>();
+  const withUserWalletLockServer = <T>(uid: string, fn: () => Promise<T>): Promise<T> => {
+    const key = String(uid || "").trim();
+    if (!key) return fn();
+    const prev = serverUserWalletLockMap.get(key) || Promise.resolve();
+    const next = prev.catch(() => {}).then(fn);
+    const tracked = next.finally(() => {
+      if (serverUserWalletLockMap.get(key) === tracked) {
+        serverUserWalletLockMap.delete(key);
+      }
+    });
+    serverUserWalletLockMap.set(key, tracked);
+    return next;
+  };
+
   const adjustUserBalanceSafe = async (user_id: string, change: number, token?: string) => {
-    console.log(`[BALANCE-SAFE] Adjusting balance for ${user_id} by ${change}`);
-    
-    // 1. Determine current balance accurately
-    let currentBalance = 0;
-    let existingUserData: any = null;
+    return withUserWalletLockServer(user_id, async () => {
+      console.log(`[BALANCE-SAFE] Adjusting balance for ${user_id} by ${change}`);
 
-    // 1a. Query authoritative fresh user document from Turso Database first
-    try {
-      const tursoUser = await getTursoDoc("users", user_id);
-      if (tursoUser && Object.keys(tursoUser).length > 0) {
-        existingUserData = tursoUser;
-        currentBalance = Number(existingUserData.balance ?? existingUserData.walletBalance ?? existingUserData.wallet_balance ?? 0);
-        console.log(`[BALANCE-SAFE-TURSO] Loaded fresh balance for ${user_id} from Turso: ₹${currentBalance}`);
-      }
-    } catch (tursoErr: any) {
-      console.warn(`[BALANCE-SAFE-TURSO-ERR] Failed to load fresh balance from Turso:`, tursoErr.message);
-    }
+      let currentBalance = 0;
+      let existingUserData: any = null;
+      let newBalance = 0;
+      let appliedAtomicSql = false;
+      const nowIso = new Date().toISOString();
+      const tursoClient = getTursoClient();
 
-    // 1b. Fallback to Firestore REST only if Turso was empty or failed
-    if (!existingUserData) {
-      try {
-        const userRef = await getDocREST("users", user_id, token);
-        if (userRef && userRef.exists) {
-          existingUserData = userRef.data();
-          currentBalance = Number(existingUserData.balance ?? existingUserData.walletBalance ?? existingUserData.wallet_balance ?? 0);
-          console.log(`[BALANCE-SAFE-FIRESTORE] Loaded fresh balance for ${user_id} from Firestore: ₹${currentBalance}`);
+      // 1a. Atomic SQL adjustment directly in Turso smm_users if user row exists
+      if (tursoClient) {
+        try {
+          const updRes = await tursoClient.execute({
+            sql: `UPDATE smm_users SET balance = MAX(0, ROUND(COALESCE(balance, 0) + ?, 2)), updated_at = ? WHERE id = ?;`,
+            args: [Number(change), nowIso, user_id]
+          });
+          if (updRes && updRes.rowsAffected > 0) {
+            const selRes = await tursoClient.execute({
+              sql: `SELECT balance, email, role, data FROM smm_users WHERE id = ? LIMIT 1;`,
+              args: [user_id]
+            });
+            if (selRes.rows.length > 0) {
+              const row: any = selRes.rows[0];
+              newBalance = Number(row.balance || 0);
+              let parsed: any = {};
+              if (typeof row.data === "string") { try { parsed = JSON.parse(row.data); } catch (e) {} }
+              existingUserData = { ...parsed, id: user_id, uid: user_id, email: row.email || parsed.email, role: row.role || parsed.role };
+              appliedAtomicSql = true;
+              console.log(`[BALANCE-SAFE-TURSO-ATOMIC] User ${user_id}: atomic change ${change} -> ₹${newBalance}`);
+            }
+          }
+        } catch (tursoErr: any) {
+          console.warn(`[BALANCE-SAFE-TURSO-ERR]`, tursoErr.message);
         }
-      } catch (fetchErr: any) {
-        console.warn(`[BALANCE-SAFE] Fresh fetch error for ${user_id}, using fallback:`, fetchErr.message);
       }
-    }
 
-    // Fallback only if direct Firestore fetch failed
-    if (!existingUserData && serverCache.users.has(user_id)) {
-      const cached = serverCache.users.get(user_id);
-      if (cached && (cached.data || cached.balance !== undefined)) {
-        existingUserData = cached.data || cached;
-        currentBalance = Number(existingUserData.balance ?? existingUserData.walletBalance ?? existingUserData.wallet_balance ?? 0);
+      if (!appliedAtomicSql) {
+        try {
+          const tursoUser = await getTursoDoc("users", user_id);
+          if (tursoUser && Object.keys(tursoUser).length > 0) {
+            existingUserData = tursoUser;
+            currentBalance = Number(existingUserData.balance ?? existingUserData.walletBalance ?? existingUserData.wallet_balance ?? 0);
+          }
+        } catch (e) {}
+
+        if (!existingUserData) {
+          try {
+            const userRef = await getDocREST("users", user_id, token);
+            if (userRef && userRef.exists) {
+              existingUserData = userRef.data();
+              currentBalance = Number(existingUserData.balance ?? existingUserData.walletBalance ?? existingUserData.wallet_balance ?? 0);
+            }
+          } catch (e) {}
+        }
+
+        if (!existingUserData && serverCache.users.has(user_id)) {
+          const cached = serverCache.users.get(user_id);
+          if (cached && (cached.data || cached.balance !== undefined)) {
+            existingUserData = cached.data || cached;
+            currentBalance = Number(existingUserData.balance ?? existingUserData.walletBalance ?? existingUserData.wallet_balance ?? 0);
+          }
+        }
+
+        newBalance = Math.max(0, Number((currentBalance + change).toFixed(2)));
+        console.log(`[BALANCE-SAFE] User ${user_id}: ₹${currentBalance} -> ₹${newBalance} (change: ${change})`);
       }
-    }
 
-    const newBalance = Math.max(0, Number((currentBalance + change).toFixed(2)));
-    console.log(`[BALANCE-SAFE] User ${user_id}: ₹${currentBalance} -> ₹${newBalance} (change: ${change})`);
-
-    const updatedData = {
-      ...(existingUserData || { uid: user_id, role: "student", createdAt: new Date().toISOString() }),
-      balance: newBalance,
-      updatedAt: new Date().toISOString()
-    };
-
-    // 2. Immediately update Turso database, in-memory cache, and disk cache
-    try {
-      await setTursoDoc("users", user_id, updatedData);
-    } catch (e) {}
-    serverCache.users.set(user_id, { data: updatedData, time: Date.now() });
-    savePersistentCache();
-
-    // 3. Optional background sync to Firestore (non-blocking)
-    setDocREST("users", user_id, { balance: newBalance, updatedAt: new Date().toISOString() }, token).catch(() => {});
-    if (!useRestFallback && adminSdkSucceeded) {
-      fdb.collection("users").doc(user_id).set({
+      const updatedData = {
+        ...(existingUserData || { uid: user_id, role: "student", createdAt: nowIso }),
         balance: newBalance,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      }, { merge: true }).catch(() => {});
-    }
+        updatedAt: nowIso
+      };
 
-    return { success: true, newBalance };
+      if (appliedAtomicSql && tursoClient) {
+        const jsonStr = JSON.stringify(updatedData);
+        await tursoClient.execute({
+          sql: `UPDATE smm_users SET data = ?, updated_at = ? WHERE id = ?;`,
+          args: [jsonStr, nowIso, user_id]
+        }).catch(() => {});
+        await tursoClient.execute({
+          sql: `INSERT INTO smm_documents (collection, id, data, updated_at) VALUES ('users', ?, ?, ?) ON CONFLICT(collection, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at;`,
+          args: [user_id, jsonStr, nowIso]
+        }).catch(() => {});
+      } else {
+        try {
+          await setTursoDoc("users", user_id, updatedData);
+        } catch (e) {}
+      }
+
+      serverCache.users.set(user_id, { data: updatedData, time: Date.now() });
+      savePersistentCache();
+
+      setDocREST("users", user_id, { balance: newBalance, updatedAt: nowIso }, token).catch(() => {});
+      if (!useRestFallback && adminSdkSucceeded) {
+        fdb.collection("users").doc(user_id).set({
+          balance: newBalance,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true }).catch(() => {});
+      }
+
+      return { success: true, newBalance };
+    });
   };
 
   const adjustUserBalanceREST = async (user_id: string, change: number, token?: string) => {
@@ -8490,16 +8541,18 @@ export async function startServer() {
       );
 
       try {
-        const uDoc = await getDocSafe("users", oUid);
-        const uData = uDoc?.data ? uDoc.data() : uDoc;
-        if (uData && Array.isArray(uData.latestOrders)) {
-          const nextLatest = uData.latestOrders.map((lo: any) =>
-            lo && (String(lo.id) === oId || (orderObj.providerOrderId && String(lo.providerOrderId) === String(orderObj.providerOrderId)))
-              ? { ...lo, ...refundFields }
-              : lo
-          );
-          await updateDocSafe("users", oUid, { latestOrders: nextLatest, updatedAt: nowIso });
-        }
+        await withUserWalletLockServer(oUid, async () => {
+          const uDoc = await getDocSafe("users", oUid);
+          const uData = uDoc?.data ? uDoc.data() : uDoc;
+          if (uData && Array.isArray(uData.latestOrders)) {
+            const nextLatest = uData.latestOrders.map((lo: any) =>
+              lo && (String(lo.id) === oId || (orderObj.providerOrderId && String(lo.providerOrderId) === String(orderObj.providerOrderId)))
+                ? { ...lo, ...refundFields }
+                : lo
+            );
+            await updateDocSafe("users", oUid, { latestOrders: nextLatest, updatedAt: nowIso });
+          }
+        });
       } catch (e) {}
 
       console.log(`[REFUND-ON-CANCEL] ✅ Refunded ₹${refundAmt} to user ${oUid} for ${refundFields.status} order ${oId}`);
@@ -8662,21 +8715,23 @@ export async function startServer() {
       const uid = String(order.userId || order.user_id || "").trim();
       if (uid) {
         try {
-          const uDoc = await getDocSafe("users", uid);
-          const uData = uDoc?.data ? uDoc.data() : uDoc;
-          if (uData && Array.isArray(uData.latestOrders)) {
-            let changed = false;
-            const nextLatest = uData.latestOrders.map((lo: any) => {
-              if (lo && (String(lo.id) === orderId || (order.providerOrderId && String(lo.providerOrderId) === String(order.providerOrderId)))) {
-                changed = true;
-                return { ...lo, status: pStatus, providerStatus: pStatus, updatedAt: nowIso };
+          await withUserWalletLockServer(uid, async () => {
+            const uDoc = await getDocSafe("users", uid);
+            const uData = uDoc?.data ? uDoc.data() : uDoc;
+            if (uData && Array.isArray(uData.latestOrders)) {
+              let changed = false;
+              const nextLatest = uData.latestOrders.map((lo: any) => {
+                if (lo && (String(lo.id) === orderId || (order.providerOrderId && String(lo.providerOrderId) === String(order.providerOrderId)))) {
+                  changed = true;
+                  return { ...lo, status: pStatus, providerStatus: pStatus, updatedAt: nowIso };
+                }
+                return lo;
+              });
+              if (changed) {
+                await updateDocSafe("users", uid, { latestOrders: nextLatest, updatedAt: nowIso });
               }
-              return lo;
-            });
-            if (changed) {
-              await updateDocSafe("users", uid, { latestOrders: nextLatest, updatedAt: nowIso });
             }
-          }
+          });
         } catch (e) {}
       }
 
@@ -8735,11 +8790,14 @@ export async function startServer() {
       const refundedOrders: Record<string, number> = {};
       let updatedCount = 0;
       let refundedTotal = 0;
+      let latestNewBalance: number | undefined = undefined;
+      let syncedUid = "";
 
       results.forEach((r, idx) => {
         if (r.status === "fulfilled" && r.value?.status) {
           const val: any = r.value;
           updates[ids[idx]] = val.status;
+          if (val.order?.userId) syncedUid = String(val.order.userId);
           if (val.refundedAmount && val.refundedAmount > 0) {
             refundedOrders[ids[idx]] = val.refundedAmount;
             refundedTotal = Number((refundedTotal + val.refundedAmount).toFixed(2));
@@ -8748,7 +8806,21 @@ export async function startServer() {
         }
       });
 
-      return res.json({ success: true, updates, updatedCount, refundedTotal, refundedOrders });
+      if (refundedTotal > 0 && syncedUid) {
+        const freshUser = await getTursoDoc("users", syncedUid);
+        if (freshUser && freshUser.balance !== undefined) {
+          latestNewBalance = Number(freshUser.balance);
+        }
+      }
+
+      return res.json({
+        success: true,
+        updates,
+        updatedCount,
+        refundedTotal,
+        refundedOrders,
+        ...(latestNewBalance !== undefined ? { newBalance: latestNewBalance } : {})
+      });
     } catch (e: any) {
       return res.status(500).json({ success: false, error: e.message });
     }
