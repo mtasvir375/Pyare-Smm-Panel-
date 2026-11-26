@@ -10,11 +10,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Link } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { formatApiUrl } from "@/lib/apiConfig";
 import axios from "axios";
 import { toast } from "sonner";
 
 export default function Dashboard() {
-  const { user, userProfile, loading: authLoading } = useAuth();
+  const { user, userProfile, loading: authLoading, refreshUserProfile } = useAuth();
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [checkingStatus, setCheckingStatus] = useState(false);
@@ -253,6 +254,16 @@ export default function Dashboard() {
                 sessionStorage.setItem(`${k}_time`, nowStr);
               } catch (storageErr) {}
             });
+
+            // Auto-sync live provider statuses for any non-terminal orders
+            const hasActive = freshParsed.some((o: any) => {
+              const st = (o.status || "").toLowerCase();
+              const pId = String(o.providerOrderId || o.provider_order_id || "").trim();
+              return pId && !["pending", "n/a", "success"].includes(pId.toLowerCase()) && !["completed", "complete", "canceled", "cancelled", "refunded", "partial", "failed"].includes(st);
+            });
+            if (hasActive) {
+              checkOrdersStatus(false, freshParsed);
+            }
           }
         } catch (serverErr) {
           console.warn("[DASHBOARD] Notice while fetching orders:", serverErr);
@@ -272,60 +283,122 @@ export default function Dashboard() {
     return () => { isMounted = false; };
   }, [user, renderLimit, refreshTrigger]);
 
-  const checkOrdersStatus = async (force = false) => {
-    if (checkingStatus || orders.length === 0) return;
-    
-    // Throttle checks to once every 30 minutes to save quota as per user request
+  const persistOrdersCache = (list: any[]) => {
+    if (!user || !Array.isArray(list)) return;
+    const uidKey = `orders_${user.uid}`;
+    const emailKey = user.email ? `orders_${user.email.toLowerCase()}` : null;
+    const jsonStr = JSON.stringify(list);
+    const nowStr = Date.now().toString();
+    [uidKey, emailKey].filter(Boolean).forEach((k) => {
+      try {
+        localStorage.setItem(k!, jsonStr);
+        localStorage.setItem(`${k!}_time`, nowStr);
+        sessionStorage.setItem(k!, jsonStr);
+        sessionStorage.setItem(`${k!}_time`, nowStr);
+      } catch (e) {}
+    });
+  };
+
+  const checkOrdersStatus = async (force = false, targetOrdersList?: any[]) => {
+    const sourceList = targetOrdersList || orders;
+    if (checkingStatus) return;
+
     const now = Date.now();
-    if (!force && lastCheckedRef.current && (now - lastCheckedRef.current < 30 * 60 * 1000)) {
+    if (!force && lastCheckedRef.current && (now - lastCheckedRef.current < 10 * 1000)) {
       return;
     }
-    
+
+    const ordersToProcess = sourceList
+      .filter((order: any) => {
+        const currentStatus = (order?.status || "").toLowerCase();
+        const pOrderId = String(order?.providerOrderId || order?.provider_order_id || "").trim();
+        return (
+          pOrderId &&
+          !["pending", "n/a", "success", "sent_no_id"].includes(pOrderId.toLowerCase()) &&
+          !["completed", "complete", "canceled", "cancelled", "refunded", "partial", "failed"].includes(currentStatus)
+        );
+      })
+      .slice(0, 15);
+
+    if (ordersToProcess.length === 0) {
+      if (force) {
+        setRefreshTrigger((prev) => prev + 1);
+      }
+      return;
+    }
+
     setCheckingStatus(true);
     lastCheckedRef.current = now;
     try {
-      // Only process the latest 2 orders to save reads/writes
-      const ordersToProcess = orders.slice(0, 2);
+      const updates: Record<string, string> = {};
+      const refundedOrders: Record<string, number> = {};
+      let refundedTotal = 0;
 
-      for (const order of ordersToProcess) {
-        const currentStatus = (order.status || '').toLowerCase();
-        
-        // Only check status for orders that have a providerOrderId and are not in a final state
-        if (order.providerOrderId && !['completed', 'canceled', 'refunded', 'partial'].includes(currentStatus)) {
-          try {
-            await axios.post("/api/sync-order-status", {
-              orderId: order.id
-            });
-          } catch (err) {
-            console.error("Error syncing status for order:", order.id, err);
+      try {
+        const batchRes = await axios.post(
+          formatApiUrl("/api/sync-orders"),
+          { orders: ordersToProcess },
+          { timeout: 15000 }
+        );
+        if (batchRes.data?.success && batchRes.data?.updates) {
+          Object.assign(updates, batchRes.data.updates);
+          if (batchRes.data.refundedOrders) {
+            Object.assign(refundedOrders, batchRes.data.refundedOrders);
+          }
+          if (Number(batchRes.data.refundedTotal || 0) > 0) {
+            refundedTotal = Number(batchRes.data.refundedTotal);
           }
         }
+      } catch (batchErr) {
+        // Fallback to single order sync calls if batch endpoint unavailable
+        await Promise.allSettled(
+          ordersToProcess.map(async (order: any) => {
+            try {
+              const res = await axios.post(
+                formatApiUrl("/api/sync-order-status"),
+                { orderId: order.id },
+                { timeout: 10000 }
+              );
+              if (res.data?.success && res.data?.status) {
+                updates[order.id] = res.data.status;
+                if (Number(res.data.refundedAmount || 0) > 0) {
+                  refundedOrders[order.id] = Number(res.data.refundedAmount);
+                  refundedTotal = Number((refundedTotal + Number(res.data.refundedAmount)).toFixed(2));
+                }
+              }
+            } catch (e) {}
+          })
+        );
       }
 
-      // Rather than deleting the cache (which could result in blank screen if network is slow),
-      // fetch latest orders and update the cache seamlessly!
-      if (user) {
-        try {
-          const fresh = await dbClient.getUserOrders(user.uid, 10, user.email || undefined);
-          if (Array.isArray(fresh) && fresh.length > 0) {
-            const uidKey = `orders_${user.uid}`;
-            const emailKey = user.email ? `orders_${user.email.toLowerCase()}` : null;
-            const jsonStr = JSON.stringify(fresh);
-            const nowStr = Date.now().toString();
-            [uidKey, emailKey].filter(Boolean).forEach(k => {
-              try {
-                localStorage.setItem(k!, jsonStr);
-                localStorage.setItem(`${k!}_time`, nowStr);
-                sessionStorage.setItem(k!, jsonStr);
-                sessionStorage.setItem(`${k!}_time`, nowStr);
-              } catch (e) {}
-            });
-          }
-        } catch (syncErr) {
-          console.warn("[DASHBOARD] Could not refresh orders list:", syncErr);
+      if (Object.keys(updates).length > 0) {
+        setOrders((prev) => {
+          const base = prev.length > 0 ? prev : sourceList;
+          const nextList = base.map((o: any) =>
+            updates[o.id]
+              ? {
+                  ...o,
+                  status: updates[o.id],
+                  ...(refundedOrders[o.id] ? { balanceRefunded: true, refundedAmount: refundedOrders[o.id] } : {}),
+                  updatedAt: new Date().toISOString()
+                }
+              : o
+          );
+          persistOrdersCache(nextList);
+          return nextList;
+        });
+
+        if (refundedTotal > 0) {
+          refreshUserProfile().catch(() => {});
+          toast.success(`Order canceled/partial — ₹${refundedTotal.toFixed(2)} aapke wallet me wapas aa gaya!`);
+        }
+      } else if (force && user) {
+        const fresh = await dbClient.getUserOrders(user.uid, 100, user.email || undefined);
+        if (Array.isArray(fresh) && fresh.length > 0) {
+          setOrders(fresh);
+          persistOrdersCache(fresh);
         }
       }
-      setRefreshTrigger(prev => prev + 1);
     } catch (error) {
       console.error("Error in checkOrdersStatus:", error);
     } finally {
@@ -333,13 +406,37 @@ export default function Dashboard() {
     }
   };
 
-
-
-  // Run status check ONLY when user specifically refreshes
-  // Auto-sync on mount removed to stay within Firebase free tier limits.
+  // Poll active (non-terminal) orders every 20s only while user is viewing Orders tab
   useEffect(() => {
-    // Component initialization logic only
-  }, []);
+    if (statusIntervalRef.current) {
+      clearInterval(statusIntervalRef.current);
+      statusIntervalRef.current = null;
+    }
+    if (!user || viewMode !== "orders") return;
+
+    const hasActiveOrders = orders.some((o: any) => {
+      const st = (o?.status || "").toLowerCase();
+      const pId = String(o?.providerOrderId || o?.provider_order_id || "").trim();
+      return (
+        pId &&
+        !["pending", "n/a", "success", "sent_no_id"].includes(pId.toLowerCase()) &&
+        !["completed", "complete", "canceled", "cancelled", "refunded", "partial", "failed"].includes(st)
+      );
+    });
+
+    if (!hasActiveOrders) return;
+
+    statusIntervalRef.current = setInterval(() => {
+      checkOrdersStatus(false);
+    }, 20000);
+
+    return () => {
+      if (statusIntervalRef.current) {
+        clearInterval(statusIntervalRef.current);
+        statusIntervalRef.current = null;
+      }
+    };
+  }, [user, viewMode, orders]);
 
   if (authLoading) {
     return (
@@ -383,23 +480,41 @@ export default function Dashboard() {
   };
 
   const getStatusBadge = (status: string) => {
-    switch (status?.toLowerCase()) {
-      case 'pending':
-      case 'processing':
-      case 'in progress':
-      case 'approved':
+    const norm = (status || "").trim().toLowerCase();
+    switch (norm) {
       case 'completed':
-        return <Badge className="bg-green-100 text-green-700 border-none font-bold text-[10px]">Completed</Badge>;
+      case 'complete':
+      case 'approved':
+        return <Badge className="bg-emerald-100 text-emerald-700 border-none font-bold text-[10px]">Completed</Badge>;
+      case 'processing':
+      case 'prosess':
+        return <Badge className="bg-blue-100 text-blue-700 border-none font-bold text-[10px]">Processing</Badge>;
+      case 'in progress':
+      case 'inprogress':
+      case 'in_progress':
+      case 'active':
+        return <Badge className="bg-indigo-100 text-indigo-700 border-none font-bold text-[10px]">In Progress</Badge>;
+      case 'pending':
+      case 'awaiting':
+      case 'queued':
+        return <Badge className="bg-amber-100 text-amber-700 border-none font-bold text-[10px]">Pending</Badge>;
       case 'partial':
-        return <Badge className="bg-yellow-100 text-yellow-700 border-none font-bold text-[10px]">Partial</Badge>;
+        return <Badge className="bg-orange-100 text-orange-700 border-none font-bold text-[10px]">Partial</Badge>;
       case 'canceled':
+      case 'cancelled':
         return <Badge className="bg-red-100 text-red-700 border-none font-bold text-[10px]">Canceled</Badge>;
       case 'failed':
+      case 'error':
         return <Badge className="bg-red-600 text-white border-none font-bold text-[10px]">Failed</Badge>;
       case 'refunded':
-        return <Badge className="bg-gray-100 text-gray-700 border-none font-bold text-[10px]">Refunded</Badge>;
+      case 'refund':
+        return <Badge className="bg-slate-100 text-slate-700 border-none font-bold text-[10px]">Refunded</Badge>;
       default:
-        return <Badge className="bg-green-100 text-green-700 border-none font-bold text-[10px]">Completed</Badge>;
+        return (
+          <Badge className="bg-amber-100 text-amber-700 border-none font-bold text-[10px]">
+            {status ? status.trim() : 'Pending'}
+          </Badge>
+        );
     }
   };
 
@@ -531,8 +646,13 @@ export default function Dashboard() {
                     </div>
                   </div>
                   
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex flex-col items-end gap-1 shrink-0">
                     {getStatusBadge(order.status)}
+                    {order.balanceRefunded && Number(order.refundedAmount || 0) > 0 && (
+                      <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md border border-emerald-100">
+                        +₹{Number(order.refundedAmount).toFixed(2)} Refunded
+                      </span>
+                    )}
                   </div>
                 </div>
                 
@@ -584,7 +704,7 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {order.status === 'pending' && !order.provider_order_id && (
+                {(order.status || "").toLowerCase() === 'pending' && !order.providerOrderId && !order.provider_order_id && (
                   <p className="text-[10px] text-orange-600 bg-orange-50 p-2 rounded-lg font-medium">
                     Order is pending. We are trying to connect to the provider. If it stays pending, please contact support.
                   </p>

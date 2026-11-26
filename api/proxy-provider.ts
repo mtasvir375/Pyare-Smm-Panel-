@@ -256,12 +256,15 @@ export default async function handler(req: any, res: any) {
         userId: finalUserId,
         userEmail: userEmail || orderData?.userEmail || "",
         serviceId: orderData?.serviceId || finalService,
+        courseId: orderData?.courseId || orderData?.serviceId || finalService,
+        providerId: resolvedProviderId,
+        providerServiceId: finalService,
         title: orderData?.title || "SMM Order",
         category: orderData?.category || "Other",
         quantity: Number(finalQty),
         targetLink: finalLink,
         totalPrice: finalPrice,
-        status: "In progress",
+        status: "Pending",
         providerOrderId: finalOId,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
@@ -280,13 +283,25 @@ export default async function handler(req: any, res: any) {
 
           // Save into smm_documents for users and orders
           if (finalUserId) {
+            const existingLatest = Array.isArray(existingUserDoc?.latestOrders) ? existingUserDoc.latestOrders : [];
+            const updatedLatestOrders = [
+              newOrderSummary,
+              ...existingLatest.filter((o: any) => o && o.id !== finalOrderId && o.providerOrderId !== finalOId)
+            ].slice(0, 10);
+
             const updatedUser = {
               ...(existingUserDoc || {}),
               id: finalUserId,
               uid: finalUserId,
               balance: newBal,
+              latestOrders: updatedLatestOrders,
+              lastOrderedAt: new Date().toISOString(),
               updatedAt: new Date().toISOString()
             };
+            await client.execute({
+              sql: `UPDATE smm_users SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;`,
+              args: [JSON.stringify(updatedUser), finalUserId]
+            }).catch(() => {});
             await client.execute({
               sql: `INSERT OR REPLACE INTO smm_documents (collection, id, data, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP);`,
               args: ["users", finalUserId, JSON.stringify(updatedUser)]
@@ -309,7 +324,7 @@ export default async function handler(req: any, res: any) {
               finalLink,
               Number(finalQty),
               finalPrice,
-              "Completed",
+              "Pending",
               finalOId,
               JSON.stringify(newOrderSummary)
             ]
@@ -328,12 +343,14 @@ export default async function handler(req: any, res: any) {
             userId: { stringValue: finalUserId },
             userEmail: { stringValue: userEmail || "" },
             serviceId: { stringValue: String(finalService) },
-            courseId: { stringValue: String(orderData?.serviceId || finalService) },
+            courseId: { stringValue: String(orderData?.courseId || orderData?.serviceId || finalService) },
+            providerId: { stringValue: String(resolvedProviderId) },
+            providerServiceId: { stringValue: String(finalService) },
             title: { stringValue: String(orderData?.title || "") },
             quantity: { integerValue: String(finalQty) },
             targetLink: { stringValue: finalLink },
             totalPrice: { doubleValue: finalPrice },
-            status: { stringValue: "Completed" },
+            status: { stringValue: "Pending" },
             providerOrderId: { stringValue: finalOId },
             createdAt: { stringValue: new Date().toISOString() }
           }

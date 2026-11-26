@@ -2562,7 +2562,7 @@ export default function Admin() {
                             <p className="text-gray-400 uppercase font-bold">Status Action</p>
                             <select 
                               className="text-[10px] font-bold border rounded p-1 bg-white"
-                              value={order.status}
+                              value={order.status === "In Progress" ? "In progress" : (order.status || "Pending")}
                               onChange={async (e) => {
                                 const newStatus = e.target.value;
                                 try {
@@ -2570,8 +2570,22 @@ export default function Admin() {
                                     status: newStatus,
                                     updatedAt: new Date().toISOString()
                                   });
+                                  let refundNote = "";
+                                  if (["canceled", "cancelled", "refunded"].includes(newStatus.toLowerCase())) {
+                                    try {
+                                      const refRes = await axios.post(formatApiUrl("/api/orders/refund"), {
+                                        orderId: order.id,
+                                        status: newStatus,
+                                        adminEmail: user?.email || "mtasvir375@gmail.com",
+                                        adminSecret: "smm_master_admin_mtasvir_secret_2026"
+                                      });
+                                      if (refRes.data?.refunded && Number(refRes.data.refundedAmount || 0) > 0) {
+                                        refundNote = ` (₹${Number(refRes.data.refundedAmount).toFixed(2)} refunded to user wallet)`;
+                                      }
+                                    } catch (refErr) {}
+                                  }
                                   setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: newStatus } : o));
-                                  toast.success(`Order status updated to ${newStatus}`);
+                                  toast.success(`Order status updated to ${newStatus}${refundNote}`);
                                 } catch (err: any) {
                                   toast.error(`Failed to update status: ${err.message}`);
                                 }
@@ -5383,7 +5397,7 @@ export default function Admin() {
                   />
                 </div>
                 <div className="flex items-center gap-1 overflow-x-auto text-xs py-0.5">
-                  {["all", "Completed", "In progress", "Pending", "Cancelled"].map((st) => (
+                  {["all", "Completed", "Processing", "In Progress", "Pending", "Canceled"].map((st) => (
                     <button
                       key={st}
                       type="button"
@@ -5413,8 +5427,13 @@ export default function Admin() {
               const orders = viewOrderHistory?.orders || [];
               const searchLower = uodSearch.trim().toLowerCase();
               const filtered = orders.filter((o: any) => {
-                if (uodStatusFilter !== "all" && String(o.status || "").toLowerCase() !== uodStatusFilter.toLowerCase()) {
-                  return false;
+                if (uodStatusFilter !== "all") {
+                  const stNorm = String(o.status || "").toLowerCase();
+                  const filtNorm = uodStatusFilter.toLowerCase();
+                  const isCancelMatch = (filtNorm === "canceled" || filtNorm === "cancelled") && (stNorm === "canceled" || stNorm === "cancelled");
+                  if (!isCancelMatch && stNorm !== filtNorm) {
+                    return false;
+                  }
                 }
                 if (!searchLower) return true;
                 const matchId = String(o.id || o.orderId || "").toLowerCase().includes(searchLower);
@@ -5467,7 +5486,7 @@ export default function Admin() {
                   ? Number(ord.walletBalanceAfter)
                   : (ord.newBalance !== undefined ? Number(ord.newBalance) : null);
 
-                const statusStr = String(ord.status || "Completed");
+                const statusStr = String(ord.status || "Pending");
                 const statusColor = statusStr.toLowerCase().includes("complete")
                   ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                   : statusStr.toLowerCase().includes("progress") || statusStr.toLowerCase().includes("processing")

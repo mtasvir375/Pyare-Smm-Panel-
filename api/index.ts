@@ -608,10 +608,443 @@ const KNOWN_PROVIDERS: Record<string, { apiUrl: string; apiKey: string; name: st
   },
   "doc_1791067476261_cjt5c": {
     name: "Smm bin (Primary)",
-    apiUrl: "https://smmbin.com/api/v2",
+    apiUrl: "https://www.smmbin.com/api/v2",
     apiKey: "f55bb2dfdc035f9c3c9e737bb72922a51d64309f"
+  },
+  "doc_1791186834219_w9421": {
+    name: "The main smm provider 👍",
+    apiUrl: "https://themainsmmprovider.com/api/v2",
+    apiKey: "74d74ed9b9e708536903866ac32e9547fd371476"
   }
 };
+
+const TERMINAL_ORDER_STATUSES = new Set([
+  "completed",
+  "canceled",
+  "cancelled",
+  "refunded",
+  "partial",
+  "failed"
+]);
+
+function normalizeProviderStatus(raw: any): string {
+  const s = String(raw || "").trim().toLowerCase();
+  if (!s) return "";
+  if (s === "completed" || s === "complete" || s === "done") return "Completed";
+  if (s === "processing" || s === "prosess" || s === "proccessing") return "Processing";
+  if (s === "in progress" || s === "inprogress" || s === "in_progress" || s === "active") return "In Progress";
+  if (s === "pending" || s === "awaiting" || s === "queued") return "Pending";
+  if (s === "partial") return "Partial";
+  if (s === "canceled" || s === "cancelled") return "Canceled";
+  if (s === "refunded" || s === "refund") return "Refunded";
+  if (s === "failed" || s === "fail" || s === "error" || s === "rejected") return "Failed";
+  return String(raw).trim().replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+async function resolveProviderCredentialsForOrder(order: any): Promise<{ apiUrl: string; apiKey: string }> {
+  let apiUrl = "";
+  let apiKey = "";
+  const client = getTursoClient();
+
+  let resolvedProviderId = String(order?.providerId || order?.provider_id || "").trim();
+  const sId = String(order?.courseId || order?.serviceId || order?.service_id || "").trim();
+
+  if (!resolvedProviderId && sId) {
+    try {
+      const cDoc = await getTursoDoc("courses", sId) || await getRestDoc("courses", sId);
+      if (cDoc) {
+        resolvedProviderId = String(cDoc.providerId || cDoc.provider_id || "").trim();
+      } else if (client) {
+        const cRes = await client.execute({
+          sql: `SELECT provider_id FROM smm_courses WHERE id = ? LIMIT 1;`,
+          args: [sId]
+        }).catch(() => null);
+        if (cRes?.rows?.length) {
+          resolvedProviderId = String(cRes.rows[0].provider_id || "").trim();
+        }
+      }
+    } catch (e) {}
+  }
+
+  if (resolvedProviderId && resolvedProviderId !== "global") {
+    if (KNOWN_PROVIDERS[resolvedProviderId]) {
+      apiUrl = KNOWN_PROVIDERS[resolvedProviderId].apiUrl;
+      apiKey = KNOWN_PROVIDERS[resolvedProviderId].apiKey;
+    }
+
+    if ((!apiUrl || !apiKey) && client) {
+      try {
+        const pRes = await client.execute({
+          sql: `SELECT api_url, api_key FROM smm_providers WHERE id = ? LIMIT 1;`,
+          args: [resolvedProviderId]
+        });
+        if (pRes.rows.length > 0) {
+          if (!apiUrl) apiUrl = String(pRes.rows[0].api_url || "").trim();
+          if (!apiKey) apiKey = String(pRes.rows[0].api_key || "").trim();
+        }
+      } catch (e) {}
+    }
+
+    if (!apiUrl || !apiKey) {
+      try {
+        const pDoc = await getTursoDoc("providers", resolvedProviderId) || await getRestDoc("providers", resolvedProviderId);
+        if (pDoc) {
+          if (!apiUrl) apiUrl = String(pDoc.apiUrl || pDoc.url || pDoc.api_url || pDoc.providerApiUrl || "").trim();
+          if (!apiKey) apiKey = String(pDoc.apiKey || pDoc.key || pDoc.api_key || pDoc.providerApiKey || "").trim();
+        }
+      } catch (e) {}
+    }
+  }
+
+  if (!apiUrl || !apiKey) {
+    try {
+      const sData = await getTursoDoc("settings", "payment") || await getRestDoc("settings", "payment") || {};
+      if (!apiUrl) apiUrl = String(sData.providerApiUrl || "").trim();
+      if (!apiKey) apiKey = String(sData.providerApiKey || "").trim();
+    } catch (e) {}
+  }
+
+  if (!apiUrl || !apiKey) {
+    apiUrl = "https://www.smmbin.com/api/v2";
+    apiKey = "f55bb2dfdc035f9c3c9e737bb72922a51d64309f";
+  }
+
+  if (!apiUrl.startsWith("http")) apiUrl = `https://${apiUrl}`;
+  return { apiUrl, apiKey };
+}
+
+async function queryProviderOrderStatus(apiUrl: string, apiKey: string, providerOrderId: string): Promise<{ status: string; remains?: any; start_count?: any; error?: string }> {
+  const params = new URLSearchParams();
+  params.append("key", apiKey);
+  params.append("action", "status");
+  params.append("order", providerOrderId);
+
+  let provRes: any = null;
+  try {
+    provRes = await axios.post(apiUrl, params.toString(), {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+      },
+      timeout: 7000
+    });
+  } catch (postErr: any) {
+    try {
+      const sep = apiUrl.includes("?") ? "&" : "?";
+      provRes = await axios.get(`${apiUrl}${sep}${params.toString()}`, {
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+        timeout: 7000
+      });
+    } catch (getErr: any) {
+      return { status: "", error: getErr?.message || postErr?.message || "Provider status check failed" };
+    }
+  }
+
+  let resData = provRes?.data;
+  if (typeof resData === "string") {
+    try { resData = JSON.parse(resData); } catch (e) {}
+  }
+
+  const rawStatus = resData?.status || resData?.data?.status;
+  if (!rawStatus) {
+    return { status: "", error: resData?.error || resData?.message || "No status returned by provider" };
+  }
+
+  return {
+    status: normalizeProviderStatus(rawStatus),
+    remains: resData?.remains,
+    start_count: resData?.start_count
+  };
+}
+
+async function loadOrderRecord(orderId: string): Promise<any | null> {
+  if (!orderId) return null;
+  let order = await getTursoDoc("orders", orderId);
+  if (!order) {
+    try {
+      const client = getTursoClient();
+      if (client) {
+        const res = await client.execute({
+          sql: `SELECT id, user_id, service_id, link, quantity, charge, status, api_order_id, created_at, data FROM smm_orders WHERE id = ? LIMIT 1;`,
+          args: [orderId]
+        });
+        if (res.rows.length > 0) {
+          const row = res.rows[0];
+          let parsed: any = {};
+          if (typeof row.data === "string") { try { parsed = JSON.parse(row.data); } catch (e) {} }
+          order = {
+            id: String(row.id),
+            userId: row.user_id || parsed.userId || "",
+            serviceId: row.service_id || parsed.serviceId || "",
+            targetLink: row.link || parsed.targetLink || "",
+            quantity: Number(row.quantity || parsed.quantity || 0),
+            totalPrice: Number(row.charge || parsed.totalPrice || 0),
+            status: parsed.status || row.status || "Pending",
+            providerOrderId: parsed.providerOrderId || row.api_order_id || "",
+            createdAt: parsed.createdAt || row.created_at || new Date().toISOString(),
+            ...parsed
+          };
+        }
+      }
+    } catch (e) {}
+  }
+  if (!order) order = await getRestDoc("orders", orderId);
+  if (!order) order = await fetchFirestoreRestDoc("orders", orderId);
+  return order;
+}
+
+async function persistSyncedOrderStatus(order: any, nextStatus: string, meta?: { remains?: any; start_count?: any }) {
+  const orderId = String(order.id);
+  const nowIso = new Date().toISOString();
+  const updatedOrder = {
+    ...order,
+    id: orderId,
+    status: nextStatus,
+    providerStatus: nextStatus,
+    ...(meta?.remains !== undefined ? { remains: meta.remains } : {}),
+    ...(meta?.start_count !== undefined ? { startCount: meta.start_count } : {}),
+    updatedAt: nowIso
+  };
+
+  setLocalDoc("orders", orderId, updatedOrder);
+  await setTursoDoc("orders", orderId, updatedOrder).catch(() => {});
+
+  const client = getTursoClient();
+  if (client) {
+    await client.execute({
+      sql: `UPDATE smm_orders SET status = ?, data = ? WHERE id = ?;`,
+      args: [nextStatus, JSON.stringify(updatedOrder), orderId]
+    }).catch(() => {});
+  }
+
+  const uid = String(order.userId || order.user_id || "").trim();
+  if (uid) {
+    try {
+      const uDoc = await getTursoDoc("users", uid) || await getRestDoc("users", uid);
+      if (uDoc && Array.isArray(uDoc.latestOrders)) {
+        let changedUser = false;
+        const updatedLatest = uDoc.latestOrders.map((lo: any) => {
+          if (lo && (String(lo.id) === orderId || (order.providerOrderId && String(lo.providerOrderId) === String(order.providerOrderId)))) {
+            changedUser = true;
+            return { ...lo, status: nextStatus, providerStatus: nextStatus, updatedAt: nowIso };
+          }
+          return lo;
+        });
+        if (changedUser) {
+          await setTursoDoc("users", uid, { ...uDoc, latestOrders: updatedLatest, updatedAt: nowIso }).catch(() => {});
+        }
+      }
+    } catch (e) {}
+  }
+
+  return updatedOrder;
+}
+
+const memOrderRefundLocks = new Set<string>();
+
+async function refundOrderIfEligible(
+  order: any,
+  nextStatus: string,
+  remains?: any
+): Promise<{ refunded: boolean; amount: number; newBalance?: number; order?: any }> {
+  if (!order || !order.id) return { refunded: false, amount: 0 };
+  const orderId = String(order.id);
+  const uid = String(order.userId || order.user_id || "").trim();
+  if (!uid) return { refunded: false, amount: 0 };
+
+  if (order.balanceRefunded === true || Number(order.refundedAmount || 0) > 0 || memOrderRefundLocks.has(orderId)) {
+    return { refunded: false, amount: 0 };
+  }
+
+  const normNext = normalizeProviderStatus(nextStatus).toLowerCase();
+  const orderPrice = Number(order.totalPrice || order.total_price || order.charge || 0);
+  if (orderPrice <= 0) return { refunded: false, amount: 0 };
+
+  let refundAmt = 0;
+  if (normNext === "canceled" || normNext === "cancelled" || normNext === "refunded") {
+    refundAmt = Number(orderPrice.toFixed(2));
+  } else if (normNext === "partial") {
+    const rem = Number(remains ?? order.remains ?? 0);
+    const qty = Number(order.quantity || 0);
+    if (rem > 0 && qty > 0) {
+      refundAmt = Math.min(orderPrice, Number(((rem / qty) * orderPrice).toFixed(2)));
+    }
+  }
+
+  if (refundAmt <= 0) return { refunded: false, amount: 0 };
+
+  const nowIso = new Date().toISOString();
+  const client = getTursoClient();
+
+  if (client) {
+    try {
+      const lockRes = await client.execute({
+        sql: `INSERT INTO smm_documents (collection, id, data, updated_at)
+              VALUES ('order_refunds', ?, ?, ?)
+              ON CONFLICT(collection, id) DO NOTHING;`,
+        args: [
+          orderId,
+          JSON.stringify({ orderId, userId: uid, amount: refundAmt, reason: nextStatus, refundedAt: nowIso }),
+          nowIso
+        ]
+      });
+      if (!lockRes || lockRes.rowsAffected === 0) {
+        memOrderRefundLocks.add(orderId);
+        return { refunded: false, amount: 0 };
+      }
+    } catch (e) {}
+  }
+
+  memOrderRefundLocks.add(orderId);
+
+  let uDoc = await getTursoDoc("users", uid) || await getRestDoc("users", uid);
+  const currentBal = Number(uDoc?.balance ?? 0);
+  const newBal = Number((currentBal + refundAmt).toFixed(2));
+
+  const updatedOrder = {
+    ...order,
+    status: normalizeProviderStatus(nextStatus) || nextStatus,
+    balanceRefunded: true,
+    refundedAmount: refundAmt,
+    refundedAt: nowIso,
+    updatedAt: nowIso
+  };
+
+  setLocalDoc("orders", orderId, updatedOrder);
+  await setTursoDoc("orders", orderId, updatedOrder).catch(() => {});
+
+  if (client) {
+    await client.execute({
+      sql: `UPDATE smm_orders SET status = ?, data = ? WHERE id = ?;`,
+      args: [updatedOrder.status, JSON.stringify(updatedOrder), orderId]
+    }).catch(() => {});
+  }
+
+  if (uDoc) {
+    const updatedLatest = Array.isArray(uDoc.latestOrders)
+      ? uDoc.latestOrders.map((lo: any) =>
+          lo && (String(lo.id) === orderId || (order.providerOrderId && String(lo.providerOrderId) === String(order.providerOrderId)))
+            ? { ...lo, status: updatedOrder.status, balanceRefunded: true, refundedAmount: refundAmt, updatedAt: nowIso }
+            : lo
+        )
+      : uDoc.latestOrders;
+
+    const updatedUser = {
+      ...uDoc,
+      id: uid,
+      uid,
+      balance: newBal,
+      ...(Array.isArray(updatedLatest) ? { latestOrders: updatedLatest } : {}),
+      updatedAt: nowIso
+    };
+    await setTursoDoc("users", uid, updatedUser).catch(() => {});
+    await setRestDoc("users", uid, updatedUser).catch(() => {});
+    memAllUsersCache = null;
+  }
+
+  return { refunded: true, amount: refundAmt, newBalance: newBal, order: updatedOrder };
+}
+
+async function syncSingleOrderStatus(orderOrId: string | any): Promise<{ success: boolean; status: string; updated: boolean; upToDate?: boolean; refundedAmount?: number; newBalance?: number; order?: any; error?: string }> {
+  const orderId = typeof orderOrId === "string" ? orderOrId : String(orderOrId?.id || "");
+  if (!orderId) return { success: false, status: "", updated: false, error: "Missing orderId" };
+
+  const order = (typeof orderOrId === "object" && orderOrId?.id && (orderOrId?.providerOrderId || orderOrId?.provider_order_id))
+    ? orderOrId
+    : await loadOrderRecord(orderId);
+
+  if (!order) {
+    return { success: false, status: "", updated: false, error: "Order not found" };
+  }
+
+  const currentStatus = String(order.status || "Pending");
+  const normalizedCurrent = normalizeProviderStatus(currentStatus) || currentStatus;
+
+  if (TERMINAL_ORDER_STATUSES.has(currentStatus.toLowerCase())) {
+    // Also ensure recent canceled/refunded orders that missed refund get refunded safely once
+    const createdMs = new Date(order.createdAt || order.created_at || 0).getTime();
+    const isRecent = !isNaN(createdMs) && Date.now() - createdMs < 30 * 24 * 60 * 60 * 1000;
+    if (isRecent && !order.balanceRefunded && ["canceled", "cancelled", "refunded", "partial"].includes(currentStatus.toLowerCase())) {
+      const refRes = await refundOrderIfEligible(order, normalizedCurrent, order.remains);
+      if (refRes.refunded) {
+        return { success: true, status: normalizedCurrent, updated: true, upToDate: true, refundedAmount: refRes.amount, newBalance: refRes.newBalance, order: refRes.order || order };
+      }
+    }
+    return { success: true, status: normalizedCurrent, updated: false, upToDate: true, order };
+  }
+
+  const rawPOrderId = String(order.providerOrderId || order.provider_order_id || "").trim();
+  if (!rawPOrderId || rawPOrderId === "PENDING" || rawPOrderId === "SUCCESS" || rawPOrderId === "SENT_NO_ID" || rawPOrderId === "N/A") {
+    return { success: true, status: currentStatus, updated: false, order };
+  }
+
+  const { apiUrl, apiKey } = await resolveProviderCredentialsForOrder(order);
+
+  // Support single or combo provider order IDs (e.g. "#123 | #456")
+  const subOrderIds = rawPOrderId
+    .split(/[|,]/)
+    .map((s) => s.replace(/^#/, "").trim())
+    .filter((s) => s.length > 0 && s !== "PENDING" && s !== "N/A");
+
+  if (subOrderIds.length === 0) {
+    return { success: true, status: currentStatus, updated: false, order };
+  }
+
+  let resolvedStatus = "";
+  let latestMeta: { remains?: any; start_count?: any } = {};
+
+  if (subOrderIds.length === 1) {
+    const qRes = await queryProviderOrderStatus(apiUrl, apiKey, subOrderIds[0]);
+    if (!qRes.status) {
+      return { success: false, status: currentStatus, updated: false, order, error: qRes.error || "Failed to fetch provider status" };
+    }
+    resolvedStatus = qRes.status;
+    latestMeta = { remains: qRes.remains, start_count: qRes.start_count };
+  } else {
+    const subResults = await Promise.all(subOrderIds.map((id) => queryProviderOrderStatus(apiUrl, apiKey, id)));
+    const statuses = subResults.map((r) => r.status).filter(Boolean);
+    if (statuses.length === 0) {
+      return { success: false, status: currentStatus, updated: false, order, error: "Failed to fetch provider status" };
+    }
+    const lower = statuses.map((s) => s.toLowerCase());
+    if (lower.every((s) => s === "completed")) resolvedStatus = "Completed";
+    else if (lower.every((s) => s === "canceled" || s === "refunded")) resolvedStatus = "Canceled";
+    else if (lower.some((s) => s === "in progress")) resolvedStatus = "In Progress";
+    else if (lower.some((s) => s === "processing")) resolvedStatus = "Processing";
+    else if (lower.some((s) => s === "partial")) resolvedStatus = "Partial";
+    else resolvedStatus = statuses[0];
+  }
+
+  const shouldUpdate =
+    resolvedStatus !== currentStatus ||
+    resolvedStatus !== normalizedCurrent ||
+    resolvedStatus !== order.providerStatus ||
+    !order.updatedAt;
+
+  let currentOrderObj = order;
+  if (shouldUpdate) {
+    currentOrderObj = await persistSyncedOrderStatus(order, resolvedStatus, latestMeta);
+  }
+
+  let refundedAmount = 0;
+  let newBalance: number | undefined = undefined;
+  if (["canceled", "cancelled", "refunded", "partial"].includes(resolvedStatus.toLowerCase())) {
+    const refRes = await refundOrderIfEligible(currentOrderObj, resolvedStatus, latestMeta.remains);
+    if (refRes.refunded) {
+      refundedAmount = refRes.amount;
+      newBalance = refRes.newBalance;
+      if (refRes.order) currentOrderObj = refRes.order;
+    }
+  }
+
+  return {
+    success: true,
+    status: resolvedStatus || currentStatus,
+    updated: shouldUpdate || refundedAmount > 0,
+    ...(refundedAmount > 0 ? { refundedAmount, newBalance } : {}),
+    order: currentOrderObj
+  };
+}
 
 // --- MASTER VERCEL SERVERLESS FUNCTION HANDLER ---
 
@@ -1092,17 +1525,21 @@ export default async function handler(req: any, res: any) {
             userId: finalUserId,
             userEmail: userEmail || orderData?.userEmail || "",
             serviceId: orderData?.serviceId || finalService,
+            courseId: orderData?.courseId || orderData?.serviceId || finalService,
+            providerId: resolvedProviderId,
+            providerServiceId: finalService,
             title: orderData?.title || "SMM Order",
             category: orderData?.category || "Other",
             quantity: Number(finalQty),
             targetLink: finalLink,
             totalPrice: finalPrice,
-            status: "Completed",
+            status: "Pending",
             providerOrderId: finalOId,
             walletBalanceAfter: newBal,
             newBalance: newBal,
             previousBalance: currentUserBal,
-            createdAt: new Date().toISOString()
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
           };
 
           // Deduct user balance & maintain latest 10 rotating orders
@@ -1134,12 +1571,31 @@ export default async function handler(req: any, res: any) {
             }
           }
 
-          // Save order in Firestore orders collection
+          // Save order in Turso / cache orders collection
           try {
             await setRestDoc("orders", finalOrderId, {
               ...newOrderSummary,
               updatedAt: new Date().toISOString()
             });
+            const client = getTursoClient();
+            if (client) {
+              await client.execute({
+                sql: `INSERT INTO smm_orders (id, user_id, service_id, link, quantity, charge, status, api_order_id, created_at, data)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+                      ON CONFLICT(id) DO UPDATE SET status = excluded.status, api_order_id = excluded.api_order_id, data = excluded.data;`,
+                args: [
+                  finalOrderId,
+                  finalUserId,
+                  String(finalService),
+                  finalLink,
+                  Number(finalQty),
+                  finalPrice,
+                  "Pending",
+                  finalOId,
+                  JSON.stringify(newOrderSummary)
+                ]
+              }).catch(() => {});
+            }
           } catch (ordSaveErr: any) {
             console.warn("[ORDER-SAVE-WARN]", ordSaveErr.message);
           }
@@ -2857,6 +3313,36 @@ export default async function handler(req: any, res: any) {
               } catch (e) {}
             }
           }
+
+          // Fallback check smm_orders table
+          try {
+            const ordRows = await client.execute("SELECT id, user_id, service_id, link, quantity, charge, status, api_order_id, created_at, data FROM smm_orders;");
+            if (ordRows?.rows) {
+              for (const r of ordRows.rows) {
+                try {
+                  let parsed: any = {};
+                  if (typeof r.data === "string") { try { parsed = JSON.parse(r.data); } catch (e) {} }
+                  const oUid = String(r.user_id || parsed.userId || "").trim();
+                  const oEmail = String(parsed.userEmail || parsed.user_email || "").trim().toLowerCase();
+                  const oId = String(r.id || parsed.id);
+                  if (((targetUid && oUid === targetUid) || (targetEmail && oEmail && oEmail === targetEmail)) && !ordersMap.has(oId)) {
+                    ordersMap.set(oId, {
+                      id: oId,
+                      userId: oUid,
+                      serviceId: r.service_id || parsed.serviceId || "",
+                      targetLink: r.link || parsed.targetLink || "",
+                      quantity: Number(r.quantity || parsed.quantity || 0),
+                      totalPrice: Number(r.charge || parsed.totalPrice || 0),
+                      status: parsed.status || r.status || "Pending",
+                      providerOrderId: parsed.providerOrderId || r.api_order_id || "",
+                      createdAt: parsed.createdAt || r.created_at || new Date().toISOString(),
+                      ...parsed
+                    });
+                  }
+                } catch (e) {}
+              }
+            }
+          } catch (e) {}
         }
 
         // 2. Also check User Profile latestOrders
@@ -2874,7 +3360,13 @@ export default async function handler(req: any, res: any) {
           }
         }
 
-        const sorted = Array.from(ordersMap.values()).sort((a, b) => {
+        const validOrders = Array.from(ordersMap.values()).filter((item) => {
+          const pId = item.providerOrderId || item.provider_order_id;
+          const isFailedAborted = String(item.status || "").toLowerCase() === "failed" && (!pId || pId === "N/A");
+          return !isFailedAborted;
+        });
+
+        const sorted = validOrders.sort((a, b) => {
           const timeA = new Date(a.createdAt || a.created_at || 0).getTime();
           const timeB = new Date(b.createdAt || b.created_at || 0).getTime();
           return timeB - timeA;
@@ -3126,9 +3618,84 @@ export default async function handler(req: any, res: any) {
     if (pathname === "/api/sync-order-status" || pathname === "/api/order-status") {
       const { orderId } = body || {};
       if (!orderId) return res.status(400).json({ success: false, error: "Missing orderId" });
-      const order = await getRestDoc("orders", orderId);
+      if (pathname === "/api/order-status") {
+        const order = await loadOrderRecord(String(orderId));
+        if (!order) return res.status(404).json({ success: false, error: "Order not found" });
+        return res.status(200).json({ success: true, status: order.status || "Pending", order });
+      }
+      const syncRes = await syncSingleOrderStatus(String(orderId));
+      if (!syncRes.success && syncRes.error === "Order not found") {
+        return res.status(404).json({ success: false, error: "Order not found" });
+      }
+      return res.status(200).json({
+        success: true,
+        status: syncRes.status || "Pending",
+        updated: syncRes.updated,
+        upToDate: !!syncRes.upToDate,
+        refundedAmount: syncRes.refundedAmount || 0,
+        ...(syncRes.newBalance !== undefined ? { newBalance: syncRes.newBalance } : {}),
+        order: syncRes.order
+      });
+    }
+
+    // 18.1 Batch Sync Order Statuses: /api/sync-orders
+    if (pathname === "/api/sync-orders") {
+      const { orderIds, orders: inlineOrders } = body || {};
+      const itemsToSync: Array<string | any> = [];
+
+      if (Array.isArray(inlineOrders) && inlineOrders.length > 0) {
+        itemsToSync.push(...inlineOrders.slice(0, 15));
+      } else if (Array.isArray(orderIds) && orderIds.length > 0) {
+        itemsToSync.push(...orderIds.slice(0, 15).map((id: any) => String(id)));
+      }
+
+      if (itemsToSync.length === 0) {
+        return res.status(200).json({ success: true, updates: {}, updatedCount: 0, refundedTotal: 0, refundedOrders: {} });
+      }
+
+      const results = await Promise.allSettled(itemsToSync.map((item) => syncSingleOrderStatus(item)));
+      const updates: Record<string, string> = {};
+      const refundedOrders: Record<string, number> = {};
+      let updatedCount = 0;
+      let refundedTotal = 0;
+
+      results.forEach((resItem, idx) => {
+        if (resItem.status === "fulfilled" && resItem.value?.status) {
+          const rawItem = itemsToSync[idx];
+          const id = typeof rawItem === "string" ? rawItem : String(rawItem?.id || "");
+          if (id) {
+            updates[id] = resItem.value.status;
+            if (resItem.value.refundedAmount && resItem.value.refundedAmount > 0) {
+              refundedOrders[id] = resItem.value.refundedAmount;
+              refundedTotal = Number((refundedTotal + resItem.value.refundedAmount).toFixed(2));
+            }
+          }
+          if (resItem.value.updated) {
+            updatedCount++;
+          }
+        }
+      });
+
+      return res.status(200).json({ success: true, updates, updatedCount, refundedTotal, refundedOrders });
+    }
+
+    // 18.2 Admin / Server Order Refund: /api/orders/refund
+    if (pathname === "/api/orders/refund") {
+      if (!isReqAdmin()) {
+        return res.status(403).json({ success: false, error: "Admin authorization required." });
+      }
+      const { orderId, status: targetStatus, remains } = body || {};
+      if (!orderId) return res.status(400).json({ success: false, error: "Missing orderId" });
+      const order = await loadOrderRecord(String(orderId));
       if (!order) return res.status(404).json({ success: false, error: "Order not found" });
-      return res.status(200).json({ success: true, status: order.status || "Pending", order });
+      const refRes = await refundOrderIfEligible(order, String(targetStatus || order.status || "Canceled"), remains);
+      return res.status(200).json({
+        success: true,
+        refunded: refRes.refunded,
+        refundedAmount: refRes.amount || 0,
+        ...(refRes.newBalance !== undefined ? { newBalance: refRes.newBalance } : {}),
+        order: refRes.order || order
+      });
     }
 
     // 19. Delete Order: /api/orders/delete
