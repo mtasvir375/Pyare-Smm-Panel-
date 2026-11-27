@@ -2696,6 +2696,17 @@ export async function startServer() {
         });
       }
 
+      // Auto-sync any pending/processing/in-progress orders with providerOrderId instantly
+      const preFetchedOrders = Array.from(ordersMap.values());
+      const pendingOrdersToSync = preFetchedOrders.filter((o: any) => {
+        const st = String(o.status || "").toLowerCase();
+        const pId = o.providerOrderId || o.provider_order_id;
+        return (st === "pending" || st === "processing" || st === "in progress") && pId && pId !== "N/A";
+      });
+      if (pendingOrdersToSync.length > 0) {
+        await Promise.allSettled(pendingOrdersToSync.map((o: any) => syncOrderStatusServer(String(o.id || o.orderId), req.headers.authorization as string)));
+      }
+
       const allOrders = Array.from(ordersMap.values()).map(item => {
         let createdAtIso = new Date().toISOString();
         if (item.createdAt) {
@@ -3029,6 +3040,16 @@ export async function startServer() {
             }
           }
         }
+      }
+
+      // Auto-sync any pending/processing/in-progress orders with providerOrderId instantly
+      const adminPendingOrdersToSync = matchingOrders.filter((o: any) => {
+        const st = String(o.status || "").toLowerCase();
+        const pId = o.providerOrderId || o.provider_order_id;
+        return (st === "pending" || st === "processing" || st === "in progress") && pId && pId !== "N/A";
+      });
+      if (adminPendingOrdersToSync.length > 0) {
+        await Promise.allSettled(adminPendingOrdersToSync.map((o: any) => syncOrderStatusServer(String(o.id || o.orderId), req.headers.authorization as string)));
       }
 
       // 4. Sort chronologically
